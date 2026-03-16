@@ -1627,9 +1627,14 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .stack{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .item{display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--soft)}
 .item .t{font-size:12px}.item .d{font-size:11px;color:var(--muted)}
+.overview-auth-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:flex-start;padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(135deg,rgba(47,128,237,.14),rgba(47,128,237,.05) 52%,rgba(255,255,255,.02));margin-top:14px}
+.overview-auth-copy{min-width:0}
+.overview-auth-k{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#7eaef4}
+.overview-auth-v{margin-top:8px;font-size:22px;font-weight:700;line-height:1.25;color:var(--text);word-break:break-word}
+.overview-auth-meta{margin-top:8px;font-size:12px;color:var(--muted)}
 .mini{padding:12px;border-top:1px solid var(--line)}
 .progress{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden}.progress > span{display:block;height:100%;width:0%;background:#2f80ed;transition:width .35s ease}
-.jobs-wrap{max-height:520px;overflow:auto;margin-top:8px}
+.jobs-wrap{max-height:248px;overflow:auto;margin-top:8px}
 .jobs{width:100%;border-collapse:collapse;margin-top:0}
 .jobs th,.jobs td{font-size:12px;padding:8px;border-bottom:1px solid #eef2f7;text-align:left}
 .jobs-wrap thead th{position:sticky;top:0;background:var(--panel);z-index:1}
@@ -1859,7 +1864,7 @@ linear-gradient(to right, transparent, transparent)}
 .mini-bar-label{font-size:11px;color:var(--muted)}
 .mini-bar-value{font-size:11px;color:#344054}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
-@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.access-stat-main{grid-template-columns:1fr}.access-stat-right{align-items:flex-start;text-align:left}.access-stat-right .s{margin-left:0}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
+@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.access-stat-main{grid-template-columns:1fr}.access-stat-right{align-items:flex-start;text-align:left}.access-stat-right .s{margin-left:0}.overview-auth-card{grid-template-columns:1fr}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
 </style>
 </head>
 <body>
@@ -1960,18 +1965,6 @@ linear-gradient(to right, transparent, transparent)}
                 <span id="overviewText">No run selected.</span>
                 <button class="btn blue" onclick="switchView('runs')">Go To Runs</button>
               </div>
-            </section>
-
-            <aside class="card">
-              <div class="right-top">
-                <div style="font-size:20px;font-weight:700">Run Summary</div>
-                <div style="font-size:12px;color:var(--muted);margin-top:3px">Overview stays clean. Running tools live in the Runs tab.</div>
-                <div class="stack">
-                  <div class="item"><div><div class="t">Selected job</div><div id="kpiJob" class="d">-</div></div><button class="btn" onclick="switchView('runs')">Open Runs</button></div>
-                  <div class="item"><div><div class="t">Stored jobs</div><div id="jobCountText" class="d">0 jobs loaded</div></div><button class="btn" onclick="refreshJobs()">Sync</button></div>
-                  <div class="item"><div><div class="t">Success / Failed</div><div id="kpiSF" class="d">0 / 0</div></div><button class="btn" onclick="switchView('activities')">View</button></div>
-                </div>
-              </div>
               <div class="mini">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)"><span>Overall progress</span><span id="pctText">0%</span></div>
                 <div class="progress" style="margin-top:6px"><span id="pfill"></span></div>
@@ -1980,6 +1973,26 @@ linear-gradient(to right, transparent, transparent)}
                     <thead><tr><th>Status</th><th>ID</th><th>Done</th></tr></thead>
                     <tbody id="jobsBody"></tbody>
                   </table>
+                </div>
+              </div>
+            </section>
+
+            <aside class="card">
+              <div class="right-top">
+                <div id="runSummaryTitle" style="font-size:20px;font-weight:700">Run Summary</div>
+                <div id="runSummarySub" style="font-size:12px;color:var(--muted);margin-top:3px">Overview stays clean. Running tools live in the Runs tab.</div>
+                <div class="overview-auth-card">
+                  <div class="overview-auth-copy">
+                    <div id="overviewAccountLabel" class="overview-auth-k">Logged in account</div>
+                    <div id="overviewAccountEmail" class="overview-auth-v" title="__AUTH_EMAIL_TITLE__">__AUTH_EMAIL_DISPLAY__</div>
+                    <div id="overviewAccountMeta" class="overview-auth-meta">Current active session</div>
+                  </div>
+                  <span id="overviewAccountRole" class="auth-role auth-role-__AUTH_ROLE_CLASS__">__AUTH_ROLE_DISPLAY__</span>
+                </div>
+                <div class="stack">
+                  <div class="item"><div><div class="t">Selected job</div><div id="kpiJob" class="d">-</div></div><button class="btn" onclick="switchView('runs')">Open Runs</button></div>
+                  <div class="item"><div><div class="t">Stored jobs</div><div id="jobCountText" class="d">0 jobs loaded</div></div><button class="btn" onclick="refreshJobs()">Sync</button></div>
+                  <div class="item"><div><div class="t">Success / Failed</div><div id="kpiSF" class="d">0 / 0</div></div><button class="btn" onclick="switchView('activities')">View</button></div>
                 </div>
               </div>
             </aside>
@@ -2484,6 +2497,8 @@ const I18N = {
     selectedJob: 'Job đang chọn',
     storedJobs: 'Job đã lưu',
     successFailed: 'Thành công / Lỗi',
+    loggedInAccount: 'Acc đang đăng nhập',
+    overviewAccountMeta: 'Phiên đang hoạt động',
     overallProgress: 'Tiến độ tổng',
     jobsToday: 'Tổng số job hôm nay',
     avgSuccess: 'Tỉ lệ success trung bình',
@@ -2754,6 +2769,8 @@ const I18N = {
     selectedJob: 'Selected job',
     storedJobs: 'Stored jobs',
     successFailed: 'Success / Failed',
+    loggedInAccount: 'Logged in account',
+    overviewAccountMeta: 'Current active session',
     overallProgress: 'Overall progress',
     jobsToday: 'Jobs today',
     avgSuccess: 'Average success rate',
@@ -3359,14 +3376,16 @@ function applyLanguage() {
   setText('#ovLegendFailed', t('overviewFailedLegend'));
   setText('#ovLegendUnavailable', t('overviewUnavailableLegend'));
   setText('#view-overview .overview-note .btn', t('goToRuns'));
-  setText('#view-overview aside .right-top > div:first-child', t('runSummary'));
-  setText('#view-overview aside .right-top > div:nth-child(2)', t('overviewClean'));
+  setText('#runSummaryTitle', t('runSummary'));
+  setText('#runSummarySub', t('overviewClean'));
   setText('#view-overview .item:nth-child(1) .t', t('selectedJob'));
   setText('#view-overview .item:nth-child(1) .btn', t('openRuns'));
   setText('#view-overview .item:nth-child(2) .t', t('storedJobs'));
   setText('#view-overview .item:nth-child(2) .btn', t('sync'));
   setText('#view-overview .item:nth-child(3) .t', t('successFailed'));
   setText('#view-overview .item:nth-child(3) .btn', t('view'));
+  setText('#overviewAccountLabel', t('loggedInAccount'));
+  setText('#overviewAccountMeta', t('overviewAccountMeta'));
   setText('#view-overview .mini > div span:first-child', t('overallProgress'));
   setNthText('#view-overview .day', 0, t('totalScope'));
   setNthText('#view-overview .day', 1, t('done'));
@@ -4677,6 +4696,16 @@ function syncAuthUI() {
   if (roleBadge) {
     roleBadge.textContent = getRoleLabel();
     roleBadge.className = `auth-role auth-role-${authState.role || 'user'}`;
+  }
+  const overviewAccountEmail = document.getElementById('overviewAccountEmail');
+  if (overviewAccountEmail) {
+    overviewAccountEmail.textContent = authState.email || '-';
+    overviewAccountEmail.title = authState.email || '-';
+  }
+  const overviewAccountRole = document.getElementById('overviewAccountRole');
+  if (overviewAccountRole) {
+    overviewAccountRole.textContent = getRoleLabel();
+    overviewAccountRole.className = `auth-role auth-role-${authState.role || 'user'}`;
   }
   const accessButton = document.getElementById('access_nav_button');
   if (accessButton) accessButton.style.display = isAdminUser() ? 'flex' : 'none';
