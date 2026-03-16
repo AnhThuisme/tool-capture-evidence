@@ -1,0 +1,14 @@
+services:
+  evidence-web:
+    build: .
+    container_name: evidence-web
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      # Set absolute path in container if you mount credentials externally.
+      # - GOOGLE_CREDENTIALS_PATH=/app/credentials.json
+    volumes:
+      - ./:/app
+    restart: unless-stopped

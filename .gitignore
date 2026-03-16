@@ -1,0 +1,18 @@
+# secrets
+credentials.inline.json
+.env
+
+# logs
+*.log
+log.txt
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# screenshots temp
+temp_screenshots/
+
+# system
+.DS_Store

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.venv/
+venv/
+.env
+.git/
+.gitignore
+temp_screenshots/
+FB_Session/
+FB_Session_Selenium/
