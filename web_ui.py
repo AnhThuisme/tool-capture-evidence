@@ -781,8 +781,9 @@ def _is_railway_healthcheck(request: Request) -> bool:
     host = (headers.get("host") or "").lower()
     forwarded_host = (headers.get("x-forwarded-host") or "").lower()
     user_agent = (headers.get("user-agent") or "").lower()
-    markers = ("healthcheck.railway.app", "railway-healthcheck", "railway")
-    return any(marker in value for value in (host, forwarded_host, user_agent) for marker in markers)
+    if "healthcheck.railway.app" in host or "healthcheck.railway.app" in forwarded_host:
+        return True
+    return "railway-healthcheck" in user_agent
 
 
 def _require_api_auth(request: Request) -> str:
