@@ -4135,7 +4135,7 @@ class ProgressApp:
                 messagebox.showerror("Thiếu trường", f"JSON thiếu trường bắt buộc: {', '.join(missing)}")
                 return
 
-            out_path = os.path.join(APP_DIR, "credentials.inline.json")
+            out_path = os.path.join(BASE_DIR, "credentials.inline.json")
             try:
                 with open(out_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)

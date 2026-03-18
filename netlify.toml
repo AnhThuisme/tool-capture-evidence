@@ -1,0 +1,3 @@
+[build]
+  command = "python scripts/build_netlify_static.py"
+  publish = "netlify_dist"

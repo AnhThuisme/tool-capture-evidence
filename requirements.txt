@@ -1,3 +1,10 @@
 fastapi
-
 uvicorn
+requests
+gspread
+selenium
+webdriver-manager
+oauth2client
+google-api-python-client
+Pillow
+openpyxl
