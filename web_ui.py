@@ -3406,8 +3406,30 @@ function applyAirDate(mode, index, value) {
   renderMappingEditor();
 }
 
+function isLocalWebHost() {
+  const host = String(window.location.hostname || '').toLowerCase();
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
+function launchChromeViaLocalProtocol(index) {
+  const blockIndex = Number(index) || 0;
+  const port = getChromePortForBlock(blockIndex, currentRunMode);
+  const href = `tool-evidence://launch?mode=${encodeURIComponent(currentRunMode)}&block=${blockIndex}&port=${port}`;
+  const frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  frame.src = href;
+  document.body.appendChild(frame);
+  window.setTimeout(() => frame.remove(), 1500);
+  return { href, port };
+}
+
 async function launchChromeBlock(index) {
   try {
+    if (!isLocalWebHost()) {
+      const local = launchChromeViaLocalProtocol(index);
+      setStatus(`?? g?i l?nh m? Chrome ${local.port} t?i m?y c?a b?n`, 'running');
+      return;
+    }
     const out = await req(`/api/chrome/launch-block/${Number(index)}?run_mode=${encodeURIComponent(currentRunMode)}`, { method: 'POST' });
     setStatus(out.message || 'Chrome launch requested', 'running');
   } catch (e) {
