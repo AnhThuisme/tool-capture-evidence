@@ -26,7 +26,7 @@ from datetime import datetime
 import unicodedata
 import subprocess
 import difflib
-from urllib.parse import urlparse, parse_qs, urljoin
+from urllib.parse import quote, urlparse, parse_qs, urljoin
 try:
     import requests
 except Exception:
@@ -5575,7 +5575,7 @@ def launch_chrome_for_login(browser_port: int = 9223, profile_path: str | None =
 
         def open_tab_in_existing_debugger(target_url: str = "about:blank") -> bool:
             try:
-                endpoint = f"http://127.0.0.1:{browser_port}/json/new?{target_url}"
+                endpoint = f"http://127.0.0.1:{browser_port}/json/new?{quote(target_url, safe=':/?=&,%#')}"
                 if requests is not None:
                     resp = requests.put(endpoint, timeout=2)
                     return bool(resp.ok)
@@ -5587,12 +5587,18 @@ def launch_chrome_for_login(browser_port: int = 9223, profile_path: str | None =
                 write_log(f"[WARN] Failed to open tab via debugger port {browser_port}: {e}")
                 return False
 
-        def focus_existing_browser_window() -> bool:
+        def focus_existing_browser_window(title_hint: str | None = None) -> bool:
             if os.name != "nt":
                 return False
-            script = r"""
+            title_hint = str(title_hint or "").strip()
+            title_expr = title_hint.replace("'", "''")
+            script = """
 $ws = New-Object -ComObject WScript.Shell
-$targets = @('Google Chrome', 'Chrome', 'Microsoft Edge', 'Edge')
+$targets = @()
+if ('__TITLE__'.Length -gt 0) {
+  $targets += '__TITLE__'
+}
+$targets += @('Google Chrome', 'Chrome', 'Microsoft Edge', 'Edge')
 foreach ($t in $targets) {
   try {
     if ($ws.AppActivate($t)) { exit 0 }
@@ -5600,6 +5606,7 @@ foreach ($t in $targets) {
 }
 exit 1
 """
+            script = script.replace("__TITLE__", title_expr)
             try:
                 result = subprocess.run(
                     ["powershell", "-NoProfile", "-Command", script],
@@ -5612,6 +5619,24 @@ exit 1
             except Exception as e:
                 write_log(f"[WARN] Failed to focus existing browser window: {e}")
                 return False
+
+        def open_focus_marker_tab() -> tuple[bool, str]:
+            marker_title = f"Tool Evidence Chrome {browser_port}"
+            marker_html = (
+                "<html><head>"
+                f"<title>{marker_title}</title>"
+                "</head><body style='font-family:Segoe UI,Arial,sans-serif;"
+                "background:#0f172a;color:#dbeafe;display:grid;place-items:center;"
+                "height:100vh;margin:0'>"
+                f"<div>Chrome debugger port {browser_port}</div>"
+                "</body></html>"
+            )
+            target_url = "data:text/html," + marker_html
+            opened = open_tab_in_existing_debugger(target_url)
+            if opened:
+                time.sleep(0.35)
+            focused = focus_existing_browser_window(marker_title)
+            return opened, marker_title if focused else marker_title
 
         chrome_path = find_chrome_binary()
         if not chrome_path:
@@ -5663,8 +5688,8 @@ exit 1
                 replaced_headless = True
                 write_log(f"[INFO] Replaced headless Chrome on port {browser_port} (pid={pid}) with visible window request")
             else:
-                opened_tab = open_tab_in_existing_debugger("about:blank")
-                focused = focus_existing_browser_window()
+                opened_tab, marker_title = open_focus_marker_tab()
+                focused = focus_existing_browser_window(marker_title)
                 try:
                     open_visible_window(chrome_path, profile)
                 except Exception as e:
@@ -5678,10 +5703,10 @@ exit 1
                     except Exception:
                         pass
                 if not focused:
-                    focused = focus_existing_browser_window()
+                    focused = focus_existing_browser_window(marker_title)
                 write_log(
                     f"[INFO] Chrome debug port {browser_port} already active. "
-                    f"opened_tab={opened_tab}, focused={focused}"
+                    f"opened_tab={opened_tab}, focused={focused}, marker_title={marker_title}"
                 )
                 if opened_tab or focused:
                     return True, f"Port {browser_port} already active; opened existing Chrome session"
