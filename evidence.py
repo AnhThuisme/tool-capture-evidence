@@ -91,11 +91,15 @@ def resolve_credentials_path() -> str:
         return env_path
 
     candidates = [
+        os.path.join(APP_DIR, "credentials.inline.json"),  # saved once from web UI / committed fixed file
         os.path.join(APP_DIR, "credentials.json"),     # next to .exe / script
+        os.path.join(os.getcwd(), "credentials.inline.json"),
         os.path.join(os.getcwd(), "credentials.json"), # current working directory
+        os.path.join(BASE_DIR, "credentials.inline.json"),
         os.path.join(BASE_DIR, "credentials.json"),    # source directory
     ]
     if hasattr(sys, "_MEIPASS"):
+        candidates.append(os.path.join(getattr(sys, "_MEIPASS"), "credentials.inline.json"))
         candidates.append(os.path.join(getattr(sys, "_MEIPASS"), "credentials.json"))
 
     for p in candidates:
