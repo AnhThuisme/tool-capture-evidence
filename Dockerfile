@@ -22,7 +22,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 RUN mkdir -p /data
+RUN chmod +x /app/start.sh
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn web_ui:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["./start.sh"]
