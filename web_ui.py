@@ -19,6 +19,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+import requests
 from starlette.middleware.sessions import SessionMiddleware
 
 import evidence
@@ -531,7 +532,13 @@ def _smtp_config() -> dict[str, Any]:
     use_ssl = str(os.getenv("SMTP_USE_SSL", "")).strip().lower() in {"1", "true", "yes", "on"}
     use_tls = str(os.getenv("SMTP_USE_TLS", "1")).strip().lower() in {"1", "true", "yes", "on"}
     if not host or not from_email:
-        raise HTTPException(status_code=500, detail="Chưa cấu hình Gmail SMTP. Hãy thêm GMAIL_SMTP_EMAIL và GMAIL_SMTP_APP_PASSWORD")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Chưa cấu hình kênh gửi OTP. Thêm RESEND_API_KEY + RESEND_FROM_EMAIL "
+                "hoặc GMAIL_SMTP_EMAIL + GMAIL_SMTP_APP_PASSWORD"
+            ),
+        )
     return {
         "host": host,
         "port": port,
@@ -540,6 +547,21 @@ def _smtp_config() -> dict[str, Any]:
         "from_email": from_email,
         "use_ssl": use_ssl,
         "use_tls": use_tls,
+    }
+
+
+def _resend_config() -> dict[str, Any]:
+    api_key = str(os.getenv("RESEND_API_KEY", "")).strip()
+    from_email = _normalize_email(str(os.getenv("RESEND_FROM_EMAIL", "")).strip())
+    from_name = str(os.getenv("RESEND_FROM_NAME", "Evidence Security")).strip() or "Evidence Security"
+    api_base = str(os.getenv("RESEND_API_BASE", "https://api.resend.com")).strip().rstrip("/")
+    if not api_key or not from_email:
+        return {}
+    return {
+        "api_key": api_key,
+        "from_email": from_email,
+        "from_name": from_name,
+        "api_base": api_base,
     }
 
 
@@ -663,7 +685,45 @@ Write-Output 'OK'
         raise HTTPException(status_code=500, detail=f"Không gửi được mã qua Outlook: {detail}")
 
 
+def _send_login_code_via_resend(email: str, code: str) -> None:
+    config = _resend_config()
+    if not config:
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Resend API")
+    subject, plain_body, html_body = _build_login_code_email(email, code)
+    payload = {
+        "from": formataddr((config["from_name"], config["from_email"])),
+        "to": [email],
+        "subject": subject,
+        "html": html_body,
+        "text": plain_body,
+    }
+    try:
+        resp = requests.post(
+            f'{config["api_base"]}/emails',
+            headers={
+                "Authorization": f'Bearer {config["api_key"]}',
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=500, detail=f"Resend API unreachable: {exc}") from exc
+    if 200 <= resp.status_code < 300:
+        return
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    detail = data.get("message") or data.get("error") or resp.text or f"HTTP {resp.status_code}"
+    raise HTTPException(status_code=500, detail=f"Resend gửi OTP thất bại: {detail}")
+
+
 def _send_login_code(email: str, code: str) -> None:
+    resend_config = _resend_config()
+    if resend_config:
+        _send_login_code_via_resend(email, code)
+        return
     try:
         config = _smtp_config()
         subject, plain_body, html_body = _build_login_code_email(email, code)
@@ -692,7 +752,7 @@ def _send_login_code(email: str, code: str) -> None:
     except Exception as smtp_exc:
         if not _outlook_auth_enabled():
             detail = getattr(smtp_exc, "detail", None) if isinstance(smtp_exc, HTTPException) else str(smtp_exc)
-            raise HTTPException(status_code=500, detail=str(detail or "Gửi OTP qua Gmail thất bại")) from smtp_exc
+            raise HTTPException(status_code=500, detail=str(detail or "Gửi OTP thất bại")) from smtp_exc
         try:
             _send_login_code_via_outlook(email, code)
             return
@@ -862,13 +922,13 @@ button:disabled{opacity:.55;cursor:not-allowed}
         </div>
       </div>
       <h1>Đăng nhập bằng mail</h1>
-      <p>Nhập email của bạn. Hệ thống sẽ gửi mã xác nhận 6 số qua Gmail trước khi vào dashboard.</p>
+      <p>Nhập email của bạn. Hệ thống sẽ gửi mã xác nhận 6 số qua email trước khi vào dashboard.</p>
       <div id="stepEmail" class="step active">
         <div class="row">
           <div>
             <label for="login_email">Email</label>
             <input id="login_email" type="email" placeholder="you@example.com" autocomplete="email" />
-            <div class="hint">Luồng mặc định dùng Gmail App Password. Chỉ mail đã được thêm trong danh sách người dùng mới có quyền nhập OTP.</div>
+            <div class="hint">Chỉ mail đã được thêm trong danh sách người dùng mới có quyền nhập OTP.</div>
           </div>
         </div>
         <div class="actions">
