@@ -47,7 +47,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 # ================= CONFIG =================
 BASE_DIR = os.environ.get("EVIDENCE_BASE_DIR", os.path.dirname(os.path.abspath(__file__)))
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else BASE_DIR
-TEMP_DIR = os.path.join(BASE_DIR, "temp_screenshots")
+TEMP_ROOT = os.path.join(os.environ.get("LOCALAPPDATA", BASE_DIR), "ToolEvidence")
+TEMP_DIR = os.path.join(os.environ.get("EVIDENCE_TEMP_DIR", TEMP_ROOT), "temp_screenshots")
 FB_PROFILE_PATH = os.path.join(BASE_DIR, "FB_Session")
 FB_PROFILE_PATH_ALT = os.path.join(BASE_DIR, "FB_Session_Selenium")
 LOCAL_PROFILE_PATH = os.path.join(os.environ.get("LOCALAPPDATA", os.path.join(BASE_DIR, ".local_profile")), "EvidenceTool_Profile")
