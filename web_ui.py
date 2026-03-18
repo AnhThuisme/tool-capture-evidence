@@ -253,7 +253,7 @@ class MailConfigUpdateRequest(BaseModel):
     app_password: str = ""
 
 
-app = FastAPI(title="Evidence Tool Web", version="1.0.0")
+app = FastAPI(title="Tool Evidence", version="1.0.0")
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("WEB_SESSION_SECRET", secrets.token_urlsafe(32)),
@@ -545,7 +545,7 @@ def _build_login_code_email(email: str, code: str) -> tuple[str, str, str]:
     recipient = html.escape(_normalize_email(email))
     safe_code = html.escape(str(code or "").strip())
     ttl_minutes = max(1, OTP_TTL_SEC // 60)
-    subject = "Xac nhan dang nhap Evidence"
+    subject = "Evidence | Mã OTP đăng nhập"
     plain = "\n".join(
         [
             "Mã xác nhận đăng nhập Evidence",
@@ -659,7 +659,7 @@ def _send_login_code(email: str, code: str) -> None:
         subject, plain_body, html_body = _build_login_code_email(email, code)
         msg = EmailMessage()
         msg["Subject"] = subject
-        msg["From"] = formataddr(("Evidence", config["from_email"]))
+        msg["From"] = formataddr(("Evidence Security", config["from_email"]))
         msg["To"] = email
         msg.set_content(plain_body)
         msg.add_alternative(html_body, subtype="html")
@@ -800,7 +800,7 @@ LOGIN_PAGE_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Evidence Login</title>
+<title>Tool Evidence Login</title>
 <style>
 :root{--bg:#0e1525;--bg-2:#121b2f;--panel:#121b2b;--soft:#162033;--line:#263247;--text:#dbe6f5;--muted:#91a0b8;--blue:#5b93d3;--blue-dark:#3b6fb0;--green:#34c38f;--red:#ef4444}
 *{box-sizing:border-box}
@@ -808,7 +808,9 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear
 .wrap{width:min(460px,calc(100vw - 32px))}
 .card{background:rgba(18,27,43,.96);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
-.dot{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#ff9073,#2f80ed)}
+.dot{position:relative;width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#102040 0%,#24488f 54%,#6c98ff 100%);box-shadow:0 10px 22px rgba(36,72,143,.28);border:1px solid rgba(191,219,254,.34);overflow:hidden;flex:0 0 auto}
+.dot::before{content:"";position:absolute;left:6px;right:10px;top:7px;bottom:11px;border-radius:8px;border:1.5px solid rgba(255,255,255,.82);transform:skewY(-8deg)}
+.dot::after{content:"";position:absolute;top:5px;right:5px;width:11px;height:11px;border-radius:4px;background:linear-gradient(145deg,#f8fbff,#a9c5ff);box-shadow:0 0 0 3px rgba(147,197,253,.12)}
 .brand strong{display:block;font-size:18px}
 .brand span{display:block;font-size:12px;color:var(--muted);margin-top:3px}
 h1{margin:0 0 10px;font-size:28px;letter-spacing:-.02em}
@@ -835,8 +837,8 @@ button:disabled{opacity:.55;cursor:not-allowed}
       <div class="brand">
         <div class="dot"></div>
         <div>
-          <strong>Evidence</strong>
-          <span>Mail verification login</span>
+          <strong>Tool Evidence</strong>
+          <span>Secure access login</span>
         </div>
       </div>
       <h1>Đăng nhập bằng mail</h1>
@@ -1427,23 +1429,29 @@ def home_page(request: Request):
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Evidence Overview</title>
+<title>Tool Evidence</title>
 <style>
 :root{--bg:#f3f4f6;--bg-grad-1:#f3f4f6;--bg-grad-2:#f8fafc;--panel:#ffffff;--panel-soft:#fbfcff;--line:#e4e7ec;--text:#101828;--muted:#667085;--soft:#f8fafc;--blue:#2f80ed;--blue-soft:#e8f1ff;--green:#16a34a;--red:#dc2626;--shadow:0 12px 36px rgba(16,24,40,.06);--input-bg:#ffffff;--input-fg:#102033;--danger-bg:#fff7f7;--danger-line:#fecaca;--danger-text:#be123c;--log-bg:#0b1322}
 [data-theme="dark"]{--bg:#0e1525;--bg-grad-1:#0e1525;--bg-grad-2:#121b2f;--panel:#121b2b;--panel-soft:#162033;--line:#263247;--text:#dbe6f5;--muted:#91a0b8;--soft:#182338;--blue:#5b93d3;--blue-soft:#1a2940;--green:#34c38f;--red:#f08aa0;--shadow:0 18px 40px rgba(0,0,0,.28);--input-bg:#0b1322;--input-fg:#dbe6f5;--danger-bg:#2a1920;--danger-line:#5f2e3a;--danger-text:#f1b3c1;--log-bg:#0c1424}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));font-family:Segoe UI,Arial,sans-serif;color:var(--text)}
 .shell{width:100%;min-height:100vh;padding:10px}
-.board{width:100%;min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:220px 1fr;overflow:hidden}
-.sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:14px}
-.dot{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#ff9073,#2f80ed)}
-.brand-row{display:flex;align-items:center;gap:10px}
-.brand-copy{display:flex;flex-direction:column}
-.brand-copy strong{font-size:14px}
-.brand-copy span{font-size:11px;color:var(--muted)}
-.side-nav{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-.side-group{display:flex;flex-direction:column;gap:6px}
-.side-btn{width:100%;min-height:40px;border-radius:12px;border:1px solid transparent;display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;background:var(--panel);padding:0 12px;cursor:pointer;text-align:left}
+.board{width:100%;min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:236px 1fr;overflow:hidden}
+.sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
+.dot{position:relative;width:42px;height:42px;border-radius:13px;background:linear-gradient(145deg,#102040 0%,#2851a3 56%,#7ea7ff 100%);box-shadow:0 12px 28px rgba(59,130,246,.22);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
+.dot::before{content:"";position:absolute;left:8px;right:12px;top:8px;bottom:13px;border-radius:10px;border:1.6px solid rgba(255,255,255,.86);transform:skewY(-8deg)}
+.dot::after{content:"";position:absolute;top:6px;right:6px;width:13px;height:13px;border-radius:5px;background:linear-gradient(145deg,#f8fbff,#b4ccff);box-shadow:0 0 0 4px rgba(147,197,253,.12)}
+.brand-row{position:relative;display:flex;align-items:center;gap:14px;min-height:94px;padding:16px 16px;border:1px solid rgba(123,168,255,.14);border-radius:20px;background:linear-gradient(135deg,rgba(76,110,196,.18),rgba(255,255,255,.02) 48%,rgba(37,99,235,.08));overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.brand-row::after{content:"";position:absolute;right:-28px;top:-24px;width:108px;height:108px;border-radius:50%;background:rgba(96,139,255,.12);filter:blur(6px)}
+.brand-copy{position:relative;z-index:1;display:flex;flex-direction:column;gap:4px;min-width:0}
+.brand-copy strong{font-size:17px;line-height:1.08;letter-spacing:-.03em;color:#fff}
+.brand-copy span{font-size:10px;color:#a9bddc;letter-spacing:.18em;text-transform:uppercase;font-weight:700}
+[data-theme="light"] .brand-row{background:linear-gradient(135deg,rgba(91,147,211,.12),rgba(255,255,255,.92) 48%,rgba(239,244,255,.86));border-color:rgba(91,147,211,.18)}
+[data-theme="light"] .brand-copy strong{color:#0f172a}
+[data-theme="light"] .brand-copy span{color:#51627f}
+.side-nav{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.side-group{display:flex;flex-direction:column;gap:8px}
+.side-btn{width:100%;min-height:42px;border-radius:14px;border:1px solid transparent;display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;background:var(--panel);padding:0 14px;cursor:pointer;text-align:left}
 .side-icon{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:8px;background:var(--soft);color:var(--muted)}
 .side-icon svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .side-btn.active{border-color:#dbeafe;background:#eef4ff;color:#12315f}
@@ -1572,7 +1580,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-directory-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px}
 .access-directory-foot .settings-note{margin:0;min-height:auto;flex:1}
 .access-layout{margin-top:12px}
-.main{padding:14px 16px 16px}
+.main{padding:14px 18px 18px}
 .jobs-wrap::-webkit-scrollbar,.monitor-table-wrap::-webkit-scrollbar{width:10px;height:10px}
 .jobs-wrap::-webkit-scrollbar-thumb,.monitor-table-wrap::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
 .jobs-wrap::-webkit-scrollbar-track,.monitor-table-wrap::-webkit-scrollbar-track{background:transparent}
@@ -1623,15 +1631,24 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .subgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px;border-top:1px solid var(--line)}
 .field label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px}
 .field input,.field select,.field textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:var(--input-bg);color:var(--input-fg)}
-.right-top{padding:14px}
+.right-top{padding:14px;display:flex;flex-direction:column;height:100%}
 .stack{display:flex;flex-direction:column;gap:8px;margin-top:10px}
-.item{display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--soft)}
-.item .t{font-size:12px}.item .d{font-size:11px;color:var(--muted)}
-.overview-auth-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:flex-start;padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(135deg,rgba(47,128,237,.14),rgba(47,128,237,.05) 52%,rgba(255,255,255,.02));margin-top:14px}
-.overview-auth-copy{min-width:0}
-.overview-auth-k{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#7eaef4}
-.overview-auth-v{margin-top:8px;font-size:22px;font-weight:700;line-height:1.25;color:var(--text);word-break:break-word}
-.overview-auth-meta{margin-top:8px;font-size:12px;color:var(--muted)}
+.item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01)),var(--soft)}
+.item .t{font-size:12px;font-weight:700;color:var(--text)}
+.item .d{font-size:11px;color:var(--muted);margin-top:4px}
+.item-copy{min-width:0;display:flex;flex-direction:column}
+.summary-action{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 12px;border-radius:12px;border:1px solid rgba(91,147,211,.18);background:linear-gradient(180deg,rgba(91,147,211,.1),rgba(91,147,211,.04));color:#dbe6f5;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;transition:transform .15s ease,border-color .15s ease,background .15s ease}
+.summary-action:hover{transform:translateY(-1px);border-color:rgba(91,147,211,.34);background:linear-gradient(180deg,rgba(91,147,211,.16),rgba(91,147,211,.08))}
+.summary-action svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+.summary-action.sync svg{stroke-width:2}
+.summary-action.is-loading{pointer-events:none;opacity:.92}
+.summary-action.is-loading svg{animation:summary-spin .85s linear infinite}
+.summary-action.is-done{border-color:rgba(52,195,143,.26);background:linear-gradient(180deg,rgba(52,195,143,.16),rgba(52,195,143,.06));color:#7df0ba}
+.summary-action.is-error{border-color:rgba(239,68,68,.26);background:linear-gradient(180deg,rgba(239,68,68,.16),rgba(239,68,68,.06));color:#fda4af}
+[data-theme="light"] .summary-action.is-done{color:#166534}
+[data-theme="light"] .summary-action.is-error{color:#b91c1c}
+@keyframes summary-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+[data-theme="light"] .summary-action{color:#17315c;background:linear-gradient(180deg,rgba(91,147,211,.08),rgba(91,147,211,.03))}
 .mini{padding:12px;border-top:1px solid var(--line)}
 .progress{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden}.progress > span{display:block;height:100%;width:0%;background:#2f80ed;transition:width .35s ease}
 .jobs-wrap{max-height:248px;overflow:auto;margin-top:8px}
@@ -1686,6 +1703,20 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .mapping-add-row{display:flex;justify-content:flex-start;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
 .mapping-check{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text)}
 .mapping-check input{width:16px;height:16px}
+.mapping-toggle-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;min-width:280px;max-width:360px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer;flex:1 1 320px}
+.mapping-toggle-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
+.mapping-toggle-kicker{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#f59e0b}
+.mapping-toggle-title{font-size:13px;font-weight:700;color:var(--text)}
+.mapping-toggle-help{font-size:12px;color:var(--muted);line-height:1.45}
+.mapping-toggle-switch{position:relative;display:inline-flex;align-items:center;justify-content:center;width:52px;height:30px;flex:0 0 auto}
+.mapping-toggle-switch input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.mapping-toggle-slider{position:relative;display:block;width:52px;height:30px;border-radius:999px;background:#cbd5e1;border:1px solid rgba(148,163,184,.28);transition:background .2s ease,border-color .2s ease,box-shadow .2s ease}
+.mapping-toggle-slider::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.16);transition:left .2s ease}
+.mapping-toggle-switch input:checked + .mapping-toggle-slider{background:linear-gradient(135deg,#f59e0b,#f97316);border-color:#f97316;box-shadow:0 0 0 4px rgba(249,115,22,.12)}
+.mapping-toggle-switch input:checked + .mapping-toggle-slider::after{left:25px}
+[data-theme="dark"] .mapping-toggle-card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.01)),var(--panel-soft)}
+[data-theme="dark"] .mapping-toggle-slider{background:#334155;border-color:#475569}
+[data-theme="dark"] .mapping-toggle-slider::after{background:#f8fafc}
 .run-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .action-btn{min-height:44px;padding:0 16px;border-radius:14px;display:inline-flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;box-shadow:0 10px 24px rgba(15,23,42,.08);transition:transform .15s ease,box-shadow .15s ease,filter .15s ease}
 .action-btn:hover{transform:translateY(-1px);box-shadow:0 14px 30px rgba(15,23,42,.12);filter:saturate(1.03)}
@@ -1703,8 +1734,19 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 [data-theme="dark"] .action-btn.resume{background:linear-gradient(135deg,#22c55e,#15803d);border-color:#1d8d46}
 [data-theme="dark"] .action-btn.red{background:linear-gradient(135deg,#2b1822,#351a24);border-color:#5b2435;color:#fda4af}
 [data-theme="dark"] .action-btn.red .action-icon{background:rgba(253,164,175,.12);color:#fda4af}
-.run-overwrite{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text);font-weight:600}
-.run-overwrite input{width:16px;height:16px;accent-color:var(--blue)}
+.run-overwrite-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer}
+.run-overwrite-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
+.run-overwrite-title{font-size:13px;font-weight:700;color:var(--text)}
+.run-overwrite-help{font-size:12px;color:var(--muted);line-height:1.45}
+.run-overwrite-switch{position:relative;display:inline-flex;align-items:center;justify-content:center;width:52px;height:30px;flex:0 0 auto}
+.run-overwrite-switch input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.run-overwrite-slider{position:relative;display:block;width:52px;height:30px;border-radius:999px;background:#cbd5e1;border:1px solid rgba(148,163,184,.28);transition:background .2s ease,border-color .2s ease,box-shadow .2s ease}
+.run-overwrite-slider::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.16);transition:left .2s ease}
+.run-overwrite-switch input:checked + .run-overwrite-slider{background:linear-gradient(135deg,#3b82f6,#2563eb);border-color:#2563eb;box-shadow:0 0 0 4px rgba(59,130,246,.12)}
+.run-overwrite-switch input:checked + .run-overwrite-slider::after{left:25px}
+[data-theme="dark"] .run-overwrite-card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.01)),var(--panel-soft)}
+[data-theme="dark"] .run-overwrite-slider{background:#334155;border-color:#475569}
+[data-theme="dark"] .run-overwrite-slider::after{background:#f8fafc}
 .run-actions-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .monitor-card{margin-top:12px;padding:16px}
 .monitor-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
@@ -1753,8 +1795,13 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 [data-theme="dark"] .result-pill.warning{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
 .muted{font-size:12px;color:var(--muted)}
 .overview-note{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.overview-cta{display:inline-flex;align-items:center;gap:10px;min-height:42px;padding:0 16px;border:1px solid rgba(123,168,255,.24);border-radius:14px;background:linear-gradient(135deg,#4f8df7,#2f6fe4);color:#fff;font-size:12px;font-weight:800;letter-spacing:.02em;cursor:pointer;box-shadow:0 10px 24px rgba(47,111,228,.24);transition:transform .15s ease,box-shadow .15s ease,filter .15s ease}
+.overview-cta:hover{transform:translateY(-1px);box-shadow:0 14px 28px rgba(47,111,228,.28);filter:saturate(1.05)}
+.overview-cta svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+[data-theme="dark"] .overview-cta{background:linear-gradient(135deg,#548ff8,#2563eb);border-color:rgba(123,168,255,.22)}
 .overview-top-card{margin-bottom:12px;padding:18px}
 .overview-top-card .chart{padding:0;border-top:0}
+.overview-top-grid{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(280px,.78fr);gap:16px;align-items:stretch}
 .overview-stats-card .stats{grid-template-columns:repeat(4,minmax(0,1fr))}
 .overview-stats-card .stat{min-height:118px}
 .overview-history-chart{display:flex;flex-direction:column;gap:12px}
@@ -1783,6 +1830,38 @@ linear-gradient(to right, transparent, transparent)}
 .overview-history-col.is-latest{filter:saturate(1.12)}
 .overview-history-day{font-size:12px;color:var(--muted)}
 .overview-history-empty{width:100%;padding:16px;border:1px dashed var(--line);border-radius:12px;background:var(--panel-soft);font-size:12px;color:var(--muted);text-align:center}
+.overview-greeting-card{position:relative;overflow:hidden;padding:20px 18px;border:1px solid var(--line);border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(123,168,255,.18),transparent 34%),linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01)),var(--panel-soft);display:flex;flex-direction:column;justify-content:space-between;min-height:100%}
+.overview-greeting-card::after{content:"";position:absolute;right:-28px;bottom:-38px;width:132px;height:132px;border-radius:50%;background:rgba(91,147,211,.08);filter:blur(4px)}
+.overview-greeting-head{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.overview-greeting-kicker{font-size:12px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#7b8aa5}
+.overview-greeting-visual{position:relative;z-index:1;display:flex;justify-content:center;align-items:center;padding:12px 0 8px}
+.overview-greeting-orbit{position:relative;width:144px;height:144px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(from 210deg,#6b63ff 0 118deg,rgba(107,99,255,.08) 118deg 360deg);box-shadow:0 18px 36px rgba(27,40,72,.12)}
+.overview-greeting-orbit::before{content:"";position:absolute;inset:10px;border-radius:50%;background:var(--panel);border:1px solid rgba(123,168,255,.14)}
+.overview-greeting-avatar{position:relative;z-index:1;width:102px;height:102px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,#ffe6ef,#eef4ff);color:#111827;font-size:34px;font-weight:800;letter-spacing:.04em;border:6px solid rgba(255,255,255,.85)}
+.overview-greeting-role{position:absolute;top:16px;right:22px;z-index:2;box-shadow:0 6px 16px rgba(15,23,42,.12)}
+.overview-greeting-title{position:relative;z-index:1;margin-top:8px;font-size:26px;font-weight:800;line-height:1.18;color:var(--text);text-align:center;letter-spacing:-.03em}
+.overview-greeting-sub{position:relative;z-index:1;margin-top:10px;font-size:13px;line-height:1.6;color:var(--muted);text-align:center}
+.overview-greeting-footer{position:relative;z-index:1;display:flex;justify-content:center;margin-top:16px}
+.overview-greeting-email{display:inline-flex;align-items:center;max-width:100%;padding:10px 14px;border-radius:999px;border:1px solid rgba(123,168,255,.22);background:rgba(123,168,255,.08);font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+[data-theme="dark"] .overview-greeting-avatar{background:linear-gradient(135deg,#f7d4e2,#dde9ff);border-color:rgba(255,255,255,.7)}
+[data-theme="dark"] .overview-greeting-email{background:rgba(91,147,211,.12)}
+.overview-side-panels{display:flex;flex-direction:column;gap:12px;margin-top:12px}
+.overview-side-card{padding:14px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft)}
+.overview-side-title{font-size:13px;font-weight:700;letter-spacing:.03em;color:var(--text)}
+.overview-side-sub{margin-top:4px;font-size:12px;color:var(--muted)}
+.overview-mode-list{display:flex;flex-direction:column;gap:12px;margin-top:14px}
+.overview-mode-row{display:grid;gap:8px}
+.overview-mode-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.overview-mode-value{font-size:12px;font-weight:800;color:var(--text)}
+.overview-mode-track{height:10px;border-radius:999px;background:rgba(148,163,184,.18);overflow:hidden}
+.overview-mode-fill{display:block;height:100%;border-radius:999px}
+.overview-mode-fill.mode-seeding{background:linear-gradient(90deg,#34d399,#10b981)}
+.overview-mode-fill.mode-booking{background:linear-gradient(90deg,#f59e0b,#f97316)}
+.overview-mode-fill.mode-scan{background:linear-gradient(90deg,#60a5fa,#2563eb)}
+.overview-mode-meta{font-size:11px;color:var(--muted)}
+.overview-side-empty{padding:12px;border:1px dashed var(--line);border-radius:12px;background:var(--panel);font-size:12px;color:var(--muted);text-align:center}
+.overview-side-panels.single{display:flex;flex:1;min-height:0}
+.overview-side-panels.single .overview-side-card{min-height:0;flex:1}
 .cards-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .pad{padding:14px}
 .big-number{font-size:30px;font-weight:700}
@@ -1864,7 +1943,7 @@ linear-gradient(to right, transparent, transparent)}
 .mini-bar-label{font-size:11px;color:var(--muted)}
 .mini-bar-value{font-size:11px;color:#344054}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
-@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.access-stat-main{grid-template-columns:1fr}.access-stat-right{align-items:flex-start;text-align:left}.access-stat-right .s{margin-left:0}.overview-auth-card{grid-template-columns:1fr}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
+@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.access-stat-main{grid-template-columns:1fr}.access-stat-right{align-items:flex-start;text-align:left}.access-stat-right .s{margin-left:0}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
 </style>
 </head>
 <body>
@@ -1874,8 +1953,8 @@ linear-gradient(to right, transparent, transparent)}
         <div class="brand-row">
           <div class="dot"></div>
           <div class="brand-copy">
-            <strong>Evidence</strong>
-            <span>Command Center</span>
+            <strong>Tool Evidence</strong>
+            <span>Automation Suite</span>
           </div>
         </div>
         <div class="side-nav">
@@ -1889,7 +1968,6 @@ linear-gradient(to right, transparent, transparent)}
             </div>
           </div>
           <button class="side-btn" data-view="projects" onclick="switchView('projects', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M8 20h8"/></svg></span><span>Projects</span></button>
-          <button class="side-btn" data-view="tasks" onclick="switchView('tasks', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="m4 6 1.5 1.5L7.5 5.5"/><path d="m4 12 1.5 1.5L7.5 11.5"/><path d="m4 18 1.5 1.5L7.5 17.5"/></svg></span><span>Tasks</span></button>
           <button class="side-btn" data-view="activities" onclick="switchView('activities', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M4 12h4l2-5 4 10 2-5h4"/><path d="M4 19h16"/></svg></span><span>Activities</span></button>
           <button id="access_nav_button" class="side-btn" data-view="access" onclick="switchView('access', this)" style="__ADMIN_NAV_STYLE__"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"></path><path d="M5 20a7 7 0 0 1 14 0"></path><path d="M18 7h3"></path><path d="M19.5 5.5v3"></path></svg></span><span>Access</span></button>
           <button id="settings_nav_button" class="side-btn" data-view="settings" onclick="switchView('settings', this)" style="__ADMIN_NAV_STYLE__"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg></span><span>Settings</span></button>
@@ -1937,19 +2015,37 @@ linear-gradient(to right, transparent, transparent)}
           </div>
 
           <section class="card overview-top-card">
-            <div class="overview-history-chart">
-              <div class="overview-history-head">
-                <div id="ovHistoryTitle" class="overview-history-title">Results by Date</div>
-                <div class="overview-history-meta">
-                  <div class="overview-history-legend">
-                    <div class="overview-history-legend-item"><span class="overview-history-legend-dot success"></span><span id="ovLegendSuccess">Completed</span></div>
-                    <div class="overview-history-legend-item"><span class="overview-history-legend-dot failed"></span><span id="ovLegendFailed">Failed</span></div>
-                    <div class="overview-history-legend-item"><span class="overview-history-legend-dot unavailable"></span><span id="ovLegendUnavailable">Unavailable</span></div>
+            <div class="overview-top-grid">
+              <div class="overview-history-chart">
+                <div class="overview-history-head">
+                  <div id="ovHistoryTitle" class="overview-history-title">Results by Date</div>
+                  <div class="overview-history-meta">
+                    <div class="overview-history-legend">
+                      <div class="overview-history-legend-item"><span class="overview-history-legend-dot success"></span><span id="ovLegendSuccess">Completed</span></div>
+                      <div class="overview-history-legend-item"><span class="overview-history-legend-dot failed"></span><span id="ovLegendFailed">Failed</span></div>
+                      <div class="overview-history-legend-item"><span class="overview-history-legend-dot unavailable"></span><span id="ovLegendUnavailable">Unavailable</span></div>
+                    </div>
+                    <div id="ovHistoryBadges" class="overview-history-badges"></div>
                   </div>
-                  <div id="ovHistoryBadges" class="overview-history-badges"></div>
                 </div>
+                <div id="ovHistoryBars" class="overview-history-bars"></div>
               </div>
-              <div id="ovHistoryBars" class="overview-history-bars"></div>
+              <aside class="overview-greeting-card">
+                <div class="overview-greeting-head">
+                  <div id="ovGreetingKicker" class="overview-greeting-kicker">Daily Greeting</div>
+                  <span id="ovGreetingRole" class="auth-role auth-role-__AUTH_ROLE_CLASS__">__AUTH_ROLE_DISPLAY__</span>
+                </div>
+                <div class="overview-greeting-visual">
+                  <div class="overview-greeting-orbit">
+                    <div id="ovGreetingAvatar" class="overview-greeting-avatar">EV</div>
+                  </div>
+                </div>
+                <div id="ovGreetingTitle" class="overview-greeting-title">Good Morning</div>
+                <div id="ovGreetingSub" class="overview-greeting-sub">Continue your workflow and keep today's runs on track.</div>
+                <div class="overview-greeting-footer">
+                  <div id="ovGreetingEmail" class="overview-greeting-email">__AUTH_EMAIL_DISPLAY__</div>
+                </div>
+              </aside>
             </div>
           </section>
 
@@ -1963,7 +2059,10 @@ linear-gradient(to right, transparent, transparent)}
               </div>
               <div class="overview-note">
                 <span id="overviewText">No run selected.</span>
-                <button class="btn blue" onclick="switchView('runs')">Go To Runs</button>
+                <button class="overview-cta" onclick="switchView('runs')">
+                  <span id="overviewRunCtaLabel">Open Run Center</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12"></path><path d="m13 6 6 6-6 6"></path></svg>
+                </button>
               </div>
               <div class="mini">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)"><span>Overall progress</span><span id="pctText">0%</span></div>
@@ -1981,18 +2080,26 @@ linear-gradient(to right, transparent, transparent)}
               <div class="right-top">
                 <div id="runSummaryTitle" style="font-size:20px;font-weight:700">Run Summary</div>
                 <div id="runSummarySub" style="font-size:12px;color:var(--muted);margin-top:3px">Overview stays clean. Running tools live in the Runs tab.</div>
-                <div class="overview-auth-card">
-                  <div class="overview-auth-copy">
-                    <div id="overviewAccountLabel" class="overview-auth-k">Logged in account</div>
-                    <div id="overviewAccountEmail" class="overview-auth-v" title="__AUTH_EMAIL_TITLE__">__AUTH_EMAIL_DISPLAY__</div>
-                    <div id="overviewAccountMeta" class="overview-auth-meta">Current active session</div>
-                  </div>
-                  <span id="overviewAccountRole" class="auth-role auth-role-__AUTH_ROLE_CLASS__">__AUTH_ROLE_DISPLAY__</span>
-                </div>
                 <div class="stack">
-                  <div class="item"><div><div class="t">Selected job</div><div id="kpiJob" class="d">-</div></div><button class="btn" onclick="switchView('runs')">Open Runs</button></div>
-                  <div class="item"><div><div class="t">Stored jobs</div><div id="jobCountText" class="d">0 jobs loaded</div></div><button class="btn" onclick="refreshJobs()">Sync</button></div>
-                  <div class="item"><div><div class="t">Success / Failed</div><div id="kpiSF" class="d">0 / 0</div></div><button class="btn" onclick="switchView('activities')">View</button></div>
+                  <div class="item">
+                    <div class="item-copy"><div class="t">Selected job</div><div id="kpiJob" class="d">-</div></div>
+                    <button class="summary-action" onclick="switchView('runs')"><svg viewBox="0 0 24 24"><path d="M5 12h12"></path><path d="m13 6 6 6-6 6"></path></svg><span>Open Runs</span></button>
+                  </div>
+                  <div class="item">
+                    <div class="item-copy"><div class="t">Stored jobs</div><div id="jobCountText" class="d">0 jobs loaded</div></div>
+                    <button id="overviewSyncButton" class="summary-action sync" onclick="refreshJobsWithFeedback(this)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.36 6.36"></path><path d="M3 12A9 9 0 0 1 18.36 5.64"></path><path d="M3 16v-4h4"></path><path d="M21 8v4h-4"></path></svg><span id="overviewSyncLabel">Sync</span></button>
+                  </div>
+                  <div class="item">
+                    <div class="item-copy"><div class="t">Success / Failed</div><div id="kpiSF" class="d">0 / 0</div></div>
+                    <button class="summary-action" onclick="switchView('activities')"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg><span>View</span></button>
+                  </div>
+                </div>
+                <div class="overview-side-panels single">
+                  <section class="overview-side-card">
+                    <div id="ovModeSplitTitle" class="overview-side-title">Mode split</div>
+                    <div id="ovModeSplitSub" class="overview-side-sub">Distribution of tracked jobs by mode.</div>
+                    <div id="ovModeSplit" class="overview-mode-list"></div>
+                  </section>
                 </div>
               </div>
             </aside>
@@ -2019,9 +2126,15 @@ linear-gradient(to right, transparent, transparent)}
                 <div class="field"><label>Drive Folder ID</label><input id="drive_id" /></div>
               </div>
               <div class="run-actions">
-                <label class="run-overwrite">
-                  <input id="force_run_all" type="checkbox" />
-                  <span id="overwriteRunLabel">Overwrite</span>
+                <label class="run-overwrite-card">
+                  <span class="run-overwrite-copy">
+                    <span id="overwriteRunLabel" class="run-overwrite-title">Overwrite</span>
+                    <span id="overwriteRunHelp" class="run-overwrite-help">Always rerun and replace previous results</span>
+                  </span>
+                  <span class="run-overwrite-switch">
+                    <input id="force_run_all" type="checkbox" checked />
+                    <span class="run-overwrite-slider"></span>
+                  </span>
                 </label>
                 <div class="run-actions-main">
                   <button class="btn action-btn start" onclick="startJob()">
@@ -2142,55 +2255,6 @@ linear-gradient(to right, transparent, transparent)}
                 <div id="projectsSnapshotAction"></div>
               </div>
               <div id="projectsSnapshot" class="timeline" style="margin-top:10px"></div>
-            </section>
-          </div>
-        </section>
-
-        <section id="view-tasks" class="view">
-          <div class="headline">
-            <div class="h1">Tasks</div>
-            <div class="state">Workload breakdown</div>
-          </div>
-          <div class="cards-3">
-            <section class="card pad">
-              <div class="k">Done</div>
-              <div id="tasksDone" class="big-number">0</div>
-              <div class="s">rows processed</div>
-            </section>
-            <section class="card pad">
-              <div class="k">Pending</div>
-              <div id="tasksPending" class="big-number">0</div>
-              <div class="s">remaining rows</div>
-            </section>
-            <section class="card pad">
-              <div class="k">Success</div>
-              <div id="tasksSuccess" class="big-number">0</div>
-              <div class="s">rows passed</div>
-            </section>
-            <section class="card pad">
-              <div class="k">Failed</div>
-              <div id="tasksFailed" class="big-number">0</div>
-              <div class="s">rows need retry</div>
-            </section>
-          </div>
-          <div class="bottom">
-            <section class="card pad">
-              <div style="font-size:15px;font-weight:600">Task Distribution</div>
-              <div id="tasksDistribution" class="list" style="margin-top:10px"></div>
-            </section>
-            <section class="card pad">
-              <div style="font-size:15px;font-weight:600">Progress Over Time</div>
-              <div id="tasksTimelineBars" class="mini-bars" style="margin-top:10px"></div>
-            </section>
-          </div>
-          <div class="bottom">
-            <section class="card pad">
-              <div style="font-size:15px;font-weight:600">Error Queue</div>
-              <div id="tasksErrors" class="list" style="margin-top:10px"></div>
-            </section>
-            <section class="card pad">
-              <div style="font-size:15px;font-weight:600">Current Progress</div>
-              <div id="tasksProgressMeta" class="timeline" style="margin-top:10px"></div>
             </section>
           </div>
         </section>
@@ -2439,6 +2503,7 @@ linear-gradient(to right, transparent, transparent)}
 let currentJobId = null;
 let pollTimer = null;
 let jobsTimer = null;
+let syncFeedbackTimer = null;
 let jobsCache = [];
 let currentJobSnapshot = null;
 let currentLogsCache = [];
@@ -2493,13 +2558,24 @@ const I18N = {
     openRuns: 'Mở Runs',
     view: 'Xem',
     sync: 'Đồng bộ',
-    goToRuns: 'Đi tới Runs',
+    syncing: 'Đang đồng bộ',
+    synced: 'Đã đồng bộ',
+    syncFailed: 'Lỗi',
+    goToRuns: 'Mở Run Center',
     selectedJob: 'Job đang chọn',
     storedJobs: 'Job đã lưu',
     successFailed: 'Thành công / Lỗi',
-    loggedInAccount: 'Acc đang đăng nhập',
-    overviewAccountMeta: 'Phiên đang hoạt động',
     overallProgress: 'Tiến độ tổng',
+    overviewModeSplit: 'Tỉ lệ theo mode',
+    overviewModeSplitSub: 'Phân bổ job đang theo dõi theo từng mode.',
+    overviewModeShareFmt: (count, pct) => `${count} job · ${pct}%`,
+    overviewModeSplitEmpty: 'Chưa có dữ liệu mode để thống kê.',
+    overviewGreetingLabel: 'Lời chào hôm nay',
+    overviewGreetingMorning: 'Chào buổi sáng',
+    overviewGreetingAfternoon: 'Chào buổi chiều',
+    overviewGreetingEvening: 'Chào buổi tối',
+    overviewGreetingFallbackName: 'bạn',
+    overviewGreetingSub: 'Tiếp tục theo dõi job và giữ nhịp công việc hôm nay.',
     jobsToday: 'Tổng số job hôm nay',
     avgSuccess: 'Tỉ lệ success trung bình',
     latestJob: 'Job chạy gần nhất',
@@ -2523,6 +2599,7 @@ const I18N = {
     runConfig: 'Cấu hình chạy',
     runConfigHelp: 'Chia sẻ quyền Editor cho Sheet và Drive trước khi chạy.',
     runShareLabel: 'Chia sẻ Sheet & Drive folder cho (quyền Editor):',
+    overwriteRunHelp: 'Luôn chạy lại và ghi đè kết quả cũ.',
     runMode: 'Chế độ chạy',
     columnMapping: 'Column Mapping',
     seeding: 'Seeding',
@@ -2533,6 +2610,7 @@ const I18N = {
     runModeScanHelp: 'Scan bỏ qua Chrome nếu chỉ quét dữ liệu và dùng bộ cột scan mặc định.',
     addBlock: '+ Thêm Block',
     captureFive: 'Chụp 5 tấm / 1 link',
+    captureFiveHelp: 'Bật để mỗi link chụp đủ 5 ảnh và giữ nhịp booking ổn định.',
     chrome: 'Chrome',
     postName: 'Tên Post',
     textColumn: 'Text Column',
@@ -2765,13 +2843,24 @@ const I18N = {
     openRuns: 'Open Runs',
     view: 'View',
     sync: 'Sync',
-    goToRuns: 'Go To Runs',
+    syncing: 'Syncing',
+    synced: 'Synced',
+    syncFailed: 'Failed',
+    goToRuns: 'Open Run Center',
     selectedJob: 'Selected job',
     storedJobs: 'Stored jobs',
     successFailed: 'Success / Failed',
-    loggedInAccount: 'Logged in account',
-    overviewAccountMeta: 'Current active session',
     overallProgress: 'Overall progress',
+    overviewModeSplit: 'Mode split',
+    overviewModeSplitSub: 'Tracked job distribution by mode.',
+    overviewModeShareFmt: (count, pct) => `${count} jobs · ${pct}%`,
+    overviewModeSplitEmpty: 'No mode data available yet.',
+    overviewGreetingLabel: 'Daily greeting',
+    overviewGreetingMorning: 'Good morning',
+    overviewGreetingAfternoon: 'Good afternoon',
+    overviewGreetingEvening: 'Good evening',
+    overviewGreetingFallbackName: 'there',
+    overviewGreetingSub: 'Keep your runs on track and continue today’s workflow.',
     jobsToday: 'Jobs today',
     avgSuccess: 'Average success rate',
     latestJob: 'Latest job',
@@ -2795,6 +2884,7 @@ const I18N = {
     runConfig: 'Run Config',
     runConfigHelp: 'Share Editor access for the Sheet and Drive folder before running.',
     runShareLabel: 'Share Sheet & Drive folder with (Editor permission):',
+    overwriteRunHelp: 'Always rerun and replace previous results.',
     runMode: 'Run mode',
     columnMapping: 'Column Mapping',
     seeding: 'Seeding',
@@ -2805,6 +2895,7 @@ const I18N = {
     runModeScanHelp: 'Scan skips Chrome when possible and uses the default scan columns.',
     addBlock: '+ Add Block',
     captureFive: 'Capture 5 images / link',
+    captureFiveHelp: 'Enable this to capture all 5 images per link for booking runs.',
     chrome: 'Chrome',
     postName: 'Post Name',
     textColumn: 'Text Column',
@@ -3024,6 +3115,46 @@ function t(key) {
 
 function getRoleLabel(role = authState.role) {
   return String(role || '').toLowerCase() === 'admin' ? t('roleAdmin') : t('roleUser');
+}
+
+function deriveGreetingName(email = authState.email) {
+  const local = String(email || '').split('@')[0] || '';
+  const parts = local.split(/[._-]+/).map(part => part.replace(/\\d+/g, '').trim()).filter(Boolean);
+  const base = parts[0] || '';
+  if (!base) return t('overviewGreetingFallbackName');
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+function deriveGreetingInitials(email = authState.email) {
+  const local = String(email || '').split('@')[0] || '';
+  const parts = local.split(/[._-]+/).map(part => part.replace(/\\d+/g, '').trim()).filter(Boolean);
+  const initials = (parts.slice(0, 2).map(part => part.charAt(0).toUpperCase()).join('') || 'EV').slice(0, 2);
+  return initials || 'EV';
+}
+
+function getGreetingTextByHour(date = new Date()) {
+  const hour = Number(date.getHours());
+  if (hour < 12) return t('overviewGreetingMorning');
+  if (hour < 18) return t('overviewGreetingAfternoon');
+  return t('overviewGreetingEvening');
+}
+
+function renderOverviewGreeting() {
+  const kicker = document.getElementById('ovGreetingKicker');
+  if (kicker) kicker.textContent = t('overviewGreetingLabel');
+  const title = document.getElementById('ovGreetingTitle');
+  if (title) title.textContent = `${getGreetingTextByHour()}, ${deriveGreetingName()}`;
+  const sub = document.getElementById('ovGreetingSub');
+  if (sub) sub.textContent = t('overviewGreetingSub');
+  const avatar = document.getElementById('ovGreetingAvatar');
+  if (avatar) avatar.textContent = deriveGreetingInitials();
+  const email = document.getElementById('ovGreetingEmail');
+  if (email) email.textContent = authState.email || '-';
+  const role = document.getElementById('ovGreetingRole');
+  if (role) {
+    role.textContent = getRoleLabel();
+    role.className = `auth-role auth-role-${authState.role || 'user'} overview-greeting-role`;
+  }
 }
 
 function isAdminUser() {
@@ -3273,7 +3404,17 @@ function renderMappingEditor() {
   const addRow = document.querySelector('.mapping-add-row');
   if (addRow) {
     const bookingExtra = currentRunMode === 'booking'
-      ? `<label class="mapping-check"><input type="checkbox" ${captureFivePerLink ? 'checked' : ''} onchange="toggleCaptureFivePerLink(this.checked)" /> <span>${esc(t('captureFive'))}</span></label>`
+      ? `<label class="mapping-toggle-card">
+          <span class="mapping-toggle-copy">
+            <span class="mapping-toggle-kicker">${esc(t('booking'))}</span>
+            <span class="mapping-toggle-title">${esc(t('captureFive'))}</span>
+            <span class="mapping-toggle-help">${esc(t('captureFiveHelp'))}</span>
+          </span>
+          <span class="mapping-toggle-switch">
+            <input type="checkbox" ${captureFivePerLink ? 'checked' : ''} onchange="toggleCaptureFivePerLink(this.checked)" />
+            <span class="mapping-toggle-slider"></span>
+          </span>
+        </label>`
       : '';
     addRow.innerHTML = `<button id="mappingAddButton" class="btn" type="button" onclick="addMappingBlock()">${esc(t('addBlock'))}</button>${bookingExtra}`;
   }
@@ -3354,12 +3495,10 @@ function applyLanguage() {
   setText('#view-overview .h1', t('overview'));
   setText('#runTitleText', formatRunTitle());
   setText('#view-projects .h1', t('projects'));
-  setText('#view-tasks .h1', t('tasks'));
   setText('#view-activities .h1', t('activities'));
   setText('#view-access .h1', t('access'));
   setText('#view-settings .h1', t('settings'));
   setText('#view-projects .state', t('projectsState'));
-  setText('#view-tasks .state', t('tasksState'));
   setText('#view-activities .state', t('activitiesState'));
   setText('#view-access .state', t('accessState'));
   setText('#view-settings .state', t('settingsState'));
@@ -3375,18 +3514,19 @@ function applyLanguage() {
   setText('#ovLegendSuccess', t('overviewCompletedLegend'));
   setText('#ovLegendFailed', t('overviewFailedLegend'));
   setText('#ovLegendUnavailable', t('overviewUnavailableLegend'));
-  setText('#view-overview .overview-note .btn', t('goToRuns'));
+  setText('#ovModeSplitTitle', t('overviewModeSplit'));
+  setText('#ovModeSplitSub', t('overviewModeSplitSub'));
+  setText('#overviewRunCtaLabel', t('goToRuns'));
   setText('#runSummaryTitle', t('runSummary'));
   setText('#runSummarySub', t('overviewClean'));
   setText('#view-overview .item:nth-child(1) .t', t('selectedJob'));
   setText('#view-overview .item:nth-child(1) .btn', t('openRuns'));
   setText('#view-overview .item:nth-child(2) .t', t('storedJobs'));
-  setText('#view-overview .item:nth-child(2) .btn', t('sync'));
+  setText('#overviewSyncLabel', t('sync'));
   setText('#view-overview .item:nth-child(3) .t', t('successFailed'));
   setText('#view-overview .item:nth-child(3) .btn', t('view'));
-  setText('#overviewAccountLabel', t('loggedInAccount'));
-  setText('#overviewAccountMeta', t('overviewAccountMeta'));
   setText('#view-overview .mini > div span:first-child', t('overallProgress'));
+  renderOverviewGreeting();
   setNthText('#view-overview .day', 0, t('totalScope'));
   setNthText('#view-overview .day', 1, t('done'));
   setNthText('#view-overview .day', 2, t('success'));
@@ -3402,6 +3542,7 @@ function applyLanguage() {
   setText('label[for="drive_id"]', t('driveFolder'));
   setText('#startJobLabel', t('startJob'));
   setText('#overwriteRunLabel', t('overwriteRun'));
+  setText('#overwriteRunHelp', t('overwriteRunHelp'));
   setText('#runMonitorKicker', t('monitorKicker'));
   setText('#runMonitorTitle', t('monitorTitle'));
   setText('#runMonitorJobLabel', t('monitorJob'));
@@ -3421,19 +3562,6 @@ function applyLanguage() {
   setText('#view-projects .cards-3 .card:nth-child(3) .k', t('largestGroup'));
   setText('#projectsListTitle', t('groupedRegistry'));
   setText('#projectsSnapshotTitle', t('groupSnapshot'));
-
-  setText('#view-tasks .cards-3 .card:nth-child(1) .k', t('done'));
-  setText('#view-tasks .cards-3 .card:nth-child(1) .s', t('rowsProcessed'));
-  setText('#view-tasks .cards-3 .card:nth-child(2) .k', t('pending'));
-  setText('#view-tasks .cards-3 .card:nth-child(2) .s', t('rowsRemaining'));
-  setText('#view-tasks .cards-3 .card:nth-child(3) .k', t('success'));
-  setText('#view-tasks .cards-3 .card:nth-child(3) .s', t('rowsPassed'));
-  setText('#view-tasks .cards-3 .card:nth-child(4) .k', t('failed'));
-  setText('#view-tasks .cards-3 .card:nth-child(4) .s', t('rowsNeedRetry'));
-  setText('#view-tasks .bottom:nth-of-type(1) .card:first-child > div:first-child', t('taskDistribution'));
-  setText('#view-tasks .bottom:nth-of-type(1) .card:last-child > div:first-child', t('progressOverTime'));
-  setText('#view-tasks .bottom:nth-of-type(2) .card:first-child > div:first-child', t('errorQueue'));
-  setText('#view-tasks .bottom:nth-of-type(2) .card:last-child > div:first-child', t('currentProgress'));
 
   setText('#view-activities .card > div:first-child', t('recentTimeline'));
 
@@ -3564,7 +3692,6 @@ function setLanguage(lang) {
   applyLanguage();
   renderOverview();
   renderProjects();
-  renderTasks(currentJobSnapshot?.summary || null, currentJobSnapshot?.error_rows || {}, currentLogsCache);
   renderActivities(currentLogsCache);
   renderRunMonitor(currentJobSnapshot, currentLogsCache);
   if (String(document.getElementById('sheet_url')?.value || '').trim()) scheduleSheetNameSuggestions(false);
@@ -3694,6 +3821,13 @@ function buildOverviewDateBuckets(jobs, limit = 7) {
   return [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)).slice(-limit);
 }
 
+function toDateKeyFromDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function getJobSummary(job) {
   return job?.summary || { done: 0, total: 0, success: 0, failed: 0, eta: '---' };
 }
@@ -3777,7 +3911,7 @@ function openProjectInRuns(jobId) {
   sheet_url.value = request.sheet_url || '';
   sheet_name.value = request.sheet_name || '';
   drive_id.value = request.drive_id || '';
-  document.getElementById('force_run_all').checked = !!request.force_run_all;
+  document.getElementById('force_run_all').checked = request.force_run_all !== false;
   currentMappingBlocksByMode[mode] = (request.mappings || []).length
     ? request.mappings.map((block, index) => sanitizeMappingBlockForMode(mode, block, index + 1))
     : [defaultMappingBlock(mode, 1)];
@@ -3893,21 +4027,14 @@ function groupJobsBySheet(jobs) {
   }).sort((a, b) => b.count - a.count);
 }
 
-function buildProgressBuckets(logs) {
-  const buckets = new Map();
-  (logs || []).forEach(log => {
-    const dt = new Date(log.ts || '');
-    const key = Number.isNaN(dt.getTime())
-      ? 'unknown'
-      : `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
-    buckets.set(key, (buckets.get(key) || 0) + 1);
-  });
-  return [...buckets.entries()].slice(-6);
-}
-
 function renderOverview() {
   const todayKey = toCalendarDayKey(new Date().toISOString());
   const todayJobs = jobsCache.filter(j => toCalendarDayKey(j.created_at || '') === todayKey);
+  const modeCounts = ['seeding', 'booking', 'scan'].map(mode => ({
+    mode,
+    count: jobsCache.filter(job => getJobMode(job) === mode).length,
+  }));
+  const modeTotal = modeCounts.reduce((sum, item) => sum + item.count, 0);
   const ratios = jobsCache
     .map(j => {
       const s = getJobSummary(j);
@@ -3926,6 +4053,25 @@ function renderOverview() {
     : t('noRecentRun');
   document.getElementById('ovTopError').textContent = topError ? String(topError[1]) : '-';
   document.getElementById('ovTopErrorMeta').textContent = topError ? topError[0] : t('noRecurring');
+  const modeSplitHost = document.getElementById('ovModeSplit');
+  if (modeSplitHost) {
+    if (!modeTotal) {
+      modeSplitHost.innerHTML = `<div class="overview-side-empty">${esc(t('overviewModeSplitEmpty'))}</div>`;
+    } else {
+      modeSplitHost.innerHTML = modeCounts.map(item => {
+        const pct = modeTotal ? Math.round((item.count / modeTotal) * 100) : 0;
+        const width = item.count > 0 ? Math.max(8, Math.round((item.count / modeTotal) * 100)) : 0;
+        return `<div class="overview-mode-row">
+          <div class="overview-mode-head">
+            <span class="mode-pill mode-${item.mode}">${esc(getRunModeLabel(item.mode))}</span>
+            <span class="overview-mode-value">${item.count}</span>
+          </div>
+          <div class="overview-mode-track"><span class="overview-mode-fill mode-${item.mode}" style="width:${width}%"></span></div>
+          <div class="overview-mode-meta">${esc(t('overviewModeShareFmt')(item.count, pct))}</div>
+        </div>`;
+      }).join('');
+    }
+  }
 
   const historyBars = document.getElementById('ovHistoryBars');
   const historyBadges = document.getElementById('ovHistoryBadges');
@@ -4074,39 +4220,6 @@ function renderProjects() {
         `<div class="timeline-item"><strong>${t('summaryLabel')}</strong><div style="white-space:pre-line">${esc(completionText || '-')}</div></div>`,
       ].join('')
     : `<div class="timeline-item"><strong>${t('noProjectGroup')}</strong><div>${t('startOrSelect')}</div></div>`;
-}
-
-function renderTasks(summary, errorRows, logs) {
-  const s = summary || { done: 0, success: 0, failed: 0, total: 0 };
-  const pending = Math.max(0, (s.total || 0) - (s.done || 0));
-  document.getElementById('tasksDone').textContent = s.done || 0;
-  document.getElementById('tasksPending').textContent = pending;
-  document.getElementById('tasksSuccess').textContent = s.success || 0;
-  document.getElementById('tasksFailed').textContent = s.failed || 0;
-  document.getElementById('tasksDistribution').innerHTML = [
-    [t('totalScope'), s.total || 0],
-    [t('processed'), s.done || 0],
-    [t('pending'), pending],
-    [t('succeeded'), s.success || 0],
-    [t('failedLabel'), s.failed || 0],
-  ].map(([a,b]) => `<div class="list-row"><span>${a}</span><span>${b}</span></div>`).join('');
-  const keys = Object.keys(errorRows || {});
-  document.getElementById('tasksErrors').innerHTML = keys.length
-    ? keys.sort((a,b)=>Number(a)-Number(b)).slice(0, 12).map(k => `<div class="list-row"><span>${t('rowFmt')(k)}</span><span>${esc(errorRows[k])}</span></div>`).join('')
-    : `<div class="list-row"><span>${t('noErrors')}</span><span>${t('clear')}</span></div>`;
-  const buckets = buildProgressBuckets(logs || []);
-  const maxVal = Math.max(1, ...buckets.map(([,v]) => v));
-  document.getElementById('tasksTimelineBars').innerHTML = buckets.length
-    ? buckets.map(([label, val], idx, arr) => {
-        const h = Math.max(20, Math.round((val / maxVal) * 140));
-        return `<div class="mini-bar"><div class="mini-bar-value">${val}</div><div class="mini-bar-fill ${idx === arr.length - 1 ? 'active' : ''}" style="height:${h}px"></div><div class="mini-bar-label">${esc(label)}</div></div>`;
-      }).join('')
-    : `<div class="list-row"><span>${t('noProgressHistory')}</span><span>-</span></div>`;
-  document.getElementById('tasksProgressMeta').innerHTML = [
-    `<div class="timeline-item"><strong>${t('done')} / ${t('totalScope')}</strong><div>${s.done || 0} / ${s.total || 0}</div></div>`,
-    `<div class="timeline-item"><strong>${t('pendingFailed')}</strong><div>${pending} / ${s.failed || 0}</div></div>`,
-    `<div class="timeline-item"><strong>${t('eta')}</strong><div>${esc(s.eta || '---')}</div></div>`,
-  ].join('');
 }
 
 function renderActivities(logs) {
@@ -4697,16 +4810,7 @@ function syncAuthUI() {
     roleBadge.textContent = getRoleLabel();
     roleBadge.className = `auth-role auth-role-${authState.role || 'user'}`;
   }
-  const overviewAccountEmail = document.getElementById('overviewAccountEmail');
-  if (overviewAccountEmail) {
-    overviewAccountEmail.textContent = authState.email || '-';
-    overviewAccountEmail.title = authState.email || '-';
-  }
-  const overviewAccountRole = document.getElementById('overviewAccountRole');
-  if (overviewAccountRole) {
-    overviewAccountRole.textContent = getRoleLabel();
-    overviewAccountRole.className = `auth-role auth-role-${authState.role || 'user'}`;
-  }
+  renderOverviewGreeting();
   const accessButton = document.getElementById('access_nav_button');
   if (accessButton) accessButton.style.display = isAdminUser() ? 'flex' : 'none';
   const settingsButton = document.getElementById('settings_nav_button');
@@ -4824,6 +4928,8 @@ async function loadDefaults() {
   sheet_url.value = d.sheet_url || s.sheet_url || '';
   sheet_name.value = d.sheet_name || s.sheet_name || '';
   drive_id.value = d.drive_id || s.drive_id || '';
+  const overwriteNode = document.getElementById('force_run_all');
+  if (overwriteNode) overwriteNode.checked = true;
   document.getElementById('settings_viewport_width').value = s.viewport_width || 1920;
   document.getElementById('settings_viewport_height').value = s.viewport_height || 1400;
   document.getElementById('settings_page_timeout_ms').value = s.page_timeout_ms || 3000;
@@ -4989,9 +5095,37 @@ async function refreshJobs() {
     document.getElementById('jobsBody').innerHTML = rows;
     renderOverview();
     renderProjects();
+    return true;
   } catch (e) {
     setStatus('Load jobs error: ' + e.message, 'failed');
+    return false;
   }
+}
+
+function resetSyncFeedback(btn) {
+  if (!btn) return;
+  btn.classList.remove('is-loading', 'is-done', 'is-error');
+  btn.disabled = false;
+  const label = btn.querySelector('span');
+  if (label) label.textContent = t('sync');
+}
+
+async function refreshJobsWithFeedback(btn) {
+  if (!btn || btn.classList.contains('is-loading')) return;
+  if (syncFeedbackTimer) {
+    clearTimeout(syncFeedbackTimer);
+    syncFeedbackTimer = null;
+  }
+  const label = btn.querySelector('span');
+  btn.classList.remove('is-done', 'is-error');
+  btn.classList.add('is-loading');
+  btn.disabled = true;
+  if (label) label.textContent = t('syncing');
+  const ok = await refreshJobs();
+  btn.classList.remove('is-loading');
+  btn.classList.add(ok ? 'is-done' : 'is-error');
+  if (label) label.textContent = ok ? t('synced') : t('syncFailed');
+  syncFeedbackTimer = setTimeout(() => resetSyncFeedback(btn), 1400);
 }
 
 function selectJob(jobId) {
@@ -5019,7 +5153,6 @@ async function pollCurrent() {
     updateRunActionButtons(st);
     renderOverview();
     renderProjects();
-    renderTasks(s, st.error_rows || {}, logs);
     renderActivities(logs);
   } catch (e) {
     setStatus('Poll error: ' + e.message, 'failed');
@@ -5038,7 +5171,6 @@ async function init() {
   await refreshJobs();
   await pollCurrent();
   renderOverview();
-  renderTasks(null, {}, []);
   renderActivities([]);
   renderRunMonitor(null, []);
   renderAccessPolicySummary(currentAccessPolicy);
