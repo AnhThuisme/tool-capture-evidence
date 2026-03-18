@@ -19,7 +19,6 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
-import requests
 from starlette.middleware.sessions import SessionMiddleware
 
 import evidence
@@ -532,13 +531,7 @@ def _smtp_config() -> dict[str, Any]:
     use_ssl = str(os.getenv("SMTP_USE_SSL", "")).strip().lower() in {"1", "true", "yes", "on"}
     use_tls = str(os.getenv("SMTP_USE_TLS", "1")).strip().lower() in {"1", "true", "yes", "on"}
     if not host or not from_email:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Chưa cấu hình kênh gửi OTP. Thêm RESEND_API_KEY + RESEND_FROM_EMAIL "
-                "hoặc GMAIL_SMTP_EMAIL + GMAIL_SMTP_APP_PASSWORD"
-            ),
-        )
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Gmail SMTP. Hãy thêm GMAIL_SMTP_EMAIL và GMAIL_SMTP_APP_PASSWORD")
     return {
         "host": host,
         "port": port,
@@ -547,21 +540,6 @@ def _smtp_config() -> dict[str, Any]:
         "from_email": from_email,
         "use_ssl": use_ssl,
         "use_tls": use_tls,
-    }
-
-
-def _resend_config() -> dict[str, Any]:
-    api_key = str(os.getenv("RESEND_API_KEY", "")).strip()
-    from_email = _normalize_email(str(os.getenv("RESEND_FROM_EMAIL", "")).strip())
-    from_name = str(os.getenv("RESEND_FROM_NAME", "Evidence Security")).strip() or "Evidence Security"
-    api_base = str(os.getenv("RESEND_API_BASE", "https://api.resend.com")).strip().rstrip("/")
-    if not api_key or not from_email:
-        return {}
-    return {
-        "api_key": api_key,
-        "from_email": from_email,
-        "from_name": from_name,
-        "api_base": api_base,
     }
 
 
@@ -685,45 +663,7 @@ Write-Output 'OK'
         raise HTTPException(status_code=500, detail=f"Không gửi được mã qua Outlook: {detail}")
 
 
-def _send_login_code_via_resend(email: str, code: str) -> None:
-    config = _resend_config()
-    if not config:
-        raise HTTPException(status_code=500, detail="Chưa cấu hình Resend API")
-    subject, plain_body, html_body = _build_login_code_email(email, code)
-    payload = {
-        "from": formataddr((config["from_name"], config["from_email"])),
-        "to": [email],
-        "subject": subject,
-        "html": html_body,
-        "text": plain_body,
-    }
-    try:
-        resp = requests.post(
-            f'{config["api_base"]}/emails',
-            headers={
-                "Authorization": f'Bearer {config["api_key"]}',
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=30,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=500, detail=f"Resend API unreachable: {exc}") from exc
-    if 200 <= resp.status_code < 300:
-        return
-    try:
-        data = resp.json()
-    except Exception:
-        data = {}
-    detail = data.get("message") or data.get("error") or resp.text or f"HTTP {resp.status_code}"
-    raise HTTPException(status_code=500, detail=f"Resend gửi OTP thất bại: {detail}")
-
-
 def _send_login_code(email: str, code: str) -> None:
-    resend_config = _resend_config()
-    if resend_config:
-        _send_login_code_via_resend(email, code)
-        return
     try:
         config = _smtp_config()
         subject, plain_body, html_body = _build_login_code_email(email, code)
@@ -1552,21 +1492,6 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-textarea::placeholder{color:var(--muted)}
 .access-kicker{font-size:11px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:#7b8aa5;margin-bottom:8px}
 .access-headline .state{display:inline-flex}
-.access-stats{margin-top:8px}
-.access-stat{position:relative;overflow:hidden;min-height:138px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft)}
-.access-stat::after{content:"";position:absolute;inset:auto -28px -34px auto;width:120px;height:120px;border-radius:999px;background:rgba(91,147,211,.08);filter:blur(2px)}
-.access-stat-main{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;min-height:108px}
-.access-stat-left{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-width:0}
-.access-stat-right{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;text-align:right;min-width:0}
-.access-stat .k{font-size:12px;font-weight:700;letter-spacing:.02em}
-.access-stat .big-number{font-size:42px;line-height:1}
-.access-stat .s{display:block !important;margin-top:10px;font-size:12px;color:var(--muted);max-width:220px}
-.access-stat-right .s{margin-left:auto}
-.access-stat-icon{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;margin-bottom:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:#dbe6f5}
-.access-stat-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
-.access-stat.access-stat-allowed::after{background:rgba(91,147,211,.12)}
-.access-stat.access-stat-admin::after{background:rgba(52,195,143,.12)}
-.access-stat.access-stat-role::after{background:rgba(245,158,11,.12)}
 .access-layout{display:grid;grid-template-columns:1.45fr .95fr;gap:12px;margin-top:12px}
 .access-editor,.access-summary-card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.01)),var(--panel)}
 .access-section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px}
@@ -2025,7 +1950,7 @@ linear-gradient(to right, transparent, transparent)}
 .mini-bar-label{font-size:11px;color:var(--muted)}
 .mini-bar-value{font-size:11px;color:#344054}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
-@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.access-stat-main{grid-template-columns:1fr}.access-stat-right{align-items:flex-start;text-align:left}.access-stat-right .s{margin-left:0}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
+@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
 </style>
 </head>
 <body>
@@ -2359,44 +2284,6 @@ linear-gradient(to right, transparent, transparent)}
               <div class="h1">Access</div>
             </div>
             <div class="state">Admin manages user access</div>
-          </div>
-          <div class="cards-3 access-stats">
-            <section class="card pad access-stat access-stat-allowed">
-              <div class="access-stat-main">
-                <div class="access-stat-left">
-                  <div class="access-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h16"></path><path d="M12 4v16"></path></svg></div>
-                  <div class="k" id="accessAllowedCountLabel">Allowed emails</div>
-                </div>
-                <div class="access-stat-right">
-                  <div id="accessAllowedCount" class="big-number">0</div>
-                  <div class="s" id="accessAllowedCountSub">emails can request OTP login</div>
-                </div>
-              </div>
-            </section>
-            <section class="card pad access-stat access-stat-admin">
-              <div class="access-stat-main">
-                <div class="access-stat-left">
-                  <div class="access-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"></path><path d="M5 20a7 7 0 0 1 14 0"></path><path d="M18 7h3"></path></svg></div>
-                  <div class="k" id="accessAdminCountLabel">Admin emails</div>
-                </div>
-                <div class="access-stat-right">
-                  <div id="accessAdminCount" class="big-number">0</div>
-                  <div class="s" id="accessAdminCountSub">emails keep admin control</div>
-                </div>
-              </div>
-            </section>
-            <section class="card pad access-stat access-stat-role">
-              <div class="access-stat-main">
-                <div class="access-stat-left">
-                  <div class="access-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"></path><path d="M12 3 4 7v5c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7l-8-4Z"></path></svg></div>
-                  <div class="k" id="accessCurrentRoleLabel">Current role</div>
-                </div>
-                <div class="access-stat-right">
-                  <div id="accessCurrentRole" class="big-number">-</div>
-                  <div class="s" id="accessUpdatedAt">-</div>
-                </div>
-              </div>
-            </section>
           </div>
           <section class="card pad access-mail-card">
             <div class="access-section-head">
@@ -2767,11 +2654,6 @@ const I18N = {
     activitiesState: 'Dòng thời gian runtime có phân loại',
     recentTimeline: 'Dòng thời gian gần nhất',
     accessState: 'Admin quản lý người dùng được đăng nhập và mail admin',
-    accessAllowedCountLabel: 'Mail được phép',
-    accessAllowedCountSub: 'mail có thể xin OTP để vào web',
-    accessAdminCountLabel: 'Mail admin',
-    accessAdminCountSub: 'mail giữ toàn quyền quản trị',
-    accessCurrentRoleLabel: 'Vai trò hiện tại',
     accessMailTitle: 'Mail gửi OTP',
     accessMailHelp: 'Đổi Gmail gửi mã xác nhận ngay trên giao diện admin. App password cũ sẽ được giữ kín và chỉ thay khi bạn nhập mới.',
     accessMailSenderLabel: 'Gmail gửi OTP',
@@ -3052,11 +2934,6 @@ const I18N = {
     activitiesState: 'Latest runtime events with severity',
     recentTimeline: 'Recent Timeline',
     accessState: 'Admins manage user access and admin emails',
-    accessAllowedCountLabel: 'Allowed emails',
-    accessAllowedCountSub: 'emails can request OTP login',
-    accessAdminCountLabel: 'Admin emails',
-    accessAdminCountSub: 'emails keep admin control',
-    accessCurrentRoleLabel: 'Current role',
     accessMailTitle: 'OTP Sender',
     accessMailHelp: 'Change the Gmail account that sends login codes from the admin UI. The old app password stays hidden and is only replaced when you enter a new one.',
     accessMailSenderLabel: 'Gmail sender',
@@ -3647,11 +3524,6 @@ function applyLanguage() {
 
   setText('#view-activities .card > div:first-child', t('recentTimeline'));
 
-  setText('#accessAllowedCountLabel', t('accessAllowedCountLabel'));
-  setText('#accessAllowedCountSub', t('accessAllowedCountSub'));
-  setText('#accessAdminCountLabel', t('accessAdminCountLabel'));
-  setText('#accessAdminCountSub', t('accessAdminCountSub'));
-  setText('#accessCurrentRoleLabel', t('accessCurrentRoleLabel'));
   setText('#accessMailTitle', t('accessMailTitle'));
   setText('#accessMailHelp', t('accessMailHelp'));
   setText('#accessMailSenderLabel', t('accessMailSenderLabel'));
@@ -4863,14 +4735,6 @@ function renderAccessPolicySummary(policy = currentAccessPolicy) {
   const { allowed, admins, managed } = getAccessPolicyLists(data);
   const allowedUnion = Array.from(new Set([...managed, ...admins, ...allowed]));
   const updated = data.updated_at ? toLocalStamp(data.updated_at) : '-';
-  const currentRoleNode = document.getElementById('accessCurrentRole');
-  if (currentRoleNode) currentRoleNode.textContent = getRoleLabel();
-  const updatedNode = document.getElementById('accessUpdatedAt');
-  if (updatedNode) updatedNode.textContent = `${t('accessSummaryUpdated')}: ${updated}`;
-  const allowedCountNode = document.getElementById('accessAllowedCount');
-  if (allowedCountNode) allowedCountNode.textContent = allowedUnion.length;
-  const adminCountNode = document.getElementById('accessAdminCount');
-  if (adminCountNode) adminCountNode.textContent = admins.length;
   const host = document.getElementById('accessSummaryTimeline');
   if (!host) return;
   const chips = (items, emptyText) => {
