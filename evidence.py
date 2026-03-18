@@ -5415,6 +5415,11 @@ def launch_chrome_for_login(browser_port: int = 9223, profile_path: str | None =
     """
     try:
         replaced_headless = False
+        has_desktop_session = (
+            os.name == "nt"
+            or sys.platform == "darwin"
+            or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        )
 
         def is_port_open(port: int, timeout_sec: float = 0.8) -> bool:
             try:
@@ -5642,6 +5647,12 @@ exit 1
         if not chrome_path:
             return False, "Chrome not found (missing chrome.exe)"
 
+        if not has_desktop_session:
+            return (
+                False,
+                "Môi trường web deploy không có giao diện desktop để mở Chrome. Hãy dùng local web/app nếu cần Chrome 9223 trên máy của bạn.",
+            )
+
         profile = profile_path or LOCAL_PROFILE_PATH
         os.makedirs(profile, exist_ok=True)
         if os.path.abspath(profile) != os.path.abspath(LOCAL_PROFILE_PATH):
@@ -5694,14 +5705,15 @@ exit 1
                     open_visible_window(chrome_path, profile)
                 except Exception as e:
                     write_log(f"[WARN] Port {browser_port} is open but failed to open visible window: {e}")
-                    try:
-                        fallback_cmd = (
-                            f'start "" "{chrome_path}" --remote-debugging-port={browser_port} '
-                            f'--remote-debugging-address=127.0.0.1 --user-data-dir="{profile}" --new-window about:blank'
-                        )
-                        subprocess.Popen(["cmd", "/c", fallback_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    except Exception:
-                        pass
+                    if os.name == "nt":
+                        try:
+                            fallback_cmd = (
+                                f'start "" "{chrome_path}" --remote-debugging-port={browser_port} '
+                                f'--remote-debugging-address=127.0.0.1 --user-data-dir="{profile}" --new-window about:blank'
+                            )
+                            subprocess.Popen(["cmd", "/c", fallback_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        except Exception:
+                            pass
                 if not focused:
                     focused = focus_existing_browser_window(marker_title)
                 write_log(
@@ -5738,18 +5750,19 @@ exit 1
             time.sleep(0.5)
 
         # Fallback launch via shell alias (some machines only resolve chrome via App Paths/PATH).
-        fallback_cmd = (
-            f'start "" chrome --remote-debugging-port={browser_port} '
-            f'--user-data-dir="{profile}" --new-window about:blank'
-        )
-        subprocess.Popen(["cmd", "/c", fallback_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(8):
-            if is_port_open(browser_port):
-                write_log(f"[INFO] Chrome launched via fallback shell command on port {browser_port}.")
-                if replaced_headless:
-                    return True, f"Port {browser_port} đã được mở lại thành window thật. Profile: {os.path.basename(profile)}"
-                return True, f"Port {browser_port} (fallback), Profile: {os.path.basename(profile)}"
-            time.sleep(0.5)
+        if os.name == "nt":
+            fallback_cmd = (
+                f'start "" chrome --remote-debugging-port={browser_port} '
+                f'--user-data-dir="{profile}" --new-window about:blank'
+            )
+            subprocess.Popen(["cmd", "/c", fallback_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(8):
+                if is_port_open(browser_port):
+                    write_log(f"[INFO] Chrome launched via fallback shell command on port {browser_port}.")
+                    if replaced_headless:
+                        return True, f"Port {browser_port} đã được mở lại thành window thật. Profile: {os.path.basename(profile)}"
+                    return True, f"Port {browser_port} (fallback), Profile: {os.path.basename(profile)}"
+                time.sleep(0.5)
 
         write_log(f"[ERROR] Chrome started but port {browser_port} is not reachable after direct + fallback launch.")
         return False, f"Chrome did not expose debug port {browser_port}"
