@@ -771,6 +771,15 @@ def _auth_role_from_request(request: Request) -> str:
     return _get_user_role(_auth_email_from_request(request))
 
 
+def _is_railway_healthcheck(request: Request) -> bool:
+    headers = request.headers or {}
+    host = (headers.get("host") or "").lower()
+    forwarded_host = (headers.get("x-forwarded-host") or "").lower()
+    user_agent = (headers.get("user-agent") or "").lower()
+    markers = ("healthcheck.railway.app", "railway-healthcheck", "railway")
+    return any(marker in value for value in (host, forwarded_host, user_agent) for marker in markers)
+
+
 def _require_api_auth(request: Request) -> str:
     email = _auth_email_from_request(request)
     if not email:
@@ -1414,6 +1423,8 @@ def auth_logout(request: Request):
 
 @app.get("/", response_class=HTMLResponse)
 def home_page(request: Request):
+    if _is_railway_healthcheck(request):
+        return HTMLResponse("ok", status_code=200)
     auth_email_raw = _auth_email_from_request(request)
     if not auth_email_raw:
         return RedirectResponse(url="/login", status_code=302)
