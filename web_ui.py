@@ -543,6 +543,15 @@ def _smtp_config() -> dict[str, Any]:
     }
 
 
+def _otp_bridge_config() -> dict[str, Any]:
+    url = str(os.getenv("OTP_BRIDGE_URL", "")).strip().rstrip("/")
+    token = str(os.getenv("OTP_BRIDGE_TOKEN", "")).strip()
+    timeout_sec = max(5, int(os.getenv("OTP_BRIDGE_TIMEOUT_SEC", "20") or 20))
+    if not url:
+        return {}
+    return {"url": url, "token": token, "timeout_sec": timeout_sec}
+
+
 def _outlook_auth_enabled() -> bool:
     return str(os.getenv("WEB_AUTH_USE_OUTLOOK", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -663,7 +672,41 @@ Write-Output 'OK'
         raise HTTPException(status_code=500, detail=f"Không gửi được mã qua Outlook: {detail}")
 
 
+def _send_login_code_via_bridge(email: str, code: str) -> None:
+    bridge = _otp_bridge_config()
+    if not bridge:
+        raise HTTPException(status_code=500, detail="Chưa cấu hình OTP bridge")
+    subject, plain_body, html_body = _build_login_code_email(email, code)
+    payload = {
+        "token": bridge.get("token", ""),
+        "to_email": email,
+        "subject": subject,
+        "text_body": plain_body,
+        "html_body": html_body,
+    }
+    try:
+        resp = requests.post(
+            f'{bridge["url"]}/send-otp',
+            json=payload,
+            timeout=float(bridge["timeout_sec"]),
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=500, detail=f"OTP bridge unreachable: {exc}") from exc
+    if 200 <= resp.status_code < 300:
+        return
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    detail = data.get("detail") or data.get("message") or resp.text or f"HTTP {resp.status_code}"
+    raise HTTPException(status_code=500, detail=f"OTP bridge gửi thất bại: {detail}")
+
+
 def _send_login_code(email: str, code: str) -> None:
+    bridge = _otp_bridge_config()
+    if bridge:
+        _send_login_code_via_bridge(email, code)
+        return
     try:
         config = _smtp_config()
         subject, plain_body, html_body = _build_login_code_email(email, code)
