@@ -329,6 +329,10 @@ def _parse_email_list(value: Any) -> list[str]:
     return out
 
 
+def _system_admin_emails() -> list[str]:
+    return _parse_email_list(os.getenv("WEB_SYSTEM_ADMIN_EMAILS", "thu.phannguyenanh@fanscom.vn"))
+
+
 def _normalize_auth_policy_payload(data: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = data or {}
     allowed = _parse_email_list(raw.get("allowed_emails"))
@@ -350,11 +354,12 @@ def _normalize_auth_policy_payload(data: dict[str, Any] | None = None) -> dict[s
 
 
 def _auth_policy_defaults() -> dict[str, Any]:
+    system_admins = _system_admin_emails()
     return _normalize_auth_policy_payload(
         {
-            "allowed_emails": os.getenv("WEB_LOGIN_ALLOWED_EMAILS", ""),
-            "admin_emails": os.getenv("WEB_ADMIN_EMAILS", ""),
-            "managed_emails": "",
+            "allowed_emails": [*_parse_email_list(os.getenv("WEB_LOGIN_ALLOWED_EMAILS", "")), *system_admins],
+            "admin_emails": [*_parse_email_list(os.getenv("WEB_ADMIN_EMAILS", "")), *system_admins],
+            "managed_emails": system_admins,
         }
     )
 
@@ -372,9 +377,9 @@ def _read_auth_policy() -> dict[str, Any]:
         return defaults
     return _normalize_auth_policy_payload(
         {
-            "allowed_emails": raw.get("allowed_emails", defaults.get("allowed_emails", [])),
-            "admin_emails": raw.get("admin_emails", defaults.get("admin_emails", [])),
-            "managed_emails": raw.get("managed_emails", defaults.get("managed_emails", [])),
+            "allowed_emails": [*(defaults.get("allowed_emails", []) or []), *(raw.get("allowed_emails") or [])],
+            "admin_emails": [*(defaults.get("admin_emails", []) or []), *(raw.get("admin_emails") or [])],
+            "managed_emails": [*(defaults.get("managed_emails", []) or []), *(raw.get("managed_emails") or [])],
             "updated_at": raw.get("updated_at"),
         }
     )
