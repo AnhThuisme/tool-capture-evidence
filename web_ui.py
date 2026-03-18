@@ -5271,7 +5271,7 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
             parsed = json.loads(inline_json)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Service account JSON không hợp lệ: {exc}") from exc
-        out_path = os.path.join(evidence.BASE_DIR, "credentials.inline.json")
+        out_path = os.path.join(evidence.APP_DIR, "credentials.inline.json")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(parsed, f, ensure_ascii=False, indent=2)
         credentials_path = out_path
