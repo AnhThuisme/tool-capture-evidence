@@ -288,6 +288,11 @@ MODE_BROWSER_PORTS = {
     "scan": 9623,
 }
 
+print(
+    f"[startup-config] base_dir={evidence.BASE_DIR} settings={evidence.SETTINGS_PATH} "
+    f"port_env={os.getenv('PORT', '') or 'unset'}"
+)
+
 
 def _read_saved_settings() -> dict[str, Any]:
     if not os.path.exists(evidence.SETTINGS_PATH):
@@ -5207,7 +5212,7 @@ init().catch(e => setStatus('Init error: ' + e.message, 'failed'));
     )
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"ok": True, "time": _utc_now_iso()}
 
