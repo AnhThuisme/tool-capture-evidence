@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import base64
 import html
 import json
 import os
@@ -20,6 +21,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
+
+import requests
 
 import evidence
 
@@ -556,6 +559,27 @@ def _outlook_auth_enabled() -> bool:
     return str(os.getenv("WEB_AUTH_USE_OUTLOOK", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _gmail_api_config() -> dict[str, Any]:
+    client_id = str(os.getenv("GMAIL_API_CLIENT_ID", "") or os.getenv("GOOGLE_CLIENT_ID", "")).strip()
+    client_secret = str(os.getenv("GMAIL_API_CLIENT_SECRET", "") or os.getenv("GOOGLE_CLIENT_SECRET", "")).strip()
+    refresh_token = str(os.getenv("GMAIL_API_REFRESH_TOKEN", "") or os.getenv("GOOGLE_REFRESH_TOKEN", "")).strip()
+    from_email = (
+        str(os.getenv("GMAIL_API_FROM_EMAIL", "")).strip()
+        or str(os.getenv("GMAIL_SMTP_FROM_EMAIL", "")).strip()
+        or str(os.getenv("GMAIL_SMTP_EMAIL", "")).strip()
+    )
+    timeout_sec = max(5, int(os.getenv("GMAIL_API_TIMEOUT_SEC", "20") or 20))
+    if not client_id or not client_secret or not refresh_token or not from_email:
+        return {}
+    return {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+        "from_email": from_email,
+        "timeout_sec": timeout_sec,
+    }
+
+
 def _ps_quote(value: str) -> str:
     return str(value or "").replace("'", "''")
 
@@ -641,6 +665,67 @@ def _build_login_code_email(email: str, code: str) -> tuple[str, str, str]:
     return subject, plain, html_body
 
 
+def _gmail_api_access_token(config: dict[str, Any]) -> str:
+    try:
+        resp = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "refresh_token": config["refresh_token"],
+                "grant_type": "refresh_token",
+            },
+            timeout=float(config.get("timeout_sec") or 20),
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=500, detail=f"Kh?ng l?y ???c access token Gmail API: {exc}") from exc
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    if not (200 <= resp.status_code < 300):
+        detail = data.get("error_description") or data.get("error") or resp.text or f"HTTP {resp.status_code}"
+        raise HTTPException(status_code=500, detail=f"Google OAuth th?t b?i: {detail}")
+    token = str(data.get("access_token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=500, detail="Google OAuth kh?ng tr? access token")
+    return token
+
+
+def _send_login_code_via_gmail_api(email: str, code: str) -> None:
+    config = _gmail_api_config()
+    if not config:
+        raise HTTPException(status_code=500, detail="Ch?a c?u h?nh Gmail API")
+    subject, plain_body, html_body = _build_login_code_email(email, code)
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("Evidence Security", str(config["from_email"])))
+    msg["To"] = email
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype="html")
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    access_token = _gmail_api_access_token(config)
+    try:
+        resp = requests.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"raw": raw},
+            timeout=float(config.get("timeout_sec") or 20),
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=500, detail=f"Gmail API unreachable: {exc}") from exc
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    if not (200 <= resp.status_code < 300):
+        detail = data.get("error", {}).get("message") or data.get("message") or resp.text or f"HTTP {resp.status_code}"
+        raise HTTPException(status_code=500, detail=f"Gmail API g?i th?t b?i: {detail}")
+
+
 def _send_login_code_via_outlook(email: str, code: str) -> None:
     if not _outlook_auth_enabled():
         raise HTTPException(status_code=500, detail="Chưa cấu hình SMTP để gửi mã xác nhận")
@@ -703,9 +788,9 @@ def _send_login_code_via_bridge(email: str, code: str) -> None:
 
 
 def _send_login_code(email: str, code: str) -> None:
-    bridge = _otp_bridge_config()
-    if bridge:
-        _send_login_code_via_bridge(email, code)
+    gmail_api = _gmail_api_config()
+    if gmail_api:
+        _send_login_code_via_gmail_api(email, code)
         return
     try:
         config = _smtp_config()
@@ -5619,3 +5704,4 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
     uvicorn.run("web_ui:app", host=host, port=port, reload=False)
+
