@@ -420,6 +420,40 @@ def _assert_email_allowed(email: str) -> str:
     allowed = _allowed_login_emails()
     if normalized not in allowed:
         raise HTTPException(status_code=403, detail="Email này chưa được cấp quyền đăng nhập")
+
+
+def _effective_access_emails(policy: dict[str, Any] | None) -> set[str]:
+    data = policy or {}
+    emails: set[str] = set()
+    emails.update(_parse_email_list(data.get("allowed_emails")))
+    emails.update(_parse_email_list(data.get("admin_emails")))
+    emails.update(_parse_email_list(data.get("managed_emails")))
+    return {item for item in emails if item}
+
+
+def _notify_access_policy_changes(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    old_access = _effective_access_emails(previous)
+    new_access = _effective_access_emails(current)
+    old_admins = set(_parse_email_list((previous or {}).get("admin_emails")))
+    new_admins = set(_parse_email_list((current or {}).get("admin_emails")))
+    new_access_only = sorted(new_access - old_access)
+    promoted_admins = sorted(new_admins - old_admins)
+    targets = sorted(set(new_access_only) | set(promoted_admins))
+    result = {
+        "sent": [],
+        "failed": [],
+        "promoted_admins": promoted_admins,
+        "new_access": new_access_only,
+    }
+    for email in targets:
+        try:
+            subject, plain_body, html_body = _build_access_granted_email(email, email in new_admins)
+            _send_platform_email(email, subject, plain_body, html_body, "Tool Evidence")
+            result["sent"].append(email)
+        except Exception as exc:
+            detail = getattr(exc, "detail", None) if isinstance(exc, HTTPException) else str(exc)
+            result["failed"].append({"email": email, "detail": str(detail or "Gửi mail thông báo thất bại")})
+    return result
     return normalized
 
 
@@ -665,6 +699,182 @@ def _build_login_code_email(email: str, code: str) -> tuple[str, str, str]:
     return subject, plain, html_body
 
 
+def _build_access_granted_email(email: str, is_admin: bool = False) -> tuple[str, str, str]:
+    recipient = html.escape(_normalize_email(email))
+    role_line = "quyền quản trị" if is_admin else "quyền truy cập"
+    subject = "Tool Evidence | Quyền truy cập đã được cấp"
+    plain_lines = [
+        "Thông báo cấp quyền Tool Evidence",
+        "",
+        f"Email: {email}",
+        f"Trạng thái mới: {'Admin' if is_admin else 'User'}",
+        f"Bạn đã được cấp {role_line} vào Tool Evidence.",
+        "",
+        "Bạn có thể vào màn hình đăng nhập để nhận OTP và truy cập hệ thống.",
+    ]
+    plain = "\n".join(plain_lines)
+    title = "Bạn đã được cấp quyền admin" if is_admin else "Bạn đã được cấp quyền truy cập"
+    subtitle = (
+        "Bạn có thể quản lý người dùng và cài đặt trong hệ thống."
+        if is_admin
+        else "Bạn có thể đăng nhập và sử dụng các chức năng đã được cấp."
+    )
+    badge = "ADMIN ACCESS" if is_admin else "USER ACCESS"
+    html_body = f"""<!doctype html>
+<html lang="vi">
+  <body style="margin:0;padding:0;background:#f4f7fb;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f4f7fb;padding:28px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:640px;background:#ffffff;border:1px solid #dbe4f0;border-radius:24px;overflow:hidden;">
+            <tr>
+              <td style="padding:24px 28px;background:linear-gradient(135deg,#0f172a 0%,#1f3355 100%);">
+                <div style="display:inline-block;padding:10px 14px;border-radius:999px;background:rgba(255,255,255,0.12);color:#dbeafe;font-size:12px;letter-spacing:1.8px;text-transform:uppercase;">
+                  {badge}
+                </div>
+                <div style="margin-top:18px;font-size:30px;line-height:1.2;font-weight:700;color:#ffffff;">
+                  {title}
+                </div>
+                <div style="margin-top:8px;font-size:15px;line-height:1.7;color:#cbd5e1;max-width:460px;">
+                  {subtitle}
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px;">
+                <div style="padding:18px 20px;border:1px solid #dbe4f0;border-radius:18px;background:#f8fbff;">
+                  <div style="font-size:12px;letter-spacing:1.8px;text-transform:uppercase;color:#64748b;">Email được cấp</div>
+                  <div style="margin-top:8px;font-size:18px;font-weight:600;color:#0f172a;">{recipient}</div>
+                </div>
+                <div style="margin-top:18px;padding:18px 20px;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;">
+                  <div style="font-size:14px;line-height:1.8;color:#334155;">
+                    Quyền hiện tại: <strong>{'Admin' if is_admin else 'User'}</strong><br/>
+                    Bạn có thể truy cập Tool Evidence bằng mã OTP được gửi tới email này.
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
+    return subject, plain, html_body
+
+
+def _send_email_via_gmail_api(to_email: str, subject: str, plain_body: str, html_body: str, from_name: str = "Evidence Security") -> None:
+    config = _gmail_api_config()
+    if not config:
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Gmail API")
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr((from_name, str(config["from_email"])))
+    msg["To"] = to_email
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype="html")
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    access_token = _gmail_api_access_token(config)
+    try:
+        resp = requests.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"raw": raw},
+            timeout=float(config.get("timeout_sec") or 20),
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=500, detail=f"Gmail API unreachable: {exc}") from exc
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    if not (200 <= resp.status_code < 300):
+        detail = data.get("error", {}).get("message") or data.get("message") or resp.text or f"HTTP {resp.status_code}"
+        raise HTTPException(status_code=500, detail=f"Gmail API gửi thất bại: {detail}")
+
+
+def _send_email_via_smtp(to_email: str, subject: str, plain_body: str, html_body: str, from_name: str = "Evidence Security") -> None:
+    config = _smtp_config()
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr((from_name, config["from_email"]))
+    msg["To"] = to_email
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype="html")
+    context = ssl.create_default_context()
+    if config["use_ssl"]:
+        with smtplib.SMTP_SSL(config["host"], config["port"], timeout=20, context=context) as server:
+            if config["username"]:
+                server.login(config["username"], config["password"])
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(config["host"], config["port"], timeout=20) as server:
+            server.ehlo()
+            if config["use_tls"]:
+                server.starttls(context=context)
+                server.ehlo()
+            if config["username"]:
+                server.login(config["username"], config["password"])
+            server.send_message(msg)
+
+
+def _send_email_via_outlook(to_email: str, subject: str, plain_body: str) -> None:
+    if not _outlook_auth_enabled():
+        raise HTTPException(status_code=500, detail="Chưa cấu hình Outlook để gửi mail")
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$outlook = New-Object -ComObject Outlook.Application
+$mail = $outlook.CreateItem(0)
+$mail.To = '{_ps_quote(to_email)}'
+$mail.Subject = '{_ps_quote(subject)}'
+$mail.Body = '{_ps_quote(plain_body)}'
+$mail.Send()
+Write-Output 'OK'
+"""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không mở được Outlook để gửi mail: {exc}") from exc
+    stdout = str(result.stdout or "").strip()
+    stderr = str(result.stderr or "").strip()
+    if result.returncode != 0 or "OK" not in stdout:
+        detail = stderr or stdout or "Outlook không gửi được mail"
+        raise HTTPException(status_code=500, detail=f"Không gửi được mail qua Outlook: {detail}")
+
+
+def _send_platform_email(to_email: str, subject: str, plain_body: str, html_body: str, from_name: str = "Evidence Security") -> None:
+    gmail_api = _gmail_api_config()
+    if gmail_api:
+        _send_email_via_gmail_api(to_email, subject, plain_body, html_body, from_name)
+        return
+    try:
+        _send_email_via_smtp(to_email, subject, plain_body, html_body, from_name)
+        return
+    except Exception as smtp_exc:
+        if not _outlook_auth_enabled():
+            detail = getattr(smtp_exc, "detail", None) if isinstance(smtp_exc, HTTPException) else str(smtp_exc)
+            raise HTTPException(status_code=500, detail=str(detail or "Gửi mail thất bại")) from smtp_exc
+        try:
+            _send_email_via_outlook(to_email, subject, plain_body)
+            return
+        except HTTPException as outlook_exc:
+            smtp_detail = getattr(smtp_exc, "detail", None) if isinstance(smtp_exc, HTTPException) else str(smtp_exc)
+            outlook_detail = outlook_exc.detail if isinstance(outlook_exc, HTTPException) else str(outlook_exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Gửi mail thất bại. SMTP: {smtp_detail}. Outlook: {outlook_detail}",
+            ) from smtp_exc
+
+
 def _gmail_api_access_token(config: dict[str, Any]) -> str:
     try:
         resp = requests.post(
@@ -693,37 +903,8 @@ def _gmail_api_access_token(config: dict[str, Any]) -> str:
 
 
 def _send_login_code_via_gmail_api(email: str, code: str) -> None:
-    config = _gmail_api_config()
-    if not config:
-        raise HTTPException(status_code=500, detail="Ch?a c?u h?nh Gmail API")
     subject, plain_body, html_body = _build_login_code_email(email, code)
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = formataddr(("Evidence Security", str(config["from_email"])))
-    msg["To"] = email
-    msg.set_content(plain_body)
-    msg.add_alternative(html_body, subtype="html")
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-    access_token = _gmail_api_access_token(config)
-    try:
-        resp = requests.post(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            },
-            json={"raw": raw},
-            timeout=float(config.get("timeout_sec") or 20),
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=500, detail=f"Gmail API unreachable: {exc}") from exc
-    try:
-        data = resp.json()
-    except Exception:
-        data = {}
-    if not (200 <= resp.status_code < 300):
-        detail = data.get("error", {}).get("message") or data.get("message") or resp.text or f"HTTP {resp.status_code}"
-        raise HTTPException(status_code=500, detail=f"Gmail API g?i th?t b?i: {detail}")
+    _send_email_via_gmail_api(email, subject, plain_body, html_body, "Evidence Security")
 
 
 def _send_login_code_via_outlook(email: str, code: str) -> None:
@@ -788,49 +969,11 @@ def _send_login_code_via_bridge(email: str, code: str) -> None:
 
 
 def _send_login_code(email: str, code: str) -> None:
-    gmail_api = _gmail_api_config()
-    if gmail_api:
-        _send_login_code_via_gmail_api(email, code)
-        return
+    subject, plain_body, html_body = _build_login_code_email(email, code)
     try:
-        config = _smtp_config()
-        subject, plain_body, html_body = _build_login_code_email(email, code)
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = formataddr(("Evidence Security", config["from_email"]))
-        msg["To"] = email
-        msg.set_content(plain_body)
-        msg.add_alternative(html_body, subtype="html")
-        context = ssl.create_default_context()
-        if config["use_ssl"]:
-            with smtplib.SMTP_SSL(config["host"], config["port"], timeout=20, context=context) as server:
-                if config["username"]:
-                    server.login(config["username"], config["password"])
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP(config["host"], config["port"], timeout=20) as server:
-                server.ehlo()
-                if config["use_tls"]:
-                    server.starttls(context=context)
-                    server.ehlo()
-                if config["username"]:
-                    server.login(config["username"], config["password"])
-                server.send_message(msg)
-        return
-    except Exception as smtp_exc:
-        if not _outlook_auth_enabled():
-            detail = getattr(smtp_exc, "detail", None) if isinstance(smtp_exc, HTTPException) else str(smtp_exc)
-            raise HTTPException(status_code=500, detail=str(detail or "Gửi OTP thất bại")) from smtp_exc
-        try:
-            _send_login_code_via_outlook(email, code)
-            return
-        except HTTPException as outlook_exc:
-            smtp_detail = getattr(smtp_exc, "detail", None) if isinstance(smtp_exc, HTTPException) else str(smtp_exc)
-            outlook_detail = outlook_exc.detail if isinstance(outlook_exc, HTTPException) else str(outlook_exc)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Gửi OTP thất bại. SMTP: {smtp_detail}. Outlook: {outlook_detail}",
-            ) from smtp_exc
+        _send_platform_email(email, subject, plain_body, html_body, "Evidence Security")
+    except HTTPException as exc:
+        raise HTTPException(status_code=500, detail=str(exc.detail or "Gửi OTP thất bại")) from exc
 
 
 def _issue_login_code(email: str) -> None:
@@ -2864,6 +3007,8 @@ const I18N = {
     saveAccessPolicy: 'Lưu phân quyền',
     reloadAccessPolicy: 'Tải lại phân quyền',
     accessPolicySaved: 'Đã lưu phân quyền',
+    accessNotifySentFmt: count => `Đã gửi mail thông báo cho ${count} người dùng`,
+    accessNotifyPartialFmt: (sent, failed) => `Đã lưu phân quyền. Gửi mail thành công ${sent}, lỗi ${failed}`,
     accessPolicySelfProtect: 'Không thể tự gỡ quyền admin của chính bạn trong phiên này',
     viewportWidth: 'Viewport width',
     viewportHeight: 'Viewport height',
@@ -3145,6 +3290,8 @@ const I18N = {
     saveAccessPolicy: 'Save Access',
     reloadAccessPolicy: 'Reload Access',
     accessPolicySaved: 'Access control saved',
+    accessNotifySentFmt: count => `Notification email sent to ${count} users`,
+    accessNotifyPartialFmt: (sent, failed) => `Access control saved. Email sent: ${sent}, failed: ${failed}`,
     accessPolicySelfProtect: 'You cannot remove your own admin right in this session',
     viewportWidth: 'Viewport width',
     viewportHeight: 'Viewport height',
@@ -5116,7 +5263,12 @@ async function saveAccessPolicy() {
     syncAccessPolicyEditors(currentAccessPolicy);
     renderAccessDirectory(currentAccessPolicy);
     renderAccessPolicySummary(currentAccessPolicy);
-    setAccessPolicyNote(t('accessPolicySaved'));
+    const sentCount = Array.isArray(out.notifications?.sent) ? out.notifications.sent.length : 0;
+    const failedCount = Array.isArray(out.notifications?.failed) ? out.notifications.failed.length : 0;
+    if (sentCount && failedCount) setAccessPolicyNote(t('accessNotifyPartialFmt')(sentCount, failedCount));
+    else if (sentCount) setAccessPolicyNote(`${t('accessPolicySaved')} · ${t('accessNotifySentFmt')(sentCount)}`);
+    else if (failedCount) setAccessPolicyNote(t('accessNotifyPartialFmt')(0, failedCount), true);
+    else setAccessPolicyNote(t('accessPolicySaved'));
   } catch (e) {
     setAccessPolicyNote(e.message, true);
     throw e;
@@ -5408,6 +5560,7 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
 @app.post("/api/admin/access-policy")
 def save_access_policy(request: Request, payload: AccessPolicyUpdateRequest):
     admin_email = _require_admin(request)
+    previous_policy = _read_auth_policy()
     allowed_emails = _parse_email_list(payload.allowed_emails)
     admin_emails = _parse_email_list(payload.admin_emails)
     managed_emails = _parse_email_list(payload.managed_emails)
@@ -5416,8 +5569,9 @@ def save_access_policy(request: Request, payload: AccessPolicyUpdateRequest):
     if admin_email not in admin_emails:
         raise HTTPException(status_code=400, detail="Không thể tự gỡ quyền admin của chính bạn trong phiên này")
     policy = _write_auth_policy({"allowed_emails": allowed_emails, "admin_emails": admin_emails, "managed_emails": managed_emails})
+    notifications = _notify_access_policy_changes(previous_policy, policy)
     request.session["auth_role"] = _get_user_role(admin_email)
-    return {"ok": True, "policy": policy}
+    return {"ok": True, "policy": policy, "notifications": notifications}
 
 
 @app.post("/api/admin/mail-config")
