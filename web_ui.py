@@ -1844,6 +1844,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-role-pill{display:inline-flex;align-items:center;min-height:34px;padding:0 14px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border:1px solid transparent}
 .access-role-pill.admin{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.26);color:var(--green)}
 .access-role-pill.user{background:var(--blue-soft);border-color:rgba(91,147,211,.26);color:var(--blue)}
+.access-role-pill.otp{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#ffcd73}
 .access-chip-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .access-chip{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);font-size:12px;font-weight:600;color:var(--text)}
 .access-chip.empty{background:transparent;color:var(--muted);border-style:dashed}
@@ -2392,26 +2393,18 @@ linear-gradient(to right, transparent, transparent)}
 
           <div class="layout">
             <section class="overview-stats-grid">
-              <div class="cards-4 overview-stat-cards">
+              <div class="cards-3 overview-stat-cards">
                 <section class="card pad overview-stat-card">
-                  <div id="ovTodayJobsLabel" class="k">Jobs today</div>
-                  <div id="ovTodayJobs" class="big-number">0</div>
-                  <div id="ovTodayJobsMeta" class="s">created in the last 24h</div>
+                  <div id="ovSavedProjectsLabel" class="k">Saved Projects</div>
+                  <div id="ovSavedProjects" class="big-number">0</div>
                 </section>
                 <section class="card pad overview-stat-card">
-                  <div id="ovAvgSuccessLabel" class="k">Average success rate</div>
-                  <div id="ovAvgSuccess" class="big-number">0%</div>
-                  <div id="ovAvgSuccessMeta" class="s">across tracked jobs</div>
+                  <div id="ovSavedSheetsLabel" class="k">Saved Sheets</div>
+                  <div id="ovSavedSheets" class="big-number">0</div>
                 </section>
                 <section class="card pad overview-stat-card">
-                  <div id="ovLatestJobLabel" class="k">Latest job</div>
-                  <div id="ovLatestJob" class="big-number">-</div>
-                  <div id="ovLatestMeta" class="s">no recent run</div>
-                </section>
-                <section class="card pad overview-stat-card">
-                  <div id="ovTopErrorLabel" class="k">Top error</div>
-                  <div id="ovTopError" class="big-number">-</div>
-                  <div id="ovTopErrorMeta" class="s">no recurring issues</div>
+                  <div id="ovSelectedProjectLabel" class="k">Selected Project</div>
+                  <div id="ovSelectedProject" class="big-number">-</div>
                 </section>
               </div>
               <section class="card overview-note-card">
@@ -2471,8 +2464,7 @@ linear-gradient(to right, transparent, transparent)}
           </div>
           <div class="run-layout">
             <section class="card run-form">
-              <div id="runConfigTitle" class="run-config-head">Run Config</div>
-              <div class="run-grid" style="margin-top:14px">
+              <div class="run-grid">
                 <div class="field"><label>Sheet URL</label><input id="sheet_url" /></div>
                 <div class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
                 <div class="field"><label>Drive Folder ID</label><input id="drive_id" /></div>
@@ -2517,7 +2509,6 @@ linear-gradient(to right, transparent, transparent)}
             <div class="monitor-head">
               <div>
                 <div id="runMonitorKicker" class="monitor-kicker">4. Result & Monitor</div>
-                <div id="runMonitorTitle" class="monitor-title">Theo doi tien do va loi</div>
               </div>
               <div id="runMonitorStatus" class="monitor-badge">Sẵn sàng</div>
             </div>
@@ -2751,7 +2742,6 @@ linear-gradient(to right, transparent, transparent)}
                 <thead>
                   <tr>
                     <th id="accessTableHeadEmail">Gmail</th>
-                    <th id="accessTableHeadAccess">Access</th>
                     <th id="accessTableHeadRole">Role</th>
                     <th id="accessTableHeadType">Type</th>
                     <th id="accessTableHeadStatus">Status</th>
@@ -2810,7 +2800,6 @@ linear-gradient(to right, transparent, transparent)}
               </div>
               <div class="run-actions">
                 <button id="saveSettingsButton" class="btn blue" onclick="saveSidebarSettings()">Save Settings</button>
-                <button id="reloadSettingsButton" class="btn" onclick="loadDefaults()">Reload Settings</button>
               </div>
               <div id="settings_note" class="settings-note"></div>
             </section>
@@ -3060,7 +3049,7 @@ const I18N = {
     accessScopeOpen: 'OTP',
     accessTableEmail: 'Gmail',
     accessTableAccess: 'Truy cập',
-    accessTableRole: 'Role',
+    accessTableRole: 'Quyền',
     accessTableType: 'Loại',
     accessTableStatus: 'Trạng thái',
     accessTableUpdated: 'Cập nhật',
@@ -3352,7 +3341,7 @@ const I18N = {
     accessScopeOpen: 'OTP',
     accessTableEmail: 'Gmail',
     accessTableAccess: 'Access',
-    accessTableRole: 'Role',
+    accessTableRole: 'Permission',
     accessTableType: 'Type',
     accessTableStatus: 'Status',
     accessTableUpdated: 'Updated',
@@ -3811,8 +3800,6 @@ function applyRunModeUI() {
   });
   const runTitle = document.getElementById('runTitleText');
   if (runTitle) runTitle.textContent = formatRunTitle(currentRunMode);
-  const runConfigTitle = document.getElementById('runConfigTitle');
-  if (runConfigTitle) runConfigTitle.textContent = formatRunConfigTitle(currentRunMode);
   const runsGroup = document.getElementById('runs_group');
   if (runsGroup) runsGroup.classList.toggle('open', document.getElementById('view-runs')?.classList.contains('active'));
   renderMappingEditor();
@@ -3871,12 +3858,9 @@ function applyLanguage() {
   setText('#view-settings .state', t('settingsState'));
   setText('#view-runs .state', t('runConfigHelp'));
 
-  setText('#ovTodayJobsLabel', t('jobsToday'));
-  setText('#ovTodayJobsMeta', t('createdLast24h'));
-  setText('#ovAvgSuccessLabel', t('avgSuccess'));
-  setText('#ovAvgSuccessMeta', t('acrossTracked'));
-  setText('#ovLatestJobLabel', t('latestJob'));
-  setText('#ovTopErrorLabel', t('topError'));
+  setText('#ovSavedProjectsLabel', t('groupedProjects'));
+  setText('#ovSavedSheetsLabel', t('completedGroups'));
+  setText('#ovSelectedProjectLabel', t('largestGroup'));
   setText('#ovHistoryTitle', t('overviewTimeline'));
   setText('#ovLegendSuccess', t('overviewCompletedLegend'));
   setText('#ovLegendFailed', t('overviewFailedLegend'));
@@ -3902,7 +3886,6 @@ function applyLanguage() {
 
   setText('#view-runs .headline .state', t('runConfigHelp'));
   setText('#runShareLabel', t('runShareLabel'));
-  setText('#runConfigTitle', formatRunConfigTitle());
   applyRunModeUI();
   setText('label[for="sheet_url"]', t('sheetUrl'));
   setText('label[for="sheet_name"]', t('sheetName'));
@@ -3911,7 +3894,6 @@ function applyLanguage() {
   setText('#overwriteRunLabel', t('overwriteRun'));
   setText('#overwriteRunHelp', t('overwriteRunHelp'));
   setText('#runMonitorKicker', t('monitorKicker'));
-  setText('#runMonitorTitle', t('monitorTitle'));
   setText('#runMonitorJobLabel', t('monitorJob'));
   setText('#runMonitorProgressLabel', t('monitorProgress'));
   setText('#runMonitorErrorLabel', t('monitorErrors'));
@@ -3993,7 +3975,6 @@ function applyLanguage() {
   setText('#view-settings .settings-layout .card:first-child .card > div:nth-child(2)', t('jsonHelp'));
   setText('label[for="settings_service_account_json"]', t('serviceJsonLabel'));
   setText('#saveSettingsButton', t('saveSettings'));
-  setText('#reloadSettingsButton', t('reloadSettings'));
   setText('#accessPolicyTitle', t('accessPolicyTitle'));
   setText('#accessPolicyHelp', t('accessPolicyHelp'));
   setText('#accessAllowedLabel', t('accessAllowedLabel'));
@@ -4400,31 +4381,21 @@ function groupJobsBySheet(jobs) {
 }
 
 function renderOverview() {
-  const todayKey = toCalendarDayKey(new Date().toISOString());
-  const todayJobs = jobsCache.filter(j => toCalendarDayKey(j.created_at || '') === todayKey);
+  const savedProjects = getSavedProjectJobs();
+  const savedSheets = new Set(savedProjects.map(job => getJobSheetLabel(job))).size;
+  let selectedProject = currentProjectJobId ? savedProjects.find(job => job.id === currentProjectJobId) : null;
+  if (!selectedProject && savedProjects.length) selectedProject = savedProjects[0];
+  const selectedProjectSummary = getJobSummary(selectedProject);
   const modeCounts = ['seeding', 'booking', 'scan'].map(mode => ({
     mode,
     count: jobsCache.filter(job => getJobMode(job) === mode).length,
   }));
   const modeTotal = modeCounts.reduce((sum, item) => sum + item.count, 0);
-  const ratios = jobsCache
-    .map(j => {
-      const s = getJobSummary(j);
-      return s.total > 0 ? (s.success / s.total) * 100 : null;
-    })
-    .filter(v => v !== null);
-  const avg = ratios.length ? Math.round(ratios.reduce((a, b) => a + b, 0) / ratios.length) : 0;
-  const latest = jobsCache[0] || null;
-  const topError = aggregateErrorCounts(jobsCache)[0] || null;
-
-  document.getElementById('ovTodayJobs').textContent = todayJobs.length;
-  document.getElementById('ovAvgSuccess').textContent = avg + '%';
-  document.getElementById('ovLatestJob').textContent = latest ? latest.id.slice(0, 8) : '-';
-  document.getElementById('ovLatestMeta').textContent = latest
-    ? t('latestJobMetaFmt')(latest.status, toLocalStamp(latest.created_at))
-    : t('noRecentRun');
-  document.getElementById('ovTopError').textContent = topError ? String(topError[1]) : '-';
-  document.getElementById('ovTopErrorMeta').textContent = topError ? topError[0] : t('noRecurring');
+  document.getElementById('ovSavedProjects').textContent = savedProjects.length;
+  document.getElementById('ovSavedSheets').textContent = savedSheets;
+  document.getElementById('ovSelectedProject').textContent = selectedProject
+    ? `${selectedProjectSummary.done || 0}/${selectedProjectSummary.total || 0}`
+    : '-';
   const modeSplitHost = document.getElementById('ovModeSplit');
   if (modeSplitHost) {
     if (!modeTotal) {
@@ -4910,7 +4881,7 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
     title: t('accessOpenEntryTitle'),
     subtitle: `${t('accessOpenEntrySub')} · ${t('accessOpenEntryMailFmt')(currentMailConfig.sender_email || '')}`,
     access: 'open',
-    role: 'user',
+    role: 'otp',
     type: 'internal',
     status: 'open',
     updated,
@@ -4947,12 +4918,11 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
   const body = document.getElementById('accessDirectoryBody');
   if (!body) return;
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="7"><div class="access-empty">${esc(t('accessDirectoryNoMatch'))}</div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="6"><div class="access-empty">${esc(t('accessDirectoryNoMatch'))}</div></td></tr>`;
     return;
   }
   const typeLabel = type => type === 'internal' ? t('accessTypeInternal') : t('accessTypeExternal');
-  const roleLabel = role => role === 'admin' ? t('roleAdmin') : t('roleUser');
-  const accessLabel = access => access === 'admin' ? t('accessScopeAdmin') : (access === 'open' ? t('accessScopeOpen') : t('accessScopeAllowed'));
+  const roleLabel = role => role === 'admin' ? t('roleAdmin') : (role === 'otp' ? t('accessScopeOpen') : t('roleUser'));
   const statusLabel = status => status === 'admin' ? t('accessStatusAdmin') : (status === 'open' ? t('accessStatusOpen') : t('accessStatusActive'));
   const rowActions = row => {
     if (row.isSystem) {
@@ -4974,7 +4944,6 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
           </div>
         </div>
       </td>
-      <td><span class="access-table-pill ${esc(row.access)}">${esc(accessLabel(row.access))}</span></td>
       <td><span class="access-role-pill ${esc(row.role)}">${esc(roleLabel(row.role))}</span></td>
       <td><span class="access-type-pill ${esc(row.type)}">${esc(typeLabel(row.type))}</span></td>
       <td><span class="access-status ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td>
