@@ -300,7 +300,20 @@ print(
 )
 
 
-def _read_saved_settings() -> dict[str, Any]:
+SETTINGS_USER_KEYS = {
+    "credentials_path",
+    "sheet_url",
+    "sheet_name",
+    "drive_id",
+    "viewport_width",
+    "viewport_height",
+    "page_timeout_ms",
+    "ready_state",
+    "full_page_capture",
+}
+
+
+def _read_saved_settings_root() -> dict[str, Any]:
     if not os.path.exists(evidence.SETTINGS_PATH):
         return {}
     try:
@@ -309,6 +322,12 @@ def _read_saved_settings() -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _filter_settings_payload(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    return {key: data.get(key) for key in SETTINGS_USER_KEYS if key in data}
 
 
 def _normalize_email(value: str) -> str:
@@ -326,6 +345,20 @@ def _clean_header_email(value: str, label: str = "Email") -> str:
     if not _is_valid_email(email):
         raise HTTPException(status_code=500, detail=f"{label} header không hợp lệ: {raw or '(trống)'}")
     return email
+
+
+def _settings_user_slug(email: str) -> str:
+    normalized = _normalize_email(email)
+    if not normalized:
+        return "default"
+    slug = re.sub(r"[^a-z0-9._-]+", "_", normalized)
+    return slug.strip("._-") or "default"
+
+
+def _user_service_account_path(email: str) -> str:
+    cred_dir = os.path.join(evidence.APP_DIR, "service_accounts")
+    os.makedirs(cred_dir, exist_ok=True)
+    return os.path.join(cred_dir, f"{_settings_user_slug(email)}.json")
 
 
 def _parse_email_list(value: Any) -> list[str]:
@@ -1130,12 +1163,44 @@ def _require_admin(request: Request) -> str:
     return email
 
 
-def _write_saved_settings(patch: dict[str, Any]) -> dict[str, Any]:
-    data = _read_saved_settings()
-    data.update(patch or {})
+def _read_saved_settings(user_email: str | None = None) -> dict[str, Any]:
+    root = _read_saved_settings_root()
+    if "users" not in root or not isinstance(root.get("users"), dict):
+        return _filter_settings_payload(root)
+    legacy_defaults = _filter_settings_payload(root.get("_legacy_defaults"))
+    if not user_email:
+        return legacy_defaults
+    bucket = root["users"].get(_normalize_email(user_email), {})
+    data = dict(legacy_defaults)
+    data.update(_filter_settings_payload(bucket))
+    return data
+
+
+def _write_saved_settings(user_email: str, patch: dict[str, Any]) -> dict[str, Any]:
+    normalized_email = _normalize_email(user_email)
+    if not normalized_email:
+        raise HTTPException(status_code=400, detail="Không xác định được người dùng để lưu cài đặt")
+    root = _read_saved_settings_root()
+    if "users" in root and isinstance(root.get("users"), dict):
+        users = {
+            _normalize_email(key): _filter_settings_payload(value)
+            for key, value in dict(root.get("users") or {}).items()
+            if _normalize_email(key)
+        }
+        legacy_defaults = _filter_settings_payload(root.get("_legacy_defaults"))
+    else:
+        users = {}
+        legacy_defaults = _filter_settings_payload(root)
+    current = dict(legacy_defaults)
+    current.update(_filter_settings_payload(users.get(normalized_email)))
+    current.update(_filter_settings_payload(patch or {}))
+    users[normalized_email] = current
+    data: dict[str, Any] = {"users": users}
+    if legacy_defaults:
+        data["_legacy_defaults"] = legacy_defaults
     with open(evidence.SETTINGS_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    return data
+    return current
 
 
 LOGIN_PAGE_HTML = """<!doctype html>
@@ -1302,7 +1367,7 @@ def _window_size_parts(value: str) -> tuple[int, int]:
 def _settings_defaults() -> dict[str, Any]:
     width, height = _window_size_parts(getattr(evidence, "CAPTURE_WINDOW_SIZE", "1920,1400"))
     return {
-        "credentials_path": str(getattr(evidence, "JSON_PATH", "")),
+        "credentials_path": "",
         "sheet_url": str(getattr(evidence, "DEFAULT_SHEET_URL", "")),
         "sheet_name": str(getattr(evidence, "DEFAULT_SHEET_NAME_TARGET", "")),
         "drive_id": str(getattr(evidence, "DEFAULT_DRIVE_FOLDER_ID", "")),
@@ -1321,8 +1386,17 @@ def _apply_runtime_settings(data: dict[str, Any]) -> None:
     evidence.CAPTURE_WINDOW_SIZE = f"{width},{height}"
     evidence.PAGE_READY_TIMEOUT = max(1, int(round(timeout_ms / 1000)))
     cred_path = str(data.get("credentials_path", "")).strip()
-    if cred_path:
-        evidence.JSON_PATH = cred_path
+    evidence.JSON_PATH = cred_path
+
+
+def _capture_runtime_settings() -> dict[str, Any]:
+    width, height = _window_size_parts(getattr(evidence, "CAPTURE_WINDOW_SIZE", "1920,1400"))
+    return {
+        "credentials_path": str(getattr(evidence, "JSON_PATH", "")),
+        "viewport_width": width,
+        "viewport_height": height,
+        "page_timeout_ms": int(float(getattr(evidence, "PAGE_READY_TIMEOUT", 3)) * 1000),
+    }
 
 
 def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1342,17 +1416,17 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     return merged
 
 
-def _resolve_credentials_input(credentials_input: str) -> str:
+def _resolve_credentials_input(credentials_input: str, user_email: str | None = None) -> str:
     raw = str(credentials_input or "").strip()
     if not raw:
-        return evidence.JSON_PATH
+        return ""
 
     if raw.startswith("{"):
         try:
             data = json.loads(raw)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"credentials_input JSON không hợp lệ: {exc}") from exc
-        out_path = os.path.join(evidence.BASE_DIR, "credentials.inline.json")
+        out_path = _user_service_account_path(user_email or "")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         return out_path
@@ -1367,7 +1441,7 @@ def _open_spreadsheet(sheet_url: str, credentials_path: str):
     norm_url = evidence.normalize_sheet_input(sheet_url)
     if not norm_url:
         raise HTTPException(status_code=400, detail="Thiếu Sheet URL")
-    cred_path = str(credentials_path or "").strip() or str(getattr(evidence, "JSON_PATH", "")).strip()
+    cred_path = str(credentials_path or "").strip()
     if not cred_path or not os.path.exists(cred_path):
         raise HTTPException(status_code=400, detail="Chưa có credentials để đọc Google Sheets")
     try:
@@ -1416,10 +1490,13 @@ def _get_job_mode(job: dict[str, Any]) -> str:
     return _infer_job_mode(request.get("mappings"), fallback="seeding")
 
 
-def _any_running_job_for_mode(run_mode: str | None = None) -> str | None:
+def _any_running_job_for_mode(run_mode: str | None = None, owner_email: str | None = None) -> str | None:
     target_mode = _normalize_run_mode(run_mode)
+    target_owner = _normalize_email(owner_email)
     for jid, data in JOBS.items():
         if data.get("status") in {"running", "paused"} and _get_job_mode(data) == target_mode:
+            if target_owner and _job_owner_email(data) != target_owner:
+                continue
             return jid
     return None
 
@@ -1444,6 +1521,27 @@ def _safe_filename_part(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in text)
     cleaned = cleaned.strip("._")
     return cleaned[:80] or "log"
+
+
+def _default_job_owner_email() -> str:
+    admins = _system_admin_emails()
+    if admins:
+        return admins[0]
+    return "thu.phannguyenanh@fanscom.vn"
+
+
+def _job_owner_email(job: dict[str, Any] | None) -> str:
+    data = job or {}
+    request_data = dict(data.get("request") or {})
+    return _normalize_email(data.get("owner_email") or request_data.get("owner_email") or "")
+
+
+def _get_owned_job(job_id: str, owner_email: str) -> dict[str, Any]:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job or _job_owner_email(job) != _normalize_email(owner_email):
+            raise HTTPException(status_code=404, detail="Không tìm thấy job")
+        return job
 
 
 def _extract_log_block_name_py(log: dict[str, Any] | None) -> str:
@@ -1488,6 +1586,7 @@ def _build_export_log_rows(job: dict[str, Any]) -> list[tuple[list[Any], list[st
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(job.get("id", "")),
+        "owner_email": _job_owner_email(job),
         "mode": _get_job_mode(job),
         "status": str(job.get("status", "queued")),
         "created_at": job.get("created_at"),
@@ -1547,6 +1646,7 @@ def _load_persisted_jobs() -> None:
             finished_at = finished_at or _utc_now_iso()
         restored[job_id] = {
             "id": job_id,
+            "owner_email": _normalize_email(item.get("owner_email")) or _default_job_owner_email(),
             "mode": _normalize_run_mode(item.get("mode")),
             "status": status,
             "created_at": item.get("created_at"),
@@ -1616,6 +1716,7 @@ _load_persisted_jobs()
 
 def _enqueue_job(
     *,
+    owner_email: str,
     request_snapshot: dict[str, Any],
     run_mode: str,
     start_line: int,
@@ -1636,6 +1737,7 @@ def _enqueue_job(
 
     job = {
         "id": job_id,
+        "owner_email": _normalize_email(owner_email),
         "mode": _normalize_run_mode(run_mode),
         "status": "queued",
         "created_at": _utc_now_iso(),
@@ -1677,7 +1779,11 @@ def _run_job(job_id: str):
         job["started_at"] = _utc_now_iso()
     _persist_jobs(force=True)
 
+    previous_runtime = _capture_runtime_settings()
     try:
+        runtime_settings = dict(req.get("runtime_settings") or {})
+        if runtime_settings:
+            _apply_runtime_settings(runtime_settings)
         evidence.main_logic(
             app_adapter,
             req["drive_id"],
@@ -1693,8 +1799,27 @@ def _run_job(job_id: str):
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if job:
-                if job.get("status") not in {"stopped", "failed"}:
-                    job["status"] = "completed"
+                current_status = str(job.get("status") or "").strip().lower()
+                summary = dict(job.get("summary") or {})
+                try:
+                    done = int(summary.get("done") or 0)
+                except Exception:
+                    done = 0
+                try:
+                    total = int(summary.get("total") or 0)
+                except Exception:
+                    total = 0
+                if current_status not in {"stopped", "failed"}:
+                    if total <= 0 or done >= total:
+                        job["status"] = "completed"
+                    else:
+                        job["status"] = "stopped"
+                        if not str(job.get("detail") or "").strip():
+                            job["detail"] = "Tiến trình kết thúc trước khi xử lý hết dữ liệu."
+                if summary:
+                    summary["eta"] = "---"
+                    job["summary"] = summary
+                if job.get("status") in {"completed", "stopped", "failed"}:
                     job["finished_at"] = _utc_now_iso()
         _persist_jobs(force=True)
     except Exception as exc:
@@ -1711,6 +1836,7 @@ def _run_job(job_id: str):
             if job:
                 job.pop("thread", None)
         _persist_jobs(force=True)
+        _apply_runtime_settings(previous_runtime)
 
 
 @app.middleware("http")
@@ -2293,6 +2419,19 @@ linear-gradient(to right, transparent, transparent)}
 .mini-bar-fill.active{background:#2f80ed}
 .mini-bar-label{font-size:11px;color:var(--muted)}
 .mini-bar-value{font-size:11px;color:#344054}
+.toast-host{position:fixed;top:18px;right:18px;display:flex;flex-direction:column;gap:10px;z-index:9999;pointer-events:none;max-width:min(360px,calc(100vw - 32px))}
+.toast{pointer-events:auto;display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(18,27,43,.98),rgba(15,22,36,.98));box-shadow:0 18px 48px rgba(0,0,0,.34);color:var(--text);transform:translateY(-8px);opacity:0;animation:toast-in .18s ease forwards}
+.toast.success{border-color:rgba(52,195,143,.34);box-shadow:0 18px 48px rgba(0,0,0,.34),0 0 0 1px rgba(52,195,143,.08)}
+.toast.failed{border-color:rgba(239,68,68,.3)}
+.toast-icon{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;background:rgba(91,147,211,.12);border:1px solid rgba(91,147,211,.2);color:#9cc3ff;font-size:16px;font-weight:900}
+.toast.success .toast-icon{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.26);color:#7df0ba}
+.toast.failed .toast-icon{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.26);color:#fda4af}
+.toast-copy{min-width:0;flex:1}
+.toast-title{font-size:13px;font-weight:800;line-height:1.2}
+.toast-message{margin-top:4px;font-size:12px;line-height:1.45;color:var(--muted)}
+.toast-close{flex:0 0 auto;width:28px;height:28px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
+.toast-close:hover{color:var(--text);border-color:rgba(91,147,211,.3)}
+@keyframes toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
 @media (max-width:980px){.run-layout,.run-grid,.cards-3,.cards-4,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}.overview-note{flex-direction:column;align-items:stretch}.overview-cta{justify-content:center}}
 </style>
@@ -2321,7 +2460,7 @@ linear-gradient(to right, transparent, transparent)}
           <button class="side-btn" data-view="projects" onclick="switchView('projects', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M8 20h8"/></svg></span><span>Projects</span></button>
           <button class="side-btn" data-view="activities" onclick="switchView('activities', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M4 12h4l2-5 4 10 2-5h4"/><path d="M4 19h16"/></svg></span><span>Activities</span></button>
           <button id="access_nav_button" class="side-btn" data-view="access" onclick="switchView('access', this)" style="__ADMIN_NAV_STYLE__"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"></path><path d="M5 20a7 7 0 0 1 14 0"></path><path d="M18 7h3"></path><path d="M19.5 5.5v3"></path></svg></span><span>Access</span></button>
-          <button id="settings_nav_button" class="side-btn" data-view="settings" onclick="switchView('settings', this)" style="__ADMIN_NAV_STYLE__"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg></span><span>Settings</span></button>
+          <button id="settings_nav_button" class="side-btn" data-view="settings" onclick="switchView('settings', this)" style="__SETTINGS_NAV_STYLE__"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg></span><span>Settings</span></button>
         </div>
       </aside>
       <main class="main">
@@ -2742,7 +2881,7 @@ linear-gradient(to right, transparent, transparent)}
           </section>
         </section>
 
-        <section id="view-settings" class="view" style="__ADMIN_SECTION_STYLE__">
+        <section id="view-settings" class="view" style="__SETTINGS_SECTION_STYLE__">
           <div class="headline">
             <div class="h1">Settings</div>
             <div class="state">Saved configuration</div>
@@ -2806,6 +2945,7 @@ linear-gradient(to right, transparent, transparent)}
       </main>
     </div>
   </div>
+<div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="false"></div>
 <script>
 let currentJobId = null;
 let pollTimer = null;
@@ -2834,6 +2974,8 @@ let accessDirectoryScope = 'all';
 let accessDirectoryType = 'all';
 let accessMailEditorOpen = false;
 let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 'user', type: 'internal' };
+let jobStatusMemory = {};
+let notifiedCompletedJobKeys = new Set();
 const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9423, scan: 9623 };
 const DEFAULT_AUTO_LAUNCH_CHROME = false;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
@@ -2958,6 +3100,8 @@ const I18N = {
     monitorTable: 'Bảng log xử lý',
     monitorNoJob: 'Chưa chọn job',
     monitorNoErrors: 'Không có lỗi',
+    jobFinishedTitle: 'Hoàn tất',
+    jobFinishedToastFmt: (name, done, total) => `${name} đã chạy xong ${done}/${total} dòng.`,
     monitorNoLogs: 'Chưa có dữ liệu',
     monitorSuccessFailedFmt: (ok, fail, unavailable = 0) => `Success ${ok} · Failed ${fail} · Không khả dụng ${unavailable}`,
     unavailableLabel: 'Không khả dụng',
@@ -3254,6 +3398,8 @@ const I18N = {
     monitorTable: 'Processing log table',
     monitorNoJob: 'No job selected',
     monitorNoErrors: 'No errors',
+    jobFinishedTitle: 'Completed',
+    jobFinishedToastFmt: (name, done, total) => `${name} finished ${done}/${total} rows.`,
     monitorNoLogs: 'No data yet',
     monitorSuccessFailedFmt: (ok, fail, unavailable = 0) => `Success ${ok} · Failed ${fail} · Unavailable ${unavailable}`,
     unavailableLabel: 'Unavailable',
@@ -4254,6 +4400,26 @@ function setProjectModeFilter(mode) {
   renderProjects();
 }
 
+function getActivityLogsFromJobs() {
+  const rows = [];
+  (jobsCache || []).forEach(job => {
+    const logs = Array.isArray(job?.recent_logs) ? job.recent_logs : [];
+    logs.forEach(item => {
+      rows.push({
+        ...item,
+        __job_id: String(job?.id || ''),
+        __job_mode: getJobMode(job),
+      });
+    });
+  });
+  rows.sort((a, b) => {
+    const left = new Date(a?.ts || 0).getTime();
+    const right = new Date(b?.ts || 0).getTime();
+    return right - left;
+  });
+  return rows.slice(0, 20);
+}
+
 function openProjectInRuns(jobId) {
   const job = (jobsCache || []).find(item => item.id === jobId);
   if (!job) return;
@@ -4307,6 +4473,50 @@ function prettyWord(value) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
+function showToast(message, type = 'info', title = '') {
+  const host = document.getElementById('toastHost');
+  if (!host) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <div class="toast-icon">${type === 'success' ? '✓' : '!'}</div>
+    <div class="toast-copy">
+      <div class="toast-title">${esc(title || t('jobFinishedTitle'))}</div>
+      <div class="toast-message">${esc(message)}</div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">×</button>
+  `;
+  const closeToast = () => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-8px)';
+    setTimeout(() => toast.remove(), 160);
+  };
+  toast.querySelector('.toast-close')?.addEventListener('click', closeToast);
+  host.appendChild(toast);
+  setTimeout(closeToast, 5200);
+}
+
+function processJobLifecycleNotifications(jobs) {
+  const nextStatusMemory = {};
+  (jobs || []).forEach(job => {
+    const jobId = String(job?.id || '').trim();
+    if (!jobId) return;
+    const status = String(job?.status || '').trim().toLowerCase();
+    const previousStatus = String(jobStatusMemory[jobId] || '').trim().toLowerCase();
+    nextStatusMemory[jobId] = status;
+    const summary = getJobSummary(job);
+    const done = Number(summary.done || 0);
+    const total = Number(summary.total || 0);
+    const completionKey = `${jobId}:${String(job?.finished_at || '')}:${done}/${total}`;
+    const isReallyCompleted = status === 'completed' && (total <= 0 || done >= total);
+    if (isReallyCompleted && previousStatus && previousStatus !== 'completed' && !notifiedCompletedJobKeys.has(completionKey)) {
+      notifiedCompletedJobKeys.add(completionKey);
+      showToast(t('jobFinishedToastFmt')(getJobSheetLabel(job), done, total), 'success', t('jobFinishedTitle'));
+    }
+  });
+  jobStatusMemory = nextStatusMemory;
+}
+
 function resultPill(result, state = '', tag = '', message = '') {
   const raw = `${tag || ''} ${result || ''} ${state || ''} ${message || ''}`.toLowerCase();
   let level = 'info';
@@ -4334,6 +4544,12 @@ function getLogPostLabel(log) {
 function isUnavailableLog(log) {
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   return raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung');
+}
+
+function isFailedLog(log) {
+  const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
+  if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
+  return raw.includes('fail') || raw.includes('error');
 }
 
 function canReplayLog(log) {
@@ -4522,9 +4738,12 @@ function renderProjects() {
     { key: 'booking', label: getRunModeLabel('booking'), count: allSaved.filter(job => getJobMode(job) === 'booking').length },
     { key: 'scan', label: getRunModeLabel('scan'), count: allSaved.filter(job => getJobMode(job) === 'scan').length },
   ];
-  document.getElementById('projectsTotalJobs').textContent = saved.length;
-  document.getElementById('projectsCompletedJobs').textContent = uniqueSheets;
-  document.getElementById('projectsSelectedJob').textContent = selected ? `${summary.done || 0}/${summary.total || 0}` : '-';
+  const totalNode = document.getElementById('projectsTotalJobs');
+  const sheetsNode = document.getElementById('projectsCompletedJobs');
+  const selectedNode = document.getElementById('projectsSelectedJob');
+  if (totalNode) totalNode.textContent = saved.length;
+  if (sheetsNode) sheetsNode.textContent = uniqueSheets;
+  if (selectedNode) selectedNode.textContent = selected ? `${summary.done || 0}/${summary.total || 0}` : '-';
   document.getElementById('projectsModeFilters').innerHTML = filterOptions.map(opt => {
     const active = currentProjectModeFilter === opt.key ? ' active' : '';
     return `<button type="button" class="project-mode-filter mode-${opt.key}${active}" onclick="setProjectModeFilter('${opt.key}')">${esc(opt.label)}<span>${opt.count}</span></button>`;
@@ -4569,7 +4788,8 @@ function renderActivities(logs) {
   document.getElementById('activitiesTimeline').innerHTML = items.length
     ? items.map(x => {
         const level = classifyLog(x);
-        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>#${x.row} ${esc(x.state)}/${esc(x.result)}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${toLocalStamp(x.ts)}</div></div>`;
+        const jobMeta = x.__job_id ? `${String(x.__job_mode || '').trim() ? `${prettyWord(x.__job_mode)} · ` : ''}${String(x.__job_id || '').slice(0, 8)}` : '';
+        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>#${x.row} ${esc(x.state)}/${esc(x.result)}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
       }).join('')
     : `<div class="timeline-item"><strong>${t('noActivity')}</strong><div>${t('startOrSelect')}</div></div>`;
 }
@@ -4580,7 +4800,22 @@ function renderRunMonitor(snapshot, logs) {
   const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
   const errorRows = st.error_rows || {};
   const errorKeys = Object.keys(errorRows);
-  const unavailableCount = (logs || []).filter(isUnavailableLog).length;
+  const logItems = Array.isArray(logs) ? logs : [];
+  const unavailableCount = logItems.filter(isUnavailableLog).length;
+  const failedLogCount = logItems.filter(isFailedLog).length;
+  const issueRows = new Set();
+  errorKeys.forEach(key => {
+    const row = Number(key);
+    if (Number.isFinite(row) && row > 0) issueRows.add(row);
+  });
+  logItems.forEach(item => {
+    if (!isUnavailableLog(item) && !isFailedLog(item)) return;
+    const row = Number(item?.row || 0);
+    if (Number.isFinite(row) && row > 0) issueRows.add(row);
+  });
+  const failedCount = Math.max(Number(s.failed || 0), failedLogCount, errorKeys.length);
+  const derivedIssueCount = issueRows.size || failedCount + unavailableCount;
+  const hasIssueState = derivedIssueCount > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
   const statusLabel = prettyWord(st.status || 'idle');
   const latestLog = (logs || []).length ? logs[logs.length - 1] : null;
   const detailText = String(st.detail || latestLog?.message || '').trim();
@@ -4620,10 +4855,12 @@ function renderRunMonitor(snapshot, logs) {
   document.getElementById('runMonitorProgressMeta').textContent = detailText
     ? `${detailText}${etaText ? ' · ' + etaText : ''}`
     : (etaText || '-');
-  document.getElementById('runMonitorErrorMain').textContent = errorKeys.length ? `${errorKeys.length}` : t('monitorNoErrors');
-  document.getElementById('runMonitorErrorMeta').textContent = errorKeys.length
-    ? errorKeys.slice(0, 5).map(x => `#${x}`).join(', ')
-    : t('monitorSuccessFailedFmt')(s.success || 0, s.failed || 0, unavailableCount);
+  document.getElementById('runMonitorErrorMain').textContent = hasIssueState ? `${Math.max(derivedIssueCount, 1)}` : t('monitorNoErrors');
+  document.getElementById('runMonitorErrorMeta').textContent = hasIssueState
+    ? (issueRows.size
+        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount)}`
+        : t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount))
+    : t('monitorSuccessFailedFmt')(s.success || 0, 0, unavailableCount);
 
   const rows = (logs || []).slice().reverse();
   const replayLocked = ['running', 'paused'].includes(String(st.status || '').toLowerCase());
@@ -4669,7 +4906,6 @@ function updateRunActionButtons(snapshot = currentJobSnapshot) {
 async function replayLogRow(jobId, row, blockName = '') {
   try {
     if (!jobId) throw new Error('No job selected');
-    const sourceJobId = jobId;
     const payload = {
       row: Number(row || 0),
       block_name: String(blockName || ''),
@@ -4679,8 +4915,8 @@ async function replayLogRow(jobId, row, blockName = '') {
       body: JSON.stringify(payload),
     });
     await refreshJobs();
-    currentJobId = sourceJobId;
-    setSelectedJobIdForMode(currentRunMode, sourceJobId);
+    currentJobId = out.job_id;
+    setSelectedJobIdForMode(currentRunMode, out.job_id);
     await pollCurrent();
     setStatus(`${t('replayStartedFmt')(payload.row)} · ${String(out.job_id || '').slice(0, 8)}`, 'running');
   } catch (e) {
@@ -5192,20 +5428,11 @@ function syncAuthUI() {
   const accessButton = document.getElementById('access_nav_button');
   if (accessButton) accessButton.style.display = isAdminUser() ? 'flex' : 'none';
   const settingsButton = document.getElementById('settings_nav_button');
-  if (settingsButton) settingsButton.style.display = isAdminUser() ? 'flex' : 'none';
-  const settingsActionButtons = document.querySelectorAll('#view-settings .run-actions button');
-  settingsActionButtons.forEach(button => {
-    if (!(button instanceof HTMLButtonElement)) return;
-    if (button.id === 'saveAccessButton' || button.id === 'reloadAccessButton') return;
-    button.style.display = isAdminUser() ? '' : 'none';
-  });
+  if (settingsButton) settingsButton.style.display = 'flex';
   const stateNode = document.querySelector('#view-settings .state');
-  if (stateNode) stateNode.textContent = isAdminUser() ? t('settingsState') : t('adminOnly');
+  if (stateNode) stateNode.textContent = t('settingsState');
   const accessStateNode = document.querySelector('#view-access .state');
   if (accessStateNode) accessStateNode.textContent = isAdminUser() ? t('accessState') : t('adminOnly');
-  if (!isAdminUser() && document.getElementById('view-settings')?.classList.contains('active')) {
-    switchView('overview');
-  }
   if (!isAdminUser() && document.getElementById('view-access')?.classList.contains('active')) {
     switchView('overview');
   }
@@ -5372,10 +5599,6 @@ async function loadDefaults() {
 }
 
 async function saveSidebarSettings() {
-  if (!isAdminUser()) {
-    setSettingsNote(t('adminOnly'), true);
-    return;
-  }
   try {
     const payload = {
       credentials_path: currentSettingsCache.credentials_path || '',
@@ -5509,6 +5732,7 @@ async function refreshJobs() {
   try {
     const out = await req('/api/jobs');
     const jobs = out.jobs || [];
+    processJobLifecycleNotifications(jobs);
     jobsCache = jobs;
     syncModeSelections();
     if (currentJobId && !jobs.some(job => job.id === currentJobId)) currentJobId = null;
@@ -5532,6 +5756,7 @@ async function refreshJobs() {
     document.getElementById('jobsBody').innerHTML = rows;
     renderOverview();
     renderProjects();
+    renderActivities(getActivityLogsFromJobs());
     return true;
   } catch (e) {
     setStatus('Load jobs error: ' + e.message, 'failed');
@@ -5586,11 +5811,13 @@ async function pollCurrent() {
     const lg = await req('/api/jobs/' + currentJobId + '/logs?limit=200');
     const logs = lg.logs || [];
     currentLogsCache = logs;
+    const targetJob = (jobsCache || []).find(job => job.id === currentJobId);
+    if (targetJob) targetJob.recent_logs = logs.slice(-20);
     renderRunMonitor(st, logs);
     updateRunActionButtons(st);
     renderOverview();
     renderProjects();
-    renderActivities(logs);
+    renderActivities(getActivityLogsFromJobs());
   } catch (e) {
     setStatus('Poll error: ' + e.message, 'failed');
   }
@@ -5629,6 +5856,8 @@ init().catch(e => setStatus('Init error: ' + e.message, 'failed'));
         .replace("__AUTH_ROLE_DISPLAY__", auth_role_display)
         .replace("__ADMIN_NAV_STYLE__", "" if auth_role_raw == "admin" else "display:none")
         .replace("__ADMIN_SECTION_STYLE__", "" if auth_role_raw == "admin" else "display:none")
+        .replace("__SETTINGS_NAV_STYLE__", "")
+        .replace("__SETTINGS_SECTION_STYLE__", "")
         .replace("__AUTH_IS_ADMIN__", "true" if auth_role_raw == "admin" else "false")
     )
 
@@ -5640,31 +5869,25 @@ def health():
 
 @app.get("/api/default-config")
 def default_config(request: Request):
-    _require_api_auth(request)
+    user_email = _require_api_auth(request)
+    saved_settings = _read_saved_settings(user_email)
     payload = {
         "sheet_url": evidence.DEFAULT_SHEET_URL,
         "sheet_name": evidence.DEFAULT_SHEET_NAME_TARGET,
         "drive_id": evidence.DEFAULT_DRIVE_FOLDER_ID,
-        "credentials_path": evidence.JSON_PATH,
+        "credentials_path": "",
     }
-    if os.path.exists(evidence.SETTINGS_PATH):
-        try:
-            with open(evidence.SETTINGS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f) or {}
-            payload["sheet_url"] = str(data.get("sheet_url", payload["sheet_url"]))
-            payload["sheet_name"] = str(data.get("sheet_name", payload["sheet_name"]))
-            payload["drive_id"] = str(data.get("drive_id", payload["drive_id"]))
-            payload["credentials_path"] = str(data.get("credentials_path", payload["credentials_path"]))
-        except Exception:
-            pass
+    payload["sheet_url"] = str(saved_settings.get("sheet_url", payload["sheet_url"]))
+    payload["sheet_name"] = str(saved_settings.get("sheet_name", payload["sheet_name"]))
+    payload["drive_id"] = str(saved_settings.get("drive_id", payload["drive_id"]))
+    payload["credentials_path"] = str(saved_settings.get("credentials_path", payload["credentials_path"]))
     return payload
 
 
 @app.get("/api/settings")
 def get_settings(request: Request):
-    _require_api_auth(request)
-    data = _build_settings_payload(_read_saved_settings())
-    _apply_runtime_settings(data)
+    user_email = _require_api_auth(request)
+    data = _build_settings_payload(_read_saved_settings(user_email))
     return data
 
 
@@ -5682,9 +5905,9 @@ def get_mail_config(request: Request):
 
 @app.get("/api/sheets/names")
 def list_sheet_names(request: Request, sheet_url: str, credentials_path: str = ""):
-    _require_api_auth(request)
-    saved = _read_saved_settings()
-    cred_path = str(credentials_path or "").strip() or str(saved.get("credentials_path", "")).strip() or str(getattr(evidence, "JSON_PATH", "")).strip()
+    user_email = _require_api_auth(request)
+    saved = _read_saved_settings(user_email)
+    cred_path = str(credentials_path or "").strip() or str(saved.get("credentials_path", "")).strip()
     spreadsheet = _open_spreadsheet(sheet_url, cred_path)
     titles = []
     for ws in spreadsheet.worksheets():
@@ -5700,7 +5923,7 @@ def list_sheet_names(request: Request, sheet_url: str, credentials_path: str = "
 
 @app.post("/api/settings")
 def save_settings(request: Request, payload: SettingsUpdateRequest):
-    _require_admin(request)
+    user_email = _require_api_auth(request)
     credentials_path = str(payload.credentials_path or "").strip()
     inline_json = str(payload.service_account_json or "").strip()
     if inline_json:
@@ -5708,7 +5931,7 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
             parsed = json.loads(inline_json)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Service account JSON không hợp lệ: {exc}") from exc
-        out_path = os.path.join(evidence.APP_DIR, "credentials.inline.json")
+        out_path = _user_service_account_path(user_email)
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(parsed, f, ensure_ascii=False, indent=2)
         credentials_path = out_path
@@ -5724,8 +5947,7 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
         "ready_state": str(payload.ready_state or "interactive").strip() or "interactive",
         "full_page_capture": bool(payload.full_page_capture),
     }
-    data = _build_settings_payload(_write_saved_settings(patch))
-    _apply_runtime_settings(data)
+    data = _build_settings_payload(_write_saved_settings(user_email, patch))
     return {"ok": True, "settings": data}
 
 
@@ -5762,10 +5984,10 @@ def save_mail_config(request: Request, payload: MailConfigUpdateRequest):
 
 @app.post("/api/chrome/launch")
 def launch_chrome(request: Request, payload: LaunchChromeRequest):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     run_mode = _normalize_run_mode(payload.run_mode)
     with JOBS_LOCK:
-        running_id = _any_running_job_for_mode(run_mode)
+        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
     if running_id:
         raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}. Không thể mở lại Chrome lúc này.")
     browser_port = int(payload.browser_port or _get_mode_base_port(run_mode))
@@ -5781,10 +6003,10 @@ def launch_chrome(request: Request, payload: LaunchChromeRequest):
 
 @app.post("/api/chrome/launch-block/{block_index}")
 def launch_chrome_block(block_index: int, request: Request, run_mode: str = "seeding"):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     run_mode = _normalize_run_mode(run_mode)
     with JOBS_LOCK:
-        running_id = _any_running_job_for_mode(run_mode)
+        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
     if running_id:
         raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}. Không thể mở lại Chrome block lúc này.")
     idx = int(block_index)
@@ -5799,19 +6021,30 @@ def launch_chrome_block(block_index: int, request: Request, run_mode: str = "see
 
 @app.post("/api/jobs/start")
 def start_job(request: Request, payload: JobStartRequest):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     run_mode = _normalize_run_mode(payload.run_mode)
+    saved_settings = _read_saved_settings(owner_email)
     with JOBS_LOCK:
-        running_id = _any_running_job_for_mode(run_mode)
+        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
         if running_id:
             raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}")
 
-    credentials_path = _resolve_credentials_input(payload.credentials_input)
-    evidence.JSON_PATH = credentials_path
+    credentials_input = str(payload.credentials_input or "").strip() or str(saved_settings.get("credentials_path", "")).strip()
+    credentials_path = _resolve_credentials_input(credentials_input, owner_email)
 
     sheet_url = evidence.normalize_sheet_input(payload.sheet_url)
     drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
+    merged_settings = _build_settings_payload(saved_settings)
+    runtime_settings = {
+        "credentials_path": credentials_path,
+        "viewport_width": int(merged_settings.get("viewport_width", 1920) or 1920),
+        "viewport_height": int(merged_settings.get("viewport_height", 1400) or 1400),
+        "page_timeout_ms": int(merged_settings.get("page_timeout_ms", 3000) or 3000),
+        "ready_state": str(merged_settings.get("ready_state", "interactive") or "interactive"),
+        "full_page_capture": bool(merged_settings.get("full_page_capture", False)),
+    }
     _write_saved_settings(
+        owner_email,
         {
             "credentials_path": credentials_path,
             "sheet_url": sheet_url,
@@ -5836,12 +6069,15 @@ def start_job(request: Request, payload: JobStartRequest):
                 raise HTTPException(status_code=500, detail=f"Launch Chrome thất bại: {info}")
 
     request_snapshot = {
+        "owner_email": owner_email,
         "mode": run_mode,
         "drive_id": drive_id,
         "sheet_url": sheet_url,
         "sheet_name": payload.sheet_name.strip(),
         "browser_port": browser_port,
         "profile_path": profile_path,
+        "credentials_path": credentials_path,
+        "runtime_settings": runtime_settings,
         "start_line": int(payload.start_line),
         "force_run_all": bool(payload.force_run_all),
         "only_run_error_rows": bool(payload.only_run_error_rows),
@@ -5851,6 +6087,7 @@ def start_job(request: Request, payload: JobStartRequest):
         "mappings": mapping_payload,
     }
     return _enqueue_job(
+        owner_email=owner_email,
         request_snapshot=request_snapshot,
         run_mode=run_mode,
         start_line=int(payload.start_line),
@@ -5863,17 +6100,17 @@ def start_job(request: Request, payload: JobStartRequest):
 
 @app.post("/api/jobs/{job_id}/replay-row")
 def replay_job_row(job_id: str, request: Request, payload: ReplayRowRequest):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     row = int(payload.row)
     if row < 1:
         raise HTTPException(status_code=400, detail="Row không hợp lệ")
 
     with JOBS_LOCK:
         source_job = JOBS.get(job_id)
-        if not source_job:
+        if not source_job or _job_owner_email(source_job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job nguồn")
         run_mode = _get_job_mode(source_job)
-        running_id = _any_running_job_for_mode(run_mode)
+        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
         if running_id:
             raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}")
         source_request = json.loads(json.dumps(source_job.get("request") or {}))
@@ -5900,12 +6137,14 @@ def replay_job_row(job_id: str, request: Request, payload: ReplayRowRequest):
     source_request["start_line"] = int(replay_start_line)
     source_request["target_rows"] = [row]
     source_request["target_block_name"] = block_name
+    source_request["owner_email"] = owner_email
 
     detail = f"Replay dòng {row}"
     if block_name:
         detail += f" · {block_name}"
 
     return _enqueue_job(
+        owner_email=owner_email,
         request_snapshot=source_request,
         run_mode=run_mode,
         start_line=int(replay_start_line),
@@ -5918,10 +6157,10 @@ def replay_job_row(job_id: str, request: Request, payload: ReplayRowRequest):
 
 @app.post("/api/jobs/{job_id}/stop")
 def stop_job(job_id: str, request: Request):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job:
+        if not job or _job_owner_email(job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         adapter: WebAppAdapter = job["adapter"]
         if adapter:
@@ -5934,10 +6173,10 @@ def stop_job(job_id: str, request: Request):
 
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str, request: Request):
-    _require_admin(request)
+    owner_email = _require_api_auth(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job:
+        if not job or _job_owner_email(job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         if str(job.get("status") or "").strip().lower() in {"running", "paused"}:
             raise HTTPException(status_code=409, detail="Không thể xóa job đang chạy hoặc đang tạm dừng")
@@ -5948,10 +6187,10 @@ def delete_job(job_id: str, request: Request):
 
 @app.get("/api/jobs/{job_id}/export-log")
 def export_job_log(job_id: str, request: Request):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job:
+        if not job or _job_owner_email(job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         job_snapshot = _serialize_job(job)
     rows = _build_export_log_rows(job_snapshot)
@@ -5976,10 +6215,10 @@ def export_job_log(job_id: str, request: Request):
 
 @app.post("/api/jobs/{job_id}/pause-toggle")
 def pause_toggle_job(job_id: str, request: Request):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job:
+        if not job or _job_owner_email(job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         adapter: WebAppAdapter = job.get("adapter")
         if not adapter:
@@ -6004,10 +6243,12 @@ def pause_toggle_job(job_id: str, request: Request):
 
 @app.get("/api/jobs")
 def list_jobs(request: Request):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     out = []
     with JOBS_LOCK:
         for job in JOBS.values():
+            if _job_owner_email(job) != owner_email:
+                continue
             out.append(
                 {
                     "id": job["id"],
@@ -6022,6 +6263,7 @@ def list_jobs(request: Request):
                     "completion": job.get("completion"),
                     "error_rows": job.get("error_rows"),
                     "error": job.get("error"),
+                    "recent_logs": list(job.get("logs", []))[-20:],
                 }
             )
     out.sort(key=lambda x: x["created_at"], reverse=True)
@@ -6030,10 +6272,10 @@ def list_jobs(request: Request):
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str, request: Request):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job:
+        if not job or _job_owner_email(job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         return {
             "id": job["id"],
@@ -6054,11 +6296,11 @@ def get_job(job_id: str, request: Request):
 
 @app.get("/api/jobs/{job_id}/logs")
 def get_job_logs(job_id: str, request: Request, limit: int = 100):
-    _require_api_auth(request)
+    owner_email = _require_api_auth(request)
     lim = max(1, min(int(limit), 1000))
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job:
+        if not job or _job_owner_email(job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         logs = list(job.get("logs", []))
     return {"job_id": job_id, "logs": logs[-lim:]}
