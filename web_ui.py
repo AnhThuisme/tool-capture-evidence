@@ -2572,7 +2572,7 @@ linear-gradient(to right, transparent, transparent)}
                 </div>
                 <input id="settings_full_page_capture" type="checkbox" style="width:18px;height:18px" />
               </div>
-              <div class="card pad" style="margin-top:14px;background:var(--panel-soft)">
+              <div id="settings_service_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
                 <div style="font-size:15px;font-weight:700">JSON service account</div>
                 <div class="muted" style="margin-top:4px">Paste JSON to save it locally and update the credentials path automatically.</div>
                 <div id="settings_service_status" class="badge info" style="margin-top:10px">Not saved</div>
@@ -5013,6 +5013,13 @@ function renderRunShareInfo(settings) {
   emailNode.textContent = s.service_account_email || t('noServiceEmail');
 }
 
+function renderServiceAccountCard(settings) {
+  const s = settings || {};
+  const card = document.getElementById('settings_service_card');
+  if (!card) return;
+  card.style.display = s.service_account_fixed ? 'none' : '';
+}
+
 function renderSettingsSummary(settings) {
   const s = settings || {};
   document.getElementById('settings_summary_viewport').textContent = `${s.viewport_width || '-'} x ${s.viewport_height || '-'}`;
@@ -5022,6 +5029,7 @@ function renderSettingsSummary(settings) {
   document.getElementById('settings_summary_service_account').textContent = serviceState;
   document.getElementById('settings_summary_service_email').textContent = s.service_account_email || t('noServiceEmail');
   renderRunShareInfo(s);
+  renderServiceAccountCard(s);
   const status = document.getElementById('settings_service_status');
   status.className = 'badge ' + (s.service_account_saved ? 'ok' : 'info');
   status.textContent = serviceState;
