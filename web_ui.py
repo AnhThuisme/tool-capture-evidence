@@ -259,6 +259,17 @@ class MailConfigUpdateRequest(BaseModel):
     app_password: str = ""
 
 
+class ActivityEventRequest(BaseModel):
+    kind: str = ""
+    message: str = ""
+    level: str = "info"
+    run_mode: str = ""
+    block_name: str = ""
+    browser_port: int | None = None
+    job_id: str = ""
+    row: int | None = None
+
+
 app = FastAPI(title="Tool Evidence", version="1.0.0")
 app.add_middleware(
     SessionMiddleware,
@@ -271,6 +282,7 @@ app.add_middleware(
 JOBS_LOCK = threading.Lock()
 JOBS: dict[str, dict[str, Any]] = {}
 JOB_HISTORY_PATH = os.path.join(evidence.BASE_DIR, "web_job_history.json")
+ACTIVITY_HISTORY_PATH = os.path.join(evidence.BASE_DIR, "web_activity_history.json")
 AUTH_POLICY_PATH = os.path.join(evidence.BASE_DIR, "web_auth_policy.json")
 MAIL_CONFIG_PATH = os.path.join(evidence.BASE_DIR, "web_mail_config.json")
 JOB_PERSIST_MIN_INTERVAL_SEC = 0.5
@@ -1581,6 +1593,62 @@ def _build_export_log_rows(job: dict[str, Any]) -> list[tuple[list[Any], list[st
             tags.append("ok")
         rows_with_tags.append((row_vals, tags))
     return rows_with_tags
+
+
+def _read_activity_events() -> list[dict[str, Any]]:
+    if not os.path.exists(ACTIVITY_HISTORY_PATH):
+        return []
+    try:
+        with open(ACTIVITY_HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f) or []
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_activity_events(events: list[dict[str, Any]]) -> None:
+    temp_path = ACTIVITY_HISTORY_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(events[-500:], f, ensure_ascii=False, indent=2)
+    os.replace(temp_path, ACTIVITY_HISTORY_PATH)
+
+
+def _append_activity_event(
+    owner_email: str,
+    *,
+    kind: str,
+    message: str,
+    level: str = "info",
+    run_mode: str = "",
+    block_name: str = "",
+    browser_port: int | None = None,
+    job_id: str = "",
+    row: int | None = None,
+) -> dict[str, Any]:
+    entry = {
+        "id": str(uuid.uuid4()),
+        "owner_email": _normalize_email(owner_email),
+        "ts": _utc_now_iso(),
+        "kind": str(kind or "").strip() or "event",
+        "message": str(message or "").strip() or "Activity",
+        "level": str(level or "info").strip().lower() or "info",
+        "run_mode": _normalize_run_mode(run_mode),
+        "block_name": str(block_name or "").strip(),
+        "browser_port": int(browser_port) if browser_port is not None else None,
+        "job_id": str(job_id or "").strip(),
+        "row": int(row) if row is not None else None,
+    }
+    events = _read_activity_events()
+    events.append(entry)
+    _write_activity_events(events)
+    return entry
+
+
+def _list_activity_events(owner_email: str, limit: int = 50) -> list[dict[str, Any]]:
+    normalized = _normalize_email(owner_email)
+    rows = [item for item in _read_activity_events() if _normalize_email(item.get("owner_email")) == normalized]
+    rows.sort(key=lambda item: str(item.get("ts") or ""), reverse=True)
+    return rows[: max(1, min(int(limit), 200))]
 
 
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -2968,6 +3036,7 @@ let pendingMappingScrollMode = '';
 let pendingMappingHighlightIndex = -1;
 let currentAccessPolicy = { allowed_emails: [], admin_emails: [], managed_emails: [], email_types: {}, updated_at: null };
 let currentMailConfig = { sender_email: '', from_email: '', has_password: false, updated_at: null, source: 'env' };
+let currentActivityEvents = [];
 let accessDirectoryQuery = '';
 let accessDirectoryRole = 'all';
 let accessDirectoryScope = 'all';
@@ -3800,26 +3869,50 @@ function isLocalWebHost() {
   return host === '127.0.0.1' || host === 'localhost';
 }
 
-function launchChromeViaLocalProtocol(index) {
+function launchChromeViaLocalProtocol(mode, index, port) {
+  const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
   const blockIndex = Number(index) || 0;
-  const port = getChromePortForBlock(blockIndex, currentRunMode);
-  const href = `tool-evidence://launch?mode=${encodeURIComponent(currentRunMode)}&block=${blockIndex}&port=${port}`;
+  const resolvedPort = Number(port) || getChromePortForBlock(blockIndex, runMode);
+  const href = `tool-evidence://launch?mode=${encodeURIComponent(runMode)}&block=${blockIndex}&port=${resolvedPort}`;
   const frame = document.createElement('iframe');
   frame.style.display = 'none';
   frame.src = href;
   document.body.appendChild(frame);
   window.setTimeout(() => frame.remove(), 1500);
-  return { href, port };
+  return { href, port: resolvedPort };
 }
 
-async function launchChromeBlock(index) {
+async function launchChromeBlock(index, mode = currentRunMode, explicitPort = null) {
   try {
+    const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+    const blockIndex = Number(index) || 0;
+    const port = Number(explicitPort) || getChromePortForBlock(blockIndex, runMode);
+    const previousMode = currentRunMode;
+    currentRunMode = runMode;
+    const blockName = getBlockActivityName(blockIndex);
+    currentRunMode = previousMode;
     if (!isLocalWebHost()) {
-      const local = launchChromeViaLocalProtocol(index);
-      setStatus(`?? g?i l?nh m? Chrome ${local.port} t?i m?y c?a b?n`, 'running');
+      await logActivityEvent({
+        kind: 'login',
+        level: 'info',
+        run_mode: runMode,
+        block_name: blockName,
+        browser_port: port,
+        message: `${blockName}: đã gửi lệnh mở Chrome ${port} trên máy cục bộ`,
+      });
+      const local = launchChromeViaLocalProtocol(runMode, blockIndex, port);
+      setStatus(`Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`, 'running');
       return;
     }
-    const out = await req(`/api/chrome/launch-block/${Number(index)}?run_mode=${encodeURIComponent(currentRunMode)}`, { method: 'POST' });
+    const out = await req(`/api/chrome/launch-block/${blockIndex}?run_mode=${encodeURIComponent(runMode)}&browser_port=${port}`, { method: 'POST' });
+    await logActivityEvent({
+      kind: 'login',
+      level: 'info',
+      run_mode: runMode,
+      block_name: blockName,
+      browser_port: Number(out?.browser_port || port),
+      message: `${blockName}: đã mở Chrome ${Number(out?.browser_port || port)} để đăng nhập`,
+    });
     setStatus(out.message || 'Chrome launch requested', 'running');
   } catch (e) {
     alert(e.message);
@@ -3865,7 +3958,8 @@ function renderMappingEditor() {
         }
         return `<div class="mapping-label">${esc(field.label)}</div><div><input class="mapping-input" type="${inputType}" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
       }).join('');
-      const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index})">${esc(`${t('chrome')} ${getChromePortForBlock(index, currentRunMode)}`)}</button></div>`;
+      const chromePort = getChromePortForBlock(index, currentRunMode);
+      const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
       return `<section class="${blockClass}"><div class="mapping-block-grid">${rows}${chromeRow}</div></section>`;
     }).join('')}</div>`;
   } else {
@@ -3895,7 +3989,10 @@ function renderMappingEditor() {
       }).join('');
     const chromeRow = [
       `<div class="mapping-matrix-label">${esc(t('chrome'))}</div>`,
-      ...blocks.map((_, index) => `<div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index})">${esc(`${t('chrome')} ${getChromePortForBlock(index, currentRunMode)}`)}</button></div>`)
+      ...blocks.map((_, index) => {
+        const chromePort = getChromePortForBlock(index, currentRunMode);
+        return `<div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
+      })
     ].join('');
     host.innerHTML = `<section class="mapping-matrix"><div class="mapping-matrix-grid" style="grid-template-columns:${colTemplate}">${nameRow}${rows}${chromeRow}</div></section>`;
   }
@@ -4189,7 +4286,7 @@ function setLanguage(lang) {
   applyLanguage();
   renderOverview();
   renderProjects();
-  renderActivities(currentLogsCache);
+  renderActivities(getCombinedActivities());
   renderRunMonitor(currentJobSnapshot, currentLogsCache);
   if (String(document.getElementById('sheet_url')?.value || '').trim()) scheduleSheetNameSuggestions(false);
 }
@@ -4207,6 +4304,27 @@ async function req(url, opts = {}) {
   }
   if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
   return data;
+}
+
+async function logActivityEvent(payload = {}) {
+  try {
+    const out = await req('/api/activity', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (out?.item) {
+      currentActivityEvents = [out.item, ...(currentActivityEvents || [])].slice(0, 50);
+      renderActivities(getCombinedActivities());
+    }
+    return out?.item || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function getBlockActivityName(index) {
+  const block = ensureMappingBlocks(currentRunMode)[Number(index) || 0] || {};
+  return String(block?.name || '').trim() || `Post ${Number(index) + 1}`;
 }
 
 async function logoutAuth() {
@@ -4420,6 +4538,22 @@ function getActivityLogsFromJobs() {
   return rows.slice(0, 20);
 }
 
+function getCombinedActivities() {
+  const jobLogs = getActivityLogsFromJobs().map(item => ({ ...item, __source: 'job' }));
+  const manualEvents = (currentActivityEvents || []).map(item => ({
+    ...item,
+    row: item?.row ?? '-',
+    state: String(item?.kind || 'action').toUpperCase(),
+    result: String(item?.run_mode || 'manual').toUpperCase(),
+    __source: 'activity',
+    __job_id: String(item?.job_id || ''),
+    __job_mode: String(item?.run_mode || ''),
+  }));
+  return [...jobLogs, ...manualEvents]
+    .sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
+    .slice(0, 20);
+}
+
 function openProjectInRuns(jobId) {
   const job = (jobsCache || []).find(item => item.id === jobId);
   if (!job) return;
@@ -4459,6 +4593,9 @@ async function deleteProject(jobId, ev = null) {
 }
 
 function classifyLog(log) {
+  const level = String(log?.level || '').toLowerCase();
+  if (level === 'error' || level === 'failed') return 'error';
+  if (level === 'warning' || level === 'warn') return 'warning';
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   if (raw.includes('fail') || raw.includes('error')) return 'error';
   if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return 'warning';
@@ -4789,7 +4926,8 @@ function renderActivities(logs) {
     ? items.map(x => {
         const level = classifyLog(x);
         const jobMeta = x.__job_id ? `${String(x.__job_mode || '').trim() ? `${prettyWord(x.__job_mode)} · ` : ''}${String(x.__job_id || '').slice(0, 8)}` : '';
-        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>#${x.row} ${esc(x.state)}/${esc(x.result)}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
+        const rowLabel = x.__source === 'activity' ? esc(String(x.state || 'ACTION')) : `#${esc(x.row)} ${esc(x.state)}/${esc(x.result)}`;
+        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${rowLabel}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
       }).join('')
     : `<div class="timeline-item"><strong>${t('noActivity')}</strong><div>${t('startOrSelect')}</div></div>`;
 }
@@ -5672,9 +5810,17 @@ async function saveAccessPolicy() {
 
 async function launchChrome() {
   try {
+    const browserPort = getModeBasePort(currentRunMode);
     const out = await req('/api/chrome/launch', {
       method: 'POST',
-      body: JSON.stringify({ run_mode: currentRunMode, browser_port: getModeBasePort(currentRunMode) })
+      body: JSON.stringify({ run_mode: currentRunMode, browser_port: browserPort })
+    });
+    await logActivityEvent({
+      kind: 'chrome',
+      level: 'info',
+      run_mode: currentRunMode,
+      browser_port: browserPort,
+      message: `${prettyWord(currentRunMode)}: đã mở Chrome ${browserPort}`,
     });
     setStatus(out.message || 'Chrome launch requested', 'running');
   } catch (e) { alert(e.message); }
@@ -5730,8 +5876,12 @@ async function stopJob() {
 
 async function refreshJobs() {
   try {
-    const out = await req('/api/jobs');
+    const [out, activityOut] = await Promise.all([
+      req('/api/jobs'),
+      req('/api/activity?limit=50'),
+    ]);
     const jobs = out.jobs || [];
+    currentActivityEvents = activityOut.items || [];
     processJobLifecycleNotifications(jobs);
     jobsCache = jobs;
     syncModeSelections();
@@ -5756,7 +5906,7 @@ async function refreshJobs() {
     document.getElementById('jobsBody').innerHTML = rows;
     renderOverview();
     renderProjects();
-    renderActivities(getActivityLogsFromJobs());
+    renderActivities(getCombinedActivities());
     return true;
   } catch (e) {
     setStatus('Load jobs error: ' + e.message, 'failed');
@@ -5817,7 +5967,7 @@ async function pollCurrent() {
     updateRunActionButtons(st);
     renderOverview();
     renderProjects();
-    renderActivities(getActivityLogsFromJobs());
+    renderActivities(getCombinedActivities());
   } catch (e) {
     setStatus('Poll error: ' + e.message, 'failed');
   }
@@ -5835,7 +5985,7 @@ async function init() {
   await refreshJobs();
   await pollCurrent();
   renderOverview();
-  renderActivities([]);
+  renderActivities(getCombinedActivities());
   renderRunMonitor(null, []);
   renderAccessPolicySummary(currentAccessPolicy);
   ensureTimers();
@@ -5982,6 +6132,29 @@ def save_mail_config(request: Request, payload: MailConfigUpdateRequest):
     return {"ok": True, "config": config}
 
 
+@app.get("/api/activity")
+def list_activity(request: Request, limit: int = 50):
+    owner_email = _require_api_auth(request)
+    return {"ok": True, "items": _list_activity_events(owner_email, limit=limit)}
+
+
+@app.post("/api/activity")
+def save_activity(request: Request, payload: ActivityEventRequest):
+    owner_email = _require_api_auth(request)
+    event = _append_activity_event(
+        owner_email,
+        kind=payload.kind,
+        message=payload.message,
+        level=payload.level,
+        run_mode=payload.run_mode,
+        block_name=payload.block_name,
+        browser_port=payload.browser_port,
+        job_id=payload.job_id,
+        row=payload.row,
+    )
+    return {"ok": True, "item": event}
+
+
 @app.post("/api/chrome/launch")
 def launch_chrome(request: Request, payload: LaunchChromeRequest):
     owner_email = _require_api_auth(request)
@@ -6002,7 +6175,7 @@ def launch_chrome(request: Request, payload: LaunchChromeRequest):
 
 
 @app.post("/api/chrome/launch-block/{block_index}")
-def launch_chrome_block(block_index: int, request: Request, run_mode: str = "seeding"):
+def launch_chrome_block(block_index: int, request: Request, run_mode: str = "seeding", browser_port: int | None = None):
     owner_email = _require_api_auth(request)
     run_mode = _normalize_run_mode(run_mode)
     with JOBS_LOCK:
@@ -6011,7 +6184,7 @@ def launch_chrome_block(block_index: int, request: Request, run_mode: str = "see
         raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}. Không thể mở lại Chrome block lúc này.")
     idx = int(block_index)
     base_port = _get_mode_base_port(run_mode)
-    port = evidence.get_post_port(idx, base_port)
+    port = int(browser_port or evidence.get_post_port(idx, base_port))
     profile = _get_mode_profile(run_mode, idx)
     ok, info = evidence.launch_chrome_for_login(browser_port=port, profile_path=profile)
     if not ok:
