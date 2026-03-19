@@ -48,6 +48,8 @@ def _load_dotenv_file(path: str) -> None:
 
 _load_dotenv_file(os.path.join(os.path.dirname(__file__), ".env"))
 
+BRAND_MASCOT_PATH = os.path.join(os.path.dirname(__file__), "Fanscom mascot-05.png")
+
 
 def _utc_now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
@@ -1149,9 +1151,8 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear
 .wrap{width:min(460px,calc(100vw - 32px))}
 .card{background:rgba(18,27,43,.96);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
-.dot{position:relative;width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#102040 0%,#24488f 54%,#6c98ff 100%);box-shadow:0 10px 22px rgba(36,72,143,.28);border:1px solid rgba(191,219,254,.34);overflow:hidden;flex:0 0 auto}
-.dot::before{content:"";position:absolute;left:6px;right:10px;top:7px;bottom:11px;border-radius:8px;border:1.5px solid rgba(255,255,255,.82);transform:skewY(-8deg)}
-.dot::after{content:"";position:absolute;top:5px;right:5px;width:11px;height:11px;border-radius:4px;background:linear-gradient(145deg,#f8fbff,#a9c5ff);box-shadow:0 0 0 3px rgba(147,197,253,.12)}
+.dot{position:relative;width:54px;height:54px;border-radius:16px;background:#ffffff url('/assets/brand-mascot') center/88% no-repeat;box-shadow:0 12px 24px rgba(36,72,143,.24);border:1px solid rgba(191,219,254,.34);overflow:hidden;flex:0 0 auto}
+.dot::before,.dot::after{display:none}
 .brand strong{display:block;font-size:18px}
 .brand span{display:block;font-size:12px;color:var(--muted);margin-top:3px}
 h1{margin:0 0 10px;font-size:28px;letter-spacing:-.02em}
@@ -1759,6 +1760,13 @@ def auth_logout(request: Request):
     return {"ok": True}
 
 
+@app.get("/assets/brand-mascot")
+def brand_mascot():
+    if not os.path.exists(BRAND_MASCOT_PATH):
+        raise HTTPException(status_code=404, detail="Brand mascot not found")
+    return FileResponse(BRAND_MASCOT_PATH, media_type="image/png")
+
+
 @app.get("/", response_class=HTMLResponse)
 def home_page(request: Request):
     if _is_railway_healthcheck(request):
@@ -1787,9 +1795,8 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .shell{width:100%;min-height:100vh;padding:10px}
 .board{width:100%;min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:236px 1fr;overflow:hidden}
 .sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
-.dot{position:relative;width:42px;height:42px;border-radius:13px;background:linear-gradient(145deg,#102040 0%,#2851a3 56%,#7ea7ff 100%);box-shadow:0 12px 28px rgba(59,130,246,.22);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
-.dot::before{content:"";position:absolute;left:8px;right:12px;top:8px;bottom:13px;border-radius:10px;border:1.6px solid rgba(255,255,255,.86);transform:skewY(-8deg)}
-.dot::after{content:"";position:absolute;top:6px;right:6px;width:13px;height:13px;border-radius:5px;background:linear-gradient(145deg,#f8fbff,#b4ccff);box-shadow:0 0 0 4px rgba(147,197,253,.12)}
+.dot{position:relative;width:56px;height:56px;border-radius:18px;background:#ffffff url('/assets/brand-mascot') center/88% no-repeat;box-shadow:0 14px 30px rgba(59,130,246,.2);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
+.dot::before,.dot::after{display:none}
 .brand-row{position:relative;display:flex;align-items:center;gap:14px;min-height:94px;padding:16px 16px;border:1px solid rgba(123,168,255,.14);border-radius:20px;background:linear-gradient(135deg,rgba(76,110,196,.18),rgba(255,255,255,.02) 48%,rgba(37,99,235,.08));overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
 .brand-row::after{content:"";position:absolute;right:-28px;top:-24px;width:108px;height:108px;border-radius:50%;background:rgba(96,139,255,.12);filter:blur(6px)}
 .brand-copy{position:relative;z-index:1;display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -2680,7 +2687,7 @@ linear-gradient(to right, transparent, transparent)}
                   <label for="access_entry_type" id="accessEntryTypeLabel">Type</label>
                   <select id="access_entry_type">
                     <option value="internal">Internal</option>
-                    <option value="external">External</option>
+                    <option value="external">Ngoại bộ</option>
                   </select>
                 </div>
               </div>
@@ -2735,7 +2742,7 @@ linear-gradient(to right, transparent, transparent)}
                 <select id="accessTypeFilterSelect" class="access-filter-select" onchange="setAccessDirectoryType(this.value)">
                   <option id="accessTypeFilterAll" value="all">All</option>
                   <option id="accessTypeFilterInternal" value="internal">Internal</option>
-                  <option id="accessTypeFilterExternal" value="external">External</option>
+                  <option id="accessTypeFilterExternal" value="external">Ngoại bộ</option>
                 </select>
               </div>
             </div>
@@ -3046,7 +3053,7 @@ const I18N = {
     accessFilterAdmin: 'Admin',
     accessFilterUser: 'User',
     accessFilterInternal: 'Nội bộ',
-    accessFilterExternal: 'Bên ngoài',
+    accessFilterExternal: 'Ngoại bộ',
     accessYouTag: 'You',
     accessScopeAllowed: 'Được phép',
     accessScopeAdmin: 'Admin',
@@ -3068,7 +3075,7 @@ const I18N = {
     accessStatusAdmin: 'Toàn quyền quản trị',
     accessStatusOpen: 'OTP giới hạn theo danh sách',
     accessTypeInternal: 'Nội bộ',
-    accessTypeExternal: 'Bên ngoài',
+    accessTypeExternal: 'Ngoại bộ',
     accessMakeAdmin: 'Lên admin',
     accessMakeUser: 'Hạ user',
     accessRemove: 'Gỡ',
@@ -4953,11 +4960,8 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
     }
     const token = encodeURIComponent(row.email);
     const edit = `<button class="access-row-btn edit" type="button" onclick="openAccessEntryEditor('${token}')">${esc(t('accessMailEdit'))}</button>`;
-    const promote = row.role === 'admin'
-      ? `<button class="access-row-btn user" type="button" onclick="changeAccessRole('${token}','user')">${esc(t('accessMakeUser'))}</button>`
-      : `<button class="access-row-btn admin" type="button" onclick="changeAccessRole('${token}','admin')">${esc(t('accessMakeAdmin'))}</button>`;
     const remove = `<button class="access-row-btn remove" type="button" onclick="removeAccessEmail('${token}')">${esc(t('accessRemove'))}</button>`;
-    return `<div class="access-row-actions">${edit}${promote}${remove}</div>`;
+    return `<div class="access-row-actions">${edit}${remove}</div>`;
   };
   body.innerHTML = rows.map(row => `
     <tr>
