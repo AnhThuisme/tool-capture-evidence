@@ -86,6 +86,15 @@ def get_post_port(post_index: int, base_port: int = 9223) -> int:
     return base_port + 100 + post_index
 
 
+def get_block_profile(block_index: int, mode: str = "seeding") -> str:
+    mode_name = str(mode or "seeding").strip().lower() or "seeding"
+    idx = max(0, int(block_index or 0))
+    if mode_name == "seeding":
+        return LOCAL_PROFILE_PATH if idx <= 0 else os.path.join(TEMP_DIR, f"chrome_profile_worker_{idx}")
+    suffix = f"{mode_name}_{idx}" if idx > 0 else f"{mode_name}_main"
+    return os.path.join(TEMP_DIR, f"chrome_profile_{suffix}")
+
+
 def _bootstrap_env_credentials_path() -> str:
     raw = os.environ.get("GOOGLE_CREDENTIALS_JSON_B64", "").strip()
     if not raw:
@@ -4693,6 +4702,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 m_start = 4
             normalized_mappings.append(
                 {
+                    "block_index": i,
                     "name": m_name,
                     "start_line": m_start,
                     "col_url": m_col_url,
@@ -4741,6 +4751,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             air_dates = worksheet.col_values(idx_air_date)[3:] if idx_air_date else []
             prepared_blocks.append(
                 {
+                    "block_index": int(m.get("block_index", 0)),
                     "name": m["name"],
                     "start_line": m["start_line"],
                     "col_url": m["col_url"],
@@ -4936,13 +4947,24 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             ui_call(ui_set_progress, percent)
             ui_call(ui_update_summary, done, target_total, okv, failv, eta)
 
-        def _start_worker_driver(worker_idx: int):
+        def _start_worker_driver(block_index: int, block_mode: str):
             if scan_only_request:
                 return None
-            if worker_idx == 0 and app.driver:
+            if block_index == 0 and app.driver:
                 return app.driver
-            worker_profile = os.path.join(TEMP_DIR, f"chrome_profile_worker_{worker_idx}")
+            worker_profile = get_block_profile(block_index, block_mode)
             os.makedirs(worker_profile, exist_ok=True)
+            worker_port = get_post_port(block_index, browser_port)
+            # If the user already opened this block's Chrome and logged in manually,
+            # attach to that exact debugger session instead of starting a fresh browser.
+            try:
+                attach_opts = Options()
+                attach_opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{worker_port}")
+                attached = webdriver.Chrome(service=service, options=attach_opts)
+                write_log(f"[INFO] Attached worker block {block_index} to existing Chrome debug session on port {worker_port}")
+                return attached
+            except Exception as e:
+                write_log(f"[INFO] No attachable worker Chrome on port {worker_port}: {e}")
             # Copy login session from main profile so parallel workers don't ask login again.
             try:
                 has_local_session = os.path.isdir(os.path.join(worker_profile, "Default"))
@@ -4969,8 +4991,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                         ),
                     )
             except Exception as e:
-                write_log(f"[WARN] Worker profile seed failed ({worker_idx}): {e}")
-            worker_port = get_post_port(worker_idx, browser_port)
+                write_log(f"[WARN] Worker profile seed failed ({block_index}): {e}")
             last = None
             for headless in (True, False):
                 try:
@@ -4980,10 +5001,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     )
                 except Exception as e:
                     last = e
-            raise Exception(f"WORKER_CHROME_START_FAILED[{worker_idx}]: {last}")
+            raise Exception(f"WORKER_CHROME_START_FAILED[{block_index}]: {last}")
 
-        def _run_block(block: dict, worker_idx: int):
-            worker_driver = _start_worker_driver(worker_idx)
+        def _run_block(block: dict):
+            block_index = int(block.get("block_index", 0))
+            worker_driver = _start_worker_driver(block_index, str(block.get("mode", "seeding")))
             local_is_main_driver = bool(worker_driver) and (worker_driver is app.driver)
             try:
                 # Each worker gets its own Google API clients to avoid SSL/socket corruption
@@ -5319,11 +5341,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         worker_total = max(1, len(prepared_blocks))
         if len(prepared_blocks) > 1:
             with ThreadPoolExecutor(max_workers=worker_total) as ex:
-                futures = [ex.submit(_run_block, b, i) for i, b in enumerate(prepared_blocks)]
+                futures = [ex.submit(_run_block, b) for b in prepared_blocks]
                 for fu in as_completed(futures):
                     fu.result()
         elif prepared_blocks:
-            _run_block(prepared_blocks[0], 0)
+            _run_block(prepared_blocks[0])
 
         if history_ready:
             set_error_rows_for_sheet(
