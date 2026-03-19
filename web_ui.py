@@ -1138,7 +1138,13 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     merged["credentials_path"] = cred_path
     merged["service_account_email"] = evidence.get_service_account_email(cred_path) if cred_path else ""
     merged["service_account_saved"] = bool(cred_path and os.path.exists(cred_path))
-    merged["service_account_status"] = "Saved" if merged["service_account_saved"] else "Not saved"
+    merged["service_account_fixed"] = bool(
+        merged["service_account_saved"] and os.path.basename(cred_path).lower() == "credentials.inline.json"
+    )
+    merged["service_account_status"] = (
+        "Fixed credentials" if merged["service_account_fixed"]
+        else ("Saved" if merged["service_account_saved"] else "Not saved")
+    )
     return merged
 
 
@@ -2883,6 +2889,7 @@ const I18N = {
     fullPage: 'Chụp toàn bộ trang',
     viewportOnly: 'Chỉ chụp phần nhìn thấy',
     noServiceEmail: 'Chưa có email service account',
+    fixedCredentials: 'Đã dùng credentials cố định',
     persistent: 'Lưu bền',
     noRunSelected: 'Chưa có job được chọn.',
     noGroupsYet: 'Chưa có dự án nào được lưu',
@@ -3163,6 +3170,7 @@ const I18N = {
     fullPage: 'Full page',
     viewportOnly: 'Viewport only',
     noServiceEmail: 'No service account email',
+    fixedCredentials: 'Using fixed credentials',
     persistent: 'Persistent',
     noRunSelected: 'No run selected.',
     noGroupsYet: 'No saved projects yet',
@@ -5010,12 +5018,13 @@ function renderSettingsSummary(settings) {
   document.getElementById('settings_summary_viewport').textContent = `${s.viewport_width || '-'} x ${s.viewport_height || '-'}`;
   document.getElementById('settings_summary_timeout').textContent = `${s.page_timeout_ms || '-'} ms`;
   document.getElementById('settings_summary_full_page').textContent = s.full_page_capture ? t('fullPage') : t('viewportOnly');
-  document.getElementById('settings_summary_service_account').textContent = s.service_account_saved ? t('saved') : t('notSaved');
+  const serviceState = s.service_account_fixed ? t('fixedCredentials') : (s.service_account_saved ? t('saved') : t('notSaved'));
+  document.getElementById('settings_summary_service_account').textContent = serviceState;
   document.getElementById('settings_summary_service_email').textContent = s.service_account_email || t('noServiceEmail');
   renderRunShareInfo(s);
   const status = document.getElementById('settings_service_status');
   status.className = 'badge ' + (s.service_account_saved ? 'ok' : 'info');
-  status.textContent = s.service_account_saved ? t('saved') : t('notSaved');
+  status.textContent = serviceState;
 }
 
 async function loadDefaults() {
