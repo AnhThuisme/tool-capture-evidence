@@ -14,7 +14,7 @@ import time
 import uuid
 from datetime import datetime
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, parseaddr
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -314,6 +314,15 @@ def _normalize_email(value: str) -> str:
 
 def _is_valid_email(value: str) -> bool:
     return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", _normalize_email(value)))
+
+
+def _clean_header_email(value: str, label: str = "Email") -> str:
+    raw = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+    _display, addr = parseaddr(raw)
+    email = _normalize_email(addr or raw)
+    if not _is_valid_email(email):
+        raise HTTPException(status_code=500, detail=f"{label} header không hợp lệ: {raw or '(trống)'}")
+    return email
 
 
 def _parse_email_list(value: Any) -> list[str]:
@@ -767,10 +776,12 @@ def _send_email_via_gmail_api(to_email: str, subject: str, plain_body: str, html
     config = _gmail_api_config()
     if not config:
         raise HTTPException(status_code=500, detail="Chưa cấu hình Gmail API")
+    safe_to = _clean_header_email(to_email, "To")
+    safe_from = _clean_header_email(str(config["from_email"]), "From")
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = formataddr((from_name, str(config["from_email"])))
-    msg["To"] = to_email
+    msg["From"] = formataddr((from_name, safe_from))
+    msg["To"] = safe_to
     msg.set_content(plain_body)
     msg.add_alternative(html_body, subtype="html")
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
@@ -798,10 +809,12 @@ def _send_email_via_gmail_api(to_email: str, subject: str, plain_body: str, html
 
 def _send_email_via_smtp(to_email: str, subject: str, plain_body: str, html_body: str, from_name: str = "Evidence Security") -> None:
     config = _smtp_config()
+    safe_to = _clean_header_email(to_email, "To")
+    safe_from = _clean_header_email(str(config["from_email"]), "From")
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = formataddr((from_name, config["from_email"]))
-    msg["To"] = to_email
+    msg["From"] = formataddr((from_name, safe_from))
+    msg["To"] = safe_to
     msg.set_content(plain_body)
     msg.add_alternative(html_body, subtype="html")
     context = ssl.create_default_context()
@@ -824,11 +837,12 @@ def _send_email_via_smtp(to_email: str, subject: str, plain_body: str, html_body
 def _send_email_via_outlook(to_email: str, subject: str, plain_body: str) -> None:
     if not _outlook_auth_enabled():
         raise HTTPException(status_code=500, detail="Chưa cấu hình Outlook để gửi mail")
+    safe_to = _clean_header_email(to_email, "To")
     script = f"""
 $ErrorActionPreference = 'Stop'
 $outlook = New-Object -ComObject Outlook.Application
 $mail = $outlook.CreateItem(0)
-$mail.To = '{_ps_quote(to_email)}'
+$mail.To = '{_ps_quote(safe_to)}'
 $mail.Subject = '{_ps_quote(subject)}'
 $mail.Body = '{_ps_quote(plain_body)}'
 $mail.Send()
