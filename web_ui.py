@@ -2567,23 +2567,6 @@ linear-gradient(to right, transparent, transparent)}
             <div class="h1">Projects</div>
             <div class="state">Portfolio of stored runs</div>
           </div>
-          <div class="cards-3">
-            <section class="card pad">
-              <div class="k">Grouped Projects</div>
-              <div id="projectsTotalJobs" class="big-number">0</div>
-              <div class="s">by sheet name or url</div>
-            </section>
-            <section class="card pad">
-              <div class="k">Completed Groups</div>
-              <div id="projectsCompletedJobs" class="big-number">0</div>
-              <div class="s">groups with completed jobs</div>
-            </section>
-            <section class="card pad">
-              <div class="k">Largest Group</div>
-              <div id="projectsSelectedJob" class="big-number">-</div>
-              <div class="s">most jobs under one sheet</div>
-            </section>
-          </div>
           <div class="bottom">
             <section class="card pad">
               <div class="project-list-head">
@@ -2791,13 +2774,16 @@ linear-gradient(to right, transparent, transparent)}
               </div>
               <div id="settings_service_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
                 <div style="font-size:15px;font-weight:700">JSON service account</div>
-                <div class="muted" style="margin-top:4px">Paste JSON to save it locally and update the credentials path automatically.</div>
+                <div class="muted" style="margin-top:4px">Chọn file .json hoặc dán JSON trực tiếp để lưu credentials và tự cập nhật credentials path.</div>
                 <div id="settings_service_status" class="badge info" style="margin-top:10px">Not saved</div>
                 <div class="field" style="margin-top:12px">
-                  <label for="settings_service_account_file" id="settingsServiceAccountFileLabel">Tải file service account</label>
+                  <label for="settings_service_account_file" id="settingsServiceAccountFileLabel">Chọn file JSON</label>
                   <input id="settings_service_account_file" type="file" accept=".json,application/json" onchange="handleServiceAccountFileChange(event)" />
                   <div id="settings_service_account_file_hint" class="muted" style="margin-top:8px">Chưa chọn file</div>
-                  <textarea id="settings_service_account_json" style="display:none" placeholder='{"type":"service_account","project_id":"..."}'></textarea>
+                </div>
+                <div class="field" style="margin-top:14px">
+                  <label for="settings_service_account_json" id="settingsServiceAccountJsonLabel">Hoặc dán JSON trực tiếp</label>
+                  <textarea id="settings_service_account_json" placeholder='{"type":"service_account","project_id":"..."}'></textarea>
                 </div>
               </div>
               <div class="run-actions">
@@ -3102,8 +3088,9 @@ const I18N = {
     fullPageCapture: 'Chụp full page',
     fullPageHelp: 'Bật nếu bạn muốn giữ toàn bộ chiều dài trang thay vì chỉ phần đang thấy.',
     jsonServiceAccount: 'JSON service account',
-    jsonHelp: 'Tải file service account .json một lần để lưu cục bộ và tự cập nhật credentials path.',
-    serviceJsonLabel: 'Tải file JSON',
+    jsonHelp: 'Chọn file service account .json hoặc dán JSON trực tiếp để lưu cục bộ và tự cập nhật credentials path.',
+    serviceJsonLabel: 'Chọn file JSON',
+    serviceJsonPasteLabel: 'Hoặc dán JSON trực tiếp',
     serviceJsonNoFile: 'Chưa chọn file',
     serviceJsonSelectedFmt: name => `Đã chọn: ${name}`,
     serviceJsonReadError: 'Không đọc được file JSON đã chọn',
@@ -3397,8 +3384,9 @@ const I18N = {
     fullPageCapture: 'Full page capture',
     fullPageHelp: 'Enable this if you want to keep the entire page length instead of only the visible area.',
     jsonServiceAccount: 'JSON service account',
-    jsonHelp: 'Upload a service account .json file once to save it locally and update the credentials path automatically.',
-    serviceJsonLabel: 'Upload JSON file',
+    jsonHelp: 'Upload a service account .json file or paste the JSON directly to save it locally and update the credentials path automatically.',
+    serviceJsonLabel: 'Choose JSON file',
+    serviceJsonPasteLabel: 'Or paste JSON directly',
     serviceJsonNoFile: 'No file selected',
     serviceJsonSelectedFmt: name => `Selected: ${name}`,
     serviceJsonReadError: 'Unable to read the selected JSON file',
@@ -3982,6 +3970,7 @@ function applyLanguage() {
   setText('#view-settings .settings-layout .card:first-child .card > div:first-child', t('jsonServiceAccount'));
   setText('#view-settings .settings-layout .card:first-child .card > div:nth-child(2)', t('jsonHelp'));
   setText('#settingsServiceAccountFileLabel', t('serviceJsonLabel'));
+  setText('#settingsServiceAccountJsonLabel', t('serviceJsonPasteLabel'));
   const serviceFileHint = document.getElementById('settings_service_account_file_hint');
   if (serviceFileHint && !serviceFileHint.dataset.fileName) serviceFileHint.textContent = t('serviceJsonNoFile');
   setText('#saveSettingsButton', t('saveSettings'));
