@@ -3,6 +3,7 @@ import time
 import threading
 import shutil
 import json
+import base64
 import re
 import signal
 import calendar
@@ -85,10 +86,42 @@ def get_post_port(post_index: int, base_port: int = 9223) -> int:
     return base_port + 100 + post_index
 
 
+def _bootstrap_env_credentials_path() -> str:
+    raw = os.environ.get("GOOGLE_CREDENTIALS_JSON_B64", "").strip()
+    if not raw:
+        return ""
+    target = os.path.join(BASE_DIR, "credentials.env.json")
+    try:
+        if raw.startswith("{"):
+            data = json.loads(raw)
+        else:
+            padded = raw + ("=" * (-len(raw) % 4))
+            decoded = base64.b64decode(padded.encode("utf-8")).decode("utf-8")
+            data = json.loads(decoded)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return target
+    except Exception as exc:
+        print(f"[startup-config] failed to materialize GOOGLE_CREDENTIALS_JSON_B64: {exc}")
+        return ""
+
+
+def is_fixed_credentials_path(path: str | None) -> bool:
+    raw = str(path or "").strip()
+    if not raw:
+        return False
+    return os.path.basename(raw).lower() in {"credentials.inline.json", "credentials.env.json"}
+
+
 def resolve_credentials_path() -> str:
     env_path = os.environ.get("GOOGLE_CREDENTIALS_PATH", "").strip()
     if env_path:
         return env_path
+
+    env_b64_path = _bootstrap_env_credentials_path()
+    if env_b64_path:
+        return env_b64_path
 
     candidates = [
         os.path.join(APP_DIR, "credentials.inline.json"),  # saved once from web UI / committed fixed file

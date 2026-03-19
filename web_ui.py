@@ -1333,7 +1333,7 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     merged["service_account_email"] = evidence.get_service_account_email(cred_path) if cred_path else ""
     merged["service_account_saved"] = bool(cred_path and os.path.exists(cred_path))
     merged["service_account_fixed"] = bool(
-        merged["service_account_saved"] and os.path.basename(cred_path).lower() == "credentials.inline.json"
+        merged["service_account_saved"] and evidence.is_fixed_credentials_path(cred_path)
     )
     merged["service_account_status"] = (
         "Fixed credentials" if merged["service_account_fixed"]
@@ -2794,8 +2794,10 @@ linear-gradient(to right, transparent, transparent)}
                 <div class="muted" style="margin-top:4px">Paste JSON to save it locally and update the credentials path automatically.</div>
                 <div id="settings_service_status" class="badge info" style="margin-top:10px">Not saved</div>
                 <div class="field" style="margin-top:12px">
-                  <label for="settings_service_account_json">Service account JSON</label>
-                  <textarea id="settings_service_account_json" style="width:100%;min-height:210px;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:12px;resize:vertical;font-family:Consolas,monospace;background:var(--input-bg);color:var(--input-fg)" placeholder='{"type":"service_account","project_id":"..."}'></textarea>
+                  <label for="settings_service_account_file" id="settingsServiceAccountFileLabel">Tải file service account</label>
+                  <input id="settings_service_account_file" type="file" accept=".json,application/json" onchange="handleServiceAccountFileChange(event)" />
+                  <div id="settings_service_account_file_hint" class="muted" style="margin-top:8px">Chưa chọn file</div>
+                  <textarea id="settings_service_account_json" style="display:none" placeholder='{"type":"service_account","project_id":"..."}'></textarea>
                 </div>
               </div>
               <div class="run-actions">
@@ -3100,8 +3102,11 @@ const I18N = {
     fullPageCapture: 'Chụp full page',
     fullPageHelp: 'Bật nếu bạn muốn giữ toàn bộ chiều dài trang thay vì chỉ phần đang thấy.',
     jsonServiceAccount: 'JSON service account',
-    jsonHelp: 'Dán JSON để lưu cục bộ và tự cập nhật credentials path.',
-    serviceJsonLabel: 'Nội dung JSON mới',
+    jsonHelp: 'Tải file service account .json một lần để lưu cục bộ và tự cập nhật credentials path.',
+    serviceJsonLabel: 'Tải file JSON',
+    serviceJsonNoFile: 'Chưa chọn file',
+    serviceJsonSelectedFmt: name => `Đã chọn: ${name}`,
+    serviceJsonReadError: 'Không đọc được file JSON đã chọn',
     saveSettings: 'Lưu cài đặt',
     reloadSettings: 'Tải lại cài đặt',
     currentConfigSummary: 'Tóm tắt cấu hình hiện tại',
@@ -3392,8 +3397,11 @@ const I18N = {
     fullPageCapture: 'Full page capture',
     fullPageHelp: 'Enable this if you want to keep the entire page length instead of only the visible area.',
     jsonServiceAccount: 'JSON service account',
-    jsonHelp: 'Paste JSON to save it locally and update the credentials path automatically.',
-    serviceJsonLabel: 'Service account JSON',
+    jsonHelp: 'Upload a service account .json file once to save it locally and update the credentials path automatically.',
+    serviceJsonLabel: 'Upload JSON file',
+    serviceJsonNoFile: 'No file selected',
+    serviceJsonSelectedFmt: name => `Selected: ${name}`,
+    serviceJsonReadError: 'Unable to read the selected JSON file',
     saveSettings: 'Save Settings',
     reloadSettings: 'Reload Settings',
     currentConfigSummary: 'Current config summary',
@@ -3973,7 +3981,9 @@ function applyLanguage() {
   setText('#view-settings .list-row .muted', t('fullPageHelp'));
   setText('#view-settings .settings-layout .card:first-child .card > div:first-child', t('jsonServiceAccount'));
   setText('#view-settings .settings-layout .card:first-child .card > div:nth-child(2)', t('jsonHelp'));
-  setText('label[for="settings_service_account_json"]', t('serviceJsonLabel'));
+  setText('#settingsServiceAccountFileLabel', t('serviceJsonLabel'));
+  const serviceFileHint = document.getElementById('settings_service_account_file_hint');
+  if (serviceFileHint && !serviceFileHint.dataset.fileName) serviceFileHint.textContent = t('serviceJsonNoFile');
   setText('#saveSettingsButton', t('saveSettings'));
   setText('#accessPolicyTitle', t('accessPolicyTitle'));
   setText('#accessPolicyHelp', t('accessPolicyHelp'));
@@ -5295,6 +5305,50 @@ function renderServiceAccountCard(settings) {
   card.style.display = s.service_account_fixed ? 'none' : '';
 }
 
+function resetServiceAccountFileInput() {
+  const fileInput = document.getElementById('settings_service_account_file');
+  const hiddenInput = document.getElementById('settings_service_account_json');
+  const hint = document.getElementById('settings_service_account_file_hint');
+  if (fileInput) fileInput.value = '';
+  if (hiddenInput) hiddenInput.value = '';
+  if (hint) {
+    delete hint.dataset.fileName;
+    hint.textContent = t('serviceJsonNoFile');
+  }
+}
+
+function handleServiceAccountFileChange(event) {
+  const input = event?.target || document.getElementById('settings_service_account_file');
+  const file = input?.files?.[0];
+  const hiddenInput = document.getElementById('settings_service_account_json');
+  const hint = document.getElementById('settings_service_account_file_hint');
+  if (!file) {
+    if (hiddenInput) hiddenInput.value = '';
+    if (hint) {
+      delete hint.dataset.fileName;
+      hint.textContent = t('serviceJsonNoFile');
+    }
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (hiddenInput) hiddenInput.value = String(reader.result || '');
+    if (hint) {
+      hint.dataset.fileName = file.name;
+      hint.textContent = t('serviceJsonSelectedFmt')(file.name);
+    }
+  };
+  reader.onerror = () => {
+    if (hiddenInput) hiddenInput.value = '';
+    if (hint) {
+      delete hint.dataset.fileName;
+      hint.textContent = t('serviceJsonNoFile');
+    }
+    setSettingsNote(t('serviceJsonReadError'), true);
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
 function renderSettingsSummary(settings) {
   const s = settings || {};
   document.getElementById('settings_summary_viewport').textContent = `${s.viewport_width || '-'} x ${s.viewport_height || '-'}`;
@@ -5349,7 +5403,7 @@ async function saveSidebarSettings() {
     const out = await req('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
     const saved = out.settings || payload;
     currentSettingsCache = saved;
-    document.getElementById('settings_service_account_json').value = '';
+    resetServiceAccountFileInput();
     renderSettingsSummary(saved);
     if (String(sheet_url.value || '').trim()) scheduleSheetNameSuggestions(true);
     setSettingsNote(t('saved'));
