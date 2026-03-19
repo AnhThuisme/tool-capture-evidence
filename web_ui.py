@@ -2004,8 +2004,8 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .runs-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
 .runs-head .headline{flex:1;justify-content:flex-start;padding:14px 0 0}
 .run-config-head{font-size:18px;font-weight:700}
-.run-layout{display:grid;grid-template-columns:1.35fr .95fr;gap:12px}
-.run-form{padding:14px}
+.run-layout{display:grid;grid-template-columns:minmax(420px,.9fr) minmax(760px,1.1fr);gap:12px;align-items:start}
+.run-form{padding:12px 14px}
 .run-grid{display:grid;grid-template-columns:1fr;gap:10px}
 .run-share-note{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center;gap:12px}
 .run-share-top{margin:0 0 0 auto;max-width:720px;min-width:520px}
@@ -2013,13 +2013,13 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .run-share-email{margin-top:0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);font-size:13px;color:var(--input-fg);word-break:break-all}
 .run-form .run-actions{justify-content:space-between;align-items:center}
 .mapping-panel{border:1px solid var(--line);border-radius:16px;background:var(--panel-soft);overflow:hidden}
-.mapping-panel-body{padding:14px 16px}
+.mapping-panel-body{padding:16px 18px}
 .mapping-blocks{display:flex;flex-direction:column;gap:12px}
 .mapping-block{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:12px}
 .mapping-block-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
 .mapping-block-title{font-size:13px;font-weight:700}
 .mapping-block-grid{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center}
-.mapping-seeding-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(300px,340px);gap:12px;overflow-x:auto;align-items:start;padding-bottom:4px;scroll-behavior:smooth}
+.mapping-seeding-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(340px,390px);gap:14px;overflow-x:auto;align-items:start;padding-bottom:4px;scroll-behavior:smooth}
 .mapping-seeding-row .mapping-block{height:100%}
 .mapping-block-new{animation:mappingSlideIn .28s ease}
 @keyframes mappingSlideIn{
