@@ -248,6 +248,7 @@ class AccessPolicyUpdateRequest(BaseModel):
     allowed_emails: str = ""
     admin_emails: str = ""
     managed_emails: list[str] = Field(default_factory=list)
+    email_types: dict[str, str] = Field(default_factory=dict)
 
 
 class MailConfigUpdateRequest(BaseModel):
@@ -345,6 +346,38 @@ def _system_admin_emails() -> list[str]:
     return _parse_email_list(os.getenv("WEB_SYSTEM_ADMIN_EMAILS", "thu.phannguyenanh@fanscom.vn"))
 
 
+def _internal_email_domains() -> set[str]:
+    configured = _parse_email_list(os.getenv("WEB_INTERNAL_EMAIL_DOMAINS", ""))
+    domains = {item.split("@", 1)[1].lower() for item in configured if "@" in item}
+    if domains:
+        return domains
+    inferred: set[str] = set()
+    for email in _system_admin_emails():
+        if "@" in email:
+            inferred.add(email.split("@", 1)[1].lower())
+    return inferred
+
+
+def _normalize_email_type(value: str, email: str = "") -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"internal", "noi-bo", "noi_bo", "nội-bộ", "nội bộ"}:
+        return "internal"
+    if raw in {"external", "ben-ngoai", "ben_ngoai", "bên-ngoài", "bên ngoài"}:
+        return "external"
+    normalized_email = _normalize_email(email)
+    domain = normalized_email.split("@", 1)[1].lower() if "@" in normalized_email else ""
+    return "internal" if domain and domain in _internal_email_domains() else "external"
+
+
+def _normalize_email_types_map(value: Any, managed: list[str]) -> dict[str, str]:
+    raw = value if isinstance(value, dict) else {}
+    managed_list = _parse_email_list(managed)
+    out: dict[str, str] = {}
+    for email in managed_list:
+        out[email] = _normalize_email_type(raw.get(email, ""), email)
+    return out
+
+
 def _normalize_auth_policy_payload(data: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = data or {}
     allowed = _parse_email_list(raw.get("allowed_emails"))
@@ -361,6 +394,7 @@ def _normalize_auth_policy_payload(data: dict[str, Any] | None = None) -> dict[s
         "allowed_emails": allowed,
         "admin_emails": admins,
         "managed_emails": managed,
+        "email_types": _normalize_email_types_map(raw.get("email_types"), managed),
         "updated_at": raw.get("updated_at"),
     }
 
@@ -392,6 +426,7 @@ def _read_auth_policy() -> dict[str, Any]:
             "allowed_emails": [*(defaults.get("allowed_emails", []) or []), *(raw.get("allowed_emails") or [])],
             "admin_emails": [*(defaults.get("admin_emails", []) or []), *(raw.get("admin_emails") or [])],
             "managed_emails": [*(defaults.get("managed_emails", []) or []), *(raw.get("managed_emails") or [])],
+            "email_types": {**(defaults.get("email_types") or {}), **((raw.get("email_types") or {}) if isinstance(raw.get("email_types"), dict) else {})},
             "updated_at": raw.get("updated_at"),
         }
     )
@@ -1827,7 +1862,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-entry-editor.open>.access-entry-meta{grid-area:meta;margin-top:0;align-self:end}
 .access-entry-editor.open>.access-entry-foot{grid-area:actions;margin-top:0;align-self:end;justify-content:flex-end;flex-direction:column;align-items:flex-end}
 .access-entry-editor.open>.access-entry-foot .settings-note{text-align:right}
-.access-entry-grid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(160px,210px);gap:12px}
+.access-entry-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(150px,200px) minmax(150px,200px);gap:12px}
 .access-entry-grid .field label{display:block;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8ea0bf;margin-bottom:8px}
 .access-entry-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
 .access-entry-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px}
@@ -1865,6 +1900,9 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-table-pill.allowed{background:rgba(91,147,211,.12);border-color:rgba(91,147,211,.22);color:#8bbdff}
 .access-table-pill.admin{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.26);color:#7df0ba}
 .access-table-pill.open{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#ffcd73}
+.access-type-pill{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid transparent;font-size:12px;font-weight:700;white-space:nowrap}
+.access-type-pill.internal{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.22);color:#7df0ba}
+.access-type-pill.external{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#ffcd73}
 .access-status{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text)}
 .access-status::before{content:"";width:8px;height:8px;border-radius:50%;background:#93c5fd;box-shadow:0 0 0 4px rgba(147,197,253,.08)}
 .access-status.admin::before{background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.08)}
@@ -2623,14 +2661,21 @@ linear-gradient(to right, transparent, transparent)}
                 <label for="access_entry_email" id="accessEntryEmailLabel">Địa chỉ Gmail</label>
                 <input id="access_entry_email" type="email" placeholder="user@example.com" />
               </div>
-              <div class="field">
-                <label for="access_entry_role" id="accessEntryRoleLabel">Role</label>
-                <select id="access_entry_role">
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
+                <div class="field">
+                  <label for="access_entry_role" id="accessEntryRoleLabel">Role</label>
+                  <select id="access_entry_role">
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="access_entry_type" id="accessEntryTypeLabel">Type</label>
+                  <select id="access_entry_type">
+                    <option value="internal">Internal</option>
+                    <option value="external">External</option>
+                  </select>
+                </div>
               </div>
-            </div>
             <div class="access-entry-meta">
               <span id="accessEntryCurrentPill" class="access-mail-pill">Đang sửa: -</span>
             </div>
@@ -2677,6 +2722,14 @@ linear-gradient(to right, transparent, transparent)}
                   <button id="accessScopeFilterOpen" type="button" onclick="setAccessDirectoryScope('open')">Open OTP</button>
                 </div>
               </div>
+              <div class="access-filter-group">
+                <span id="accessFilterTypeLabel" class="access-filter-label">Type</span>
+                <div class="access-segmented">
+                  <button id="accessTypeFilterAll" class="active" type="button" onclick="setAccessDirectoryType('all')">All</button>
+                  <button id="accessTypeFilterInternal" type="button" onclick="setAccessDirectoryType('internal')">Internal</button>
+                  <button id="accessTypeFilterExternal" type="button" onclick="setAccessDirectoryType('external')">External</button>
+                </div>
+              </div>
             </div>
             <div class="access-table-wrap">
               <table class="access-table">
@@ -2685,6 +2738,7 @@ linear-gradient(to right, transparent, transparent)}
                     <th id="accessTableHeadEmail">Gmail</th>
                     <th id="accessTableHeadAccess">Access</th>
                     <th id="accessTableHeadRole">Role</th>
+                    <th id="accessTableHeadType">Type</th>
                     <th id="accessTableHeadStatus">Status</th>
                     <th id="accessTableHeadUpdated">Updated</th>
                     <th id="accessTableHeadActions">Actions</th>
@@ -2780,13 +2834,14 @@ let sheetNameSuggestKey = '';
 let sheetNameSuggestCache = {};
 let pendingMappingScrollMode = '';
 let pendingMappingHighlightIndex = -1;
-let currentAccessPolicy = { allowed_emails: [], admin_emails: [], updated_at: null };
+let currentAccessPolicy = { allowed_emails: [], admin_emails: [], managed_emails: [], email_types: {}, updated_at: null };
 let currentMailConfig = { sender_email: '', from_email: '', has_password: false, updated_at: null, source: 'env' };
 let accessDirectoryQuery = '';
 let accessDirectoryRole = 'all';
 let accessDirectoryScope = 'all';
+let accessDirectoryType = 'all';
 let accessMailEditorOpen = false;
-let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 'user' };
+let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 'user', type: 'internal' };
 const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9423, scan: 9623 };
 const DEFAULT_AUTO_LAUNCH_CHROME = false;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
@@ -2965,6 +3020,7 @@ const I18N = {
     accessEntryHelp: 'Đổi địa chỉ Gmail hoặc role của dòng đang chọn rồi lưu lại.',
     accessEntryEmailLabel: 'Địa chỉ Gmail',
     accessEntryRoleLabel: 'Role',
+    accessEntryTypeLabel: 'Loại',
     accessEntryCurrentFmt: email => `Đang sửa: ${email || '-'}`,
     accessEntrySave: 'Lưu chỉnh sửa',
     accessEntryCancel: 'Hủy',
@@ -2976,15 +3032,19 @@ const I18N = {
     accessQuickAdd: '+ Thêm Gmail',
     accessFilterRole: 'Role',
     accessFilterScope: 'Truy cập',
+    accessFilterType: 'Loại',
     accessFilterAll: 'Tất cả',
     accessFilterAdmin: 'Admin',
     accessFilterUser: 'User',
+    accessFilterInternal: 'Nội bộ',
+    accessFilterExternal: 'Bên ngoài',
     accessScopeAllowed: 'Được phép',
     accessScopeAdmin: 'Admin',
     accessScopeOpen: 'OTP',
     accessTableEmail: 'Gmail',
     accessTableAccess: 'Truy cập',
     accessTableRole: 'Role',
+    accessTableType: 'Loại',
     accessTableStatus: 'Trạng thái',
     accessTableUpdated: 'Cập nhật',
     accessTableActions: 'Thao tác',
@@ -2997,6 +3057,8 @@ const I18N = {
     accessStatusActive: 'Đang được phép',
     accessStatusAdmin: 'Toàn quyền quản trị',
     accessStatusOpen: 'OTP giới hạn theo danh sách',
+    accessTypeInternal: 'Nội bộ',
+    accessTypeExternal: 'Bên ngoài',
     accessMakeAdmin: 'Lên admin',
     accessMakeUser: 'Hạ user',
     accessRemove: 'Gỡ',
@@ -3248,6 +3310,7 @@ const I18N = {
     accessEntryHelp: 'Change the selected Gmail address or role, then save it.',
     accessEntryEmailLabel: 'Gmail address',
     accessEntryRoleLabel: 'Role',
+    accessEntryTypeLabel: 'Type',
     accessEntryCurrentFmt: email => `Editing: ${email || '-'}`,
     accessEntrySave: 'Save changes',
     accessEntryCancel: 'Cancel',
@@ -3259,15 +3322,19 @@ const I18N = {
     accessQuickAdd: '+ Add Gmail',
     accessFilterRole: 'Role',
     accessFilterScope: 'Access',
+    accessFilterType: 'Type',
     accessFilterAll: 'All',
     accessFilterAdmin: 'Admin',
     accessFilterUser: 'User',
+    accessFilterInternal: 'Internal',
+    accessFilterExternal: 'External',
     accessScopeAllowed: 'Allowed',
     accessScopeAdmin: 'Admin',
     accessScopeOpen: 'OTP',
     accessTableEmail: 'Gmail',
     accessTableAccess: 'Access',
     accessTableRole: 'Role',
+    accessTableType: 'Type',
     accessTableStatus: 'Status',
     accessTableUpdated: 'Updated',
     accessTableActions: 'Actions',
@@ -3280,6 +3347,8 @@ const I18N = {
     accessStatusActive: 'Allowed',
     accessStatusAdmin: 'Admin control',
     accessStatusOpen: 'OTP restricted by list',
+    accessTypeInternal: 'Internal',
+    accessTypeExternal: 'External',
     accessMakeAdmin: 'Make admin',
     accessMakeUser: 'Make user',
     accessRemove: 'Remove',
@@ -3855,16 +3924,21 @@ function applyLanguage() {
   setText('#accessEntryHelp', t('accessEntryHelp'));
   setText('#accessEntryEmailLabel', t('accessEntryEmailLabel'));
   setText('#accessEntryRoleLabel', t('accessEntryRoleLabel'));
+  setText('#accessEntryTypeLabel', t('accessEntryTypeLabel'));
   setText('#accessEntryCancelTop', t('accessEntryCancel'));
   setText('#accessEntryCancelButton', t('accessEntryCancel'));
   setText('#accessEntrySaveButton', t('accessEntrySave'));
   const accessEntryRole = document.getElementById('access_entry_role');
   if (accessEntryRole?.options?.[0]) accessEntryRole.options[0].text = t('roleUser');
   if (accessEntryRole?.options?.[1]) accessEntryRole.options[1].text = t('roleAdmin');
+  const accessEntryType = document.getElementById('access_entry_type');
+  if (accessEntryType?.options?.[0]) accessEntryType.options[0].text = t('accessTypeInternal');
+  if (accessEntryType?.options?.[1]) accessEntryType.options[1].text = t('accessTypeExternal');
   setText('#accessDirectoryTitle', t('accessDirectoryTitle'));
   setText('#accessDirectoryHelp', t('accessDirectoryHelp'));
   setText('#accessFilterRoleLabel', t('accessFilterRole'));
   setText('#accessFilterScopeLabel', t('accessFilterScope'));
+  setText('#accessFilterTypeLabel', t('accessFilterType'));
   setText('#accessRoleFilterAll', t('accessFilterAll'));
   setText('#accessRoleFilterAdmin', t('accessFilterAdmin'));
   setText('#accessRoleFilterUser', t('accessFilterUser'));
@@ -3872,9 +3946,13 @@ function applyLanguage() {
   setText('#accessScopeFilterAllowed', t('accessScopeAllowed'));
   setText('#accessScopeFilterAdmin', t('accessScopeAdmin'));
   setText('#accessScopeFilterOpen', t('accessScopeOpen'));
+  setText('#accessTypeFilterAll', t('accessFilterAll'));
+  setText('#accessTypeFilterInternal', t('accessFilterInternal'));
+  setText('#accessTypeFilterExternal', t('accessFilterExternal'));
   setText('#accessTableHeadEmail', t('accessTableEmail'));
   setText('#accessTableHeadAccess', t('accessTableAccess'));
   setText('#accessTableHeadRole', t('accessTableRole'));
+  setText('#accessTableHeadType', t('accessTableType'));
   setText('#accessTableHeadStatus', t('accessTableStatus'));
   setText('#accessTableHeadUpdated', t('accessTableUpdated'));
   setText('#accessTableHeadActions', t('accessTableActions'));
@@ -4659,6 +4737,25 @@ function setAccessEntryNote(text, isError = false) {
   node.style.color = isError ? '#be123c' : '#98a2b3';
 }
 
+function normalizeAccessType(value, email = '') {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'internal' || raw === 'external') return raw;
+  const domain = String(email || '').trim().toLowerCase().split('@')[1] || '';
+  return domain === 'fanscom.vn' ? 'internal' : 'external';
+}
+
+function getAccessEmailTypes(policy = currentAccessPolicy) {
+  const data = policy || {};
+  const raw = data.email_types && typeof data.email_types === 'object' ? data.email_types : {};
+  const lists = getAccessPolicyLists(data);
+  const union = Array.from(new Set([...(lists.managed || []), ...(lists.admins || []), ...(lists.allowed || [])]));
+  const out = {};
+  union.forEach(email => {
+    out[email] = normalizeAccessType(raw[email], email);
+  });
+  return out;
+}
+
 function setAccessMailEditorOpen(open, shouldScroll = false) {
   accessMailEditorOpen = !!open;
   if (accessMailEditorOpen) {
@@ -4710,8 +4807,10 @@ function renderMailConfig(config = currentMailConfig) {
 function renderAccessEntryEditor() {
   const emailNode = document.getElementById('access_entry_email');
   const roleNode = document.getElementById('access_entry_role');
+  const typeNode = document.getElementById('access_entry_type');
   if (emailNode) emailNode.value = accessEntryEditorState.email || '';
   if (roleNode) roleNode.value = accessEntryEditorState.role || 'user';
+  if (typeNode) typeNode.value = accessEntryEditorState.type || 'internal';
   const pill = document.getElementById('accessEntryCurrentPill');
   if (pill) pill.textContent = t('accessEntryCurrentFmt')(accessEntryEditorState.originalEmail || accessEntryEditorState.email || '');
   setAccessEntryEditorOpen(accessEntryEditorState.open, false);
@@ -4755,11 +4854,13 @@ function isValidAccessEmail(email) {
 function buildAccessDirectoryRows(policy = currentAccessPolicy) {
   const data = policy || { allowed_emails: [], admin_emails: [], updated_at: null };
   const { allowed, admins, managed } = getAccessPolicyLists(data);
+  const emailTypes = getAccessEmailTypes(data);
   const union = Array.from(new Set([...managed, ...admins, ...allowed])).sort((a, b) => a.localeCompare(b));
   const updated = data.updated_at ? toLocalStamp(data.updated_at) : '-';
   const rows = union.map(email => {
     const isAdmin = admins.includes(email);
     const canLogin = isAdmin || allowed.includes(email) || managed.includes(email);
+    const type = normalizeAccessType(emailTypes[email], email);
     return {
       key: email,
       email,
@@ -4767,6 +4868,7 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
       subtitle: isAdmin ? t('accessAdminEntrySub') : t('accessAllowedEntrySub'),
       access: isAdmin ? 'admin' : 'allowed',
       role: isAdmin ? 'admin' : 'user',
+      type,
       status: isAdmin ? 'admin' : (canLogin ? 'active' : 'open'),
       updated,
       initial: email.charAt(0).toUpperCase() || 'G',
@@ -4780,6 +4882,7 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
     subtitle: `${t('accessOpenEntrySub')} · ${t('accessOpenEntryMailFmt')(currentMailConfig.sender_email || '')}`,
     access: 'open',
     role: 'user',
+    type: 'internal',
     status: 'open',
     updated,
     initial: 'OTP',
@@ -4789,11 +4892,12 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
     const query = String(accessDirectoryQuery || '').trim().toLowerCase();
     const roleOk = accessDirectoryRole === 'all' || row.role === accessDirectoryRole;
     const scopeOk = accessDirectoryScope === 'all' || row.access === accessDirectoryScope;
-    const queryOk = !query || [row.title, row.subtitle, row.access, row.role, row.status]
+    const typeOk = accessDirectoryType === 'all' || row.type === accessDirectoryType;
+    const queryOk = !query || [row.title, row.subtitle, row.access, row.role, row.type, row.status]
       .join(' ')
       .toLowerCase()
       .includes(query);
-    return roleOk && scopeOk && queryOk;
+    return roleOk && scopeOk && typeOk && queryOk;
   });
 }
 
@@ -4806,6 +4910,9 @@ function updateAccessDirectoryFilters() {
     accessScopeFilterAllowed: accessDirectoryScope === 'allowed',
     accessScopeFilterAdmin: accessDirectoryScope === 'admin',
     accessScopeFilterOpen: accessDirectoryScope === 'open',
+    accessTypeFilterAll: accessDirectoryType === 'all',
+    accessTypeFilterInternal: accessDirectoryType === 'internal',
+    accessTypeFilterExternal: accessDirectoryType === 'external',
   };
   Object.entries(mapping).forEach(([id, active]) => {
     const node = document.getElementById(id);
@@ -4821,9 +4928,10 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
   const body = document.getElementById('accessDirectoryBody');
   if (!body) return;
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="access-empty">${esc(t('accessDirectoryNoMatch'))}</div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="7"><div class="access-empty">${esc(t('accessDirectoryNoMatch'))}</div></td></tr>`;
     return;
   }
+  const typeLabel = type => type === 'internal' ? t('accessTypeInternal') : t('accessTypeExternal');
   const roleLabel = role => role === 'admin' ? t('roleAdmin') : t('roleUser');
   const accessLabel = access => access === 'admin' ? t('accessScopeAdmin') : (access === 'open' ? t('accessScopeOpen') : t('accessScopeAllowed'));
   const statusLabel = status => status === 'admin' ? t('accessStatusAdmin') : (status === 'open' ? t('accessStatusOpen') : t('accessStatusActive'));
@@ -4852,6 +4960,7 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
       </td>
       <td><span class="access-table-pill ${esc(row.access)}">${esc(accessLabel(row.access))}</span></td>
       <td><span class="access-role-pill ${esc(row.role)}">${esc(roleLabel(row.role))}</span></td>
+      <td><span class="access-type-pill ${esc(row.type)}">${esc(typeLabel(row.type))}</span></td>
       <td><span class="access-status ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td>
       <td>${esc(row.updated)}</td>
       <td>${rowActions(row)}</td>
@@ -4873,16 +4982,23 @@ function setAccessDirectoryScope(scope) {
   renderAccessDirectory(currentAccessPolicy);
 }
 
+function setAccessDirectoryType(type) {
+  accessDirectoryType = ['all', 'internal', 'external'].includes(String(type || '').toLowerCase()) ? String(type).toLowerCase() : 'all';
+  renderAccessDirectory(currentAccessPolicy);
+}
+
 function openAccessEntryEditor(email) {
   const target = decodeURIComponent(String(email || '')).trim().toLowerCase();
   if (!target) return;
   setAccessMailEditorOpen(false, false);
   const lists = getAccessPolicyLists(currentAccessPolicy);
+  const emailTypes = getAccessEmailTypes(currentAccessPolicy);
   accessEntryEditorState = {
     open: true,
     originalEmail: target,
     email: target,
     role: lists.admins.includes(target) ? 'admin' : 'user',
+    type: normalizeAccessType(emailTypes[target], target),
   };
   renderAccessEntryEditor();
   setAccessEntryNote('');
@@ -4929,17 +5045,20 @@ async function saveAccessEntryEditor() {
   const originalEmail = String(accessEntryEditorState.originalEmail || '').trim().toLowerCase();
   const nextEmail = String(document.getElementById('access_entry_email')?.value || '').trim().toLowerCase();
   const nextRole = String(document.getElementById('access_entry_role')?.value || 'user').trim().toLowerCase();
+  const nextType = normalizeAccessType(String(document.getElementById('access_entry_type')?.value || 'internal').trim().toLowerCase(), nextEmail);
   if (!isValidAccessEmail(nextEmail)) {
     setAccessEntryNote(t('accessEntryInvalid'), true);
     return;
   }
   const lists = getAccessPolicyLists(currentAccessPolicy);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy) };
   const allowedSet = new Set(lists.allowed);
   const adminSet = new Set(lists.admins);
   const managedSet = new Set(lists.managed);
   allowedSet.delete(originalEmail);
   adminSet.delete(originalEmail);
   managedSet.delete(originalEmail);
+  delete emailTypes[originalEmail];
   if (nextRole === 'admin') {
     adminSet.add(nextEmail);
     if (allowedSet.size) allowedSet.add(nextEmail);
@@ -4950,11 +5069,12 @@ async function saveAccessEntryEditor() {
   } else {
     managedSet.add(nextEmail);
   }
-  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet) };
+  emailTypes[nextEmail] = nextType;
+  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet), email_types: emailTypes };
   setAccessPolicyListsInEditor(Array.from(allowedSet), Array.from(adminSet));
   try {
     await saveAccessPolicy();
-    accessEntryEditorState = { open: false, originalEmail: nextEmail, email: nextEmail, role: nextRole === 'admin' ? 'admin' : 'user' };
+    accessEntryEditorState = { open: false, originalEmail: nextEmail, email: nextEmail, role: nextRole === 'admin' ? 'admin' : 'user', type: nextType };
     renderAccessEntryEditor();
     setAccessPolicyNote(t('accessEntrySaved'));
   } catch (e) {
@@ -4968,11 +5088,13 @@ function setAccessPolicyListsInEditor(allowed, admins) {
   const normalizedAdmins = Array.from(new Set((admins || []).map(item => String(item || '').trim().toLowerCase()).filter(Boolean)));
   const currentManaged = Array.isArray(currentAccessPolicy?.managed_emails) ? currentAccessPolicy.managed_emails : [];
   const normalizedManaged = Array.from(new Set(currentManaged.map(item => String(item || '').trim().toLowerCase()).filter(Boolean)));
+  const normalizedTypes = getAccessEmailTypes({ ...(currentAccessPolicy || {}), managed_emails: normalizedManaged, allowed_emails: normalizedAllowed, admin_emails: normalizedAdmins });
   currentAccessPolicy = {
     ...(currentAccessPolicy || {}),
     allowed_emails: normalizedAllowed,
     admin_emails: normalizedAdmins,
     managed_emails: normalizedManaged,
+    email_types: normalizedTypes,
   };
   const allowedNode = document.getElementById('access_allowed_emails');
   const adminNode = document.getElementById('access_admin_emails');
@@ -4991,10 +5113,11 @@ async function addAccessEmailFromSearch() {
   const lists = getAccessPolicyLists(currentAccessPolicy);
   const managedSet = new Set(lists.managed);
   managedSet.add(email);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy), [email]: normalizeAccessType('', email) };
   if (lists.allowed.length) {
     lists.allowed = Array.from(new Set([...lists.allowed, email]));
   }
-  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet) };
+  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet), email_types: emailTypes };
   setAccessPolicyListsInEditor(lists.allowed, lists.admins);
   try {
     await saveAccessPolicy();
@@ -5012,6 +5135,7 @@ async function changeAccessRole(email, nextRole) {
   const allowedSet = new Set(lists.allowed);
   const adminSet = new Set(lists.admins);
   const managedSet = new Set(lists.managed);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy) };
   if (String(nextRole || '').toLowerCase() === 'admin') {
     adminSet.add(target);
     if (allowedSet.size) allowedSet.add(target);
@@ -5020,7 +5144,8 @@ async function changeAccessRole(email, nextRole) {
     adminSet.delete(target);
     managedSet.add(target);
   }
-  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet) };
+  emailTypes[target] = normalizeAccessType(emailTypes[target], target);
+  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet), email_types: emailTypes };
   setAccessPolicyListsInEditor(Array.from(allowedSet), Array.from(adminSet));
   try {
     await saveAccessPolicy();
@@ -5034,9 +5159,12 @@ async function removeAccessEmail(email) {
   const target = decodeURIComponent(String(email || '')).trim().toLowerCase();
   if (!target) return;
   const lists = getAccessPolicyLists(currentAccessPolicy);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy) };
+  delete emailTypes[target];
   currentAccessPolicy = {
     ...(currentAccessPolicy || {}),
     managed_emails: lists.managed.filter(item => item !== target),
+    email_types: emailTypes,
   };
   setAccessPolicyListsInEditor(
     lists.allowed.filter(item => item !== target),
@@ -5272,6 +5400,7 @@ async function saveAccessPolicy() {
       allowed_emails: allowedNode ? allowedNode.value : (currentAccessPolicy.allowed_emails || []).join('\\n'),
       admin_emails: adminNode ? adminNode.value : (currentAccessPolicy.admin_emails || []).join('\\n'),
       managed_emails: Array.isArray(currentAccessPolicy.managed_emails) ? currentAccessPolicy.managed_emails : [],
+      email_types: currentAccessPolicy.email_types || {},
     };
     const out = await req('/api/admin/access-policy', { method: 'POST', body: JSON.stringify(payload) });
     currentAccessPolicy = out.policy || {};
@@ -5579,11 +5708,12 @@ def save_access_policy(request: Request, payload: AccessPolicyUpdateRequest):
     allowed_emails = _parse_email_list(payload.allowed_emails)
     admin_emails = _parse_email_list(payload.admin_emails)
     managed_emails = _parse_email_list(payload.managed_emails)
+    email_types = payload.email_types if isinstance(payload.email_types, dict) else {}
     if not admin_emails:
         admin_emails = [admin_email]
     if admin_email not in admin_emails:
         raise HTTPException(status_code=400, detail="Không thể tự gỡ quyền admin của chính bạn trong phiên này")
-    policy = _write_auth_policy({"allowed_emails": allowed_emails, "admin_emails": admin_emails, "managed_emails": managed_emails})
+    policy = _write_auth_policy({"allowed_emails": allowed_emails, "admin_emails": admin_emails, "managed_emails": managed_emails, "email_types": email_types})
     notifications = _notify_access_policy_changes(previous_policy, policy)
     request.session["auth_role"] = _get_user_role(admin_email)
     return {"ok": True, "policy": policy, "notifications": notifications}
