@@ -429,6 +429,7 @@ def _assert_email_allowed(email: str) -> str:
     allowed = _allowed_login_emails()
     if normalized not in allowed:
         raise HTTPException(status_code=403, detail="Email này chưa được cấp quyền đăng nhập")
+    return normalized
 
 
 def _effective_access_emails(policy: dict[str, Any] | None) -> set[str]:
