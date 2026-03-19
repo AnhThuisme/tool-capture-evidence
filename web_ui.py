@@ -1873,12 +1873,11 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-search input{width:100%;border:0;outline:0;background:transparent;color:var(--text);font-size:13px}
 .access-search input::placeholder{color:var(--muted)}
 .access-add-btn{min-height:42px;border-radius:14px;padding:0 16px;font-weight:700;white-space:nowrap}
-.access-filter-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-.access-filter-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.access-filter-row{display:flex;justify-content:flex-start;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.access-filter-item{display:flex;flex-direction:column;gap:6px;min-width:140px}
 .access-filter-label{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#7b8aa5}
-.access-segmented{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.access-segmented button{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel-soft);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;transition:all .16s ease}
-.access-segmented button.active{background:var(--blue-soft);border-color:rgba(91,147,211,.28);color:var(--blue)}
+.access-filter-select{width:100%;min-height:38px;padding:0 12px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015)),var(--panel-soft);color:var(--text);font-size:12px;font-weight:700;outline:0}
+.access-filter-select:focus{border-color:rgba(91,147,211,.35);box-shadow:0 0 0 3px rgba(91,147,211,.12)}
 .access-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.008)),var(--panel-soft)}
 .access-table{width:100%;border-collapse:separate;border-spacing:0;min-width:860px}
 .access-table thead th{position:sticky;top:0;background:rgba(11,18,32,.96);backdrop-filter:blur(6px);z-index:2;padding:14px 16px;border-bottom:1px solid var(--line);text-align:left;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#7b8aa5}
@@ -1903,6 +1902,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-type-pill{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid transparent;font-size:12px;font-weight:700;white-space:nowrap}
 .access-type-pill.internal{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.22);color:#7df0ba}
 .access-type-pill.external{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#ffcd73}
+.access-you-tag{display:inline-flex;align-items:center;margin-left:8px;padding:2px 8px;border-radius:999px;border:1px solid rgba(123,168,255,.24);background:rgba(123,168,255,.1);color:#9cc3ff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;vertical-align:middle}
 .access-status{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text)}
 .access-status::before{content:"";width:8px;height:8px;border-radius:50%;background:#93c5fd;box-shadow:0 0 0 4px rgba(147,197,253,.08)}
 .access-status.admin::before{background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.08)}
@@ -1957,6 +1957,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px}
 .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
 .stat{padding:14px;border-right:1px solid var(--line)}.stat:last-child{border-right:0}
+.cards-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .k{font-size:12px;color:var(--muted)}.v{font-size:34px;font-weight:700;margin-top:2px}.s{font-size:11px;color:#98a2b3}
 .chart{padding:16px;border-top:1px solid var(--line);overflow:hidden}
 .bars{height:172px;display:flex;gap:8px;align-items:flex-end}
@@ -1987,6 +1988,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 @keyframes summary-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 [data-theme="light"] .summary-action{color:#17315c;background:linear-gradient(180deg,rgba(91,147,211,.08),rgba(91,147,211,.03))}
 .mini{padding:12px;border-top:1px solid var(--line)}
+.mini-card{padding:12px 14px;border-top:0}
 .progress{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden}.progress > span{display:block;height:100%;width:0%;background:#2f80ed;transition:width .35s ease}
 .jobs-wrap{max-height:248px;overflow:auto;margin-top:8px}
 .jobs{width:100%;border-collapse:collapse;margin-top:0}
@@ -2038,11 +2040,11 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .mapping-icon-btn{min-width:34px;height:34px;padding:0}
 .mapping-chrome-btn{justify-self:start}
 .mapping-add-row{display:flex;justify-content:flex-start;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+.mapping-add-row.booking{justify-content:space-between;align-items:flex-start}
 .mapping-check{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text)}
 .mapping-check input{width:16px;height:16px}
-.mapping-toggle-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;min-width:280px;max-width:360px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer;flex:1 1 320px}
+.mapping-toggle-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;min-width:280px;max-width:360px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer;flex:0 0 auto}
 .mapping-toggle-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
-.mapping-toggle-kicker{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#f59e0b}
 .mapping-toggle-title{font-size:13px;font-weight:700;color:var(--text)}
 .mapping-toggle-help{font-size:12px;color:var(--muted);line-height:1.45}
 .mapping-toggle-switch{position:relative;display:inline-flex;align-items:center;justify-content:center;width:52px;height:30px;flex:0 0 auto}
@@ -2131,16 +2133,18 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 [data-theme="dark"] .result-pill.running,[data-theme="dark"] .result-pill.info{background:#1a2940;color:#b7d2f3;border-color:#355072}
 [data-theme="dark"] .result-pill.warning{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
 .muted{font-size:12px;color:var(--muted)}
-.overview-note{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.overview-stats-grid{display:flex;flex-direction:column;gap:12px}
+.overview-stat-card{min-height:118px;display:flex;flex-direction:column;justify-content:space-between}
+.overview-note-card{padding:14px 16px}
+.overview-note{display:flex;justify-content:space-between;align-items:center;gap:16px;font-size:12px;color:var(--muted)}
+.overview-note span{flex:1;min-width:0}
 .overview-cta{display:inline-flex;align-items:center;gap:10px;min-height:42px;padding:0 16px;border:1px solid rgba(123,168,255,.24);border-radius:14px;background:linear-gradient(135deg,#4f8df7,#2f6fe4);color:#fff;font-size:12px;font-weight:800;letter-spacing:.02em;cursor:pointer;box-shadow:0 10px 24px rgba(47,111,228,.24);transition:transform .15s ease,box-shadow .15s ease,filter .15s ease}
 .overview-cta:hover{transform:translateY(-1px);box-shadow:0 14px 28px rgba(47,111,228,.28);filter:saturate(1.05)}
 .overview-cta svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 [data-theme="dark"] .overview-cta{background:linear-gradient(135deg,#548ff8,#2563eb);border-color:rgba(123,168,255,.22)}
 .overview-top-card{margin-bottom:12px;padding:18px}
 .overview-top-card .chart{padding:0;border-top:0}
-.overview-top-grid{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(280px,.78fr);gap:16px;align-items:stretch}
-.overview-stats-card .stats{grid-template-columns:repeat(4,minmax(0,1fr))}
-.overview-stats-card .stat{min-height:118px}
+.overview-top-grid{display:grid;grid-template-columns:minmax(0,1.82fr) minmax(260px,.7fr);gap:16px;align-items:stretch}
 .overview-history-chart{display:flex;flex-direction:column;gap:12px}
 .overview-history-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .overview-history-title{font-size:18px;font-weight:700;color:var(--text)}
@@ -2184,6 +2188,8 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .overview-greeting-email{background:rgba(91,147,211,.12)}
 .overview-side-panels{display:flex;flex-direction:column;gap:12px;margin-top:12px}
 .overview-side-card{padding:14px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft)}
+.overview-top-side{display:flex;align-items:stretch}
+.overview-top-side .overview-side-card{width:100%;padding:16px;min-height:0}
 .overview-side-title{font-size:13px;font-weight:700;letter-spacing:.03em;color:var(--text)}
 .overview-side-sub{margin-top:4px;font-size:12px;color:var(--muted)}
 .overview-mode-list{display:flex;flex-direction:column;gap:12px;margin-top:14px}
@@ -2280,7 +2286,7 @@ linear-gradient(to right, transparent, transparent)}
 .mini-bar-label{font-size:11px;color:var(--muted)}
 .mini-bar-value{font-size:11px;color:#344054}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
-@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
+@media (max-width:980px){.run-layout,.run-grid,.cards-3,.cards-4,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}.overview-note{flex-direction:column;align-items:stretch}.overview-cta{justify-content:center}}
 </style>
 </head>
 <body>
@@ -2348,7 +2354,7 @@ linear-gradient(to right, transparent, transparent)}
         <section id="view-overview" class="view active">
           <div class="headline">
             <div class="h1">Overview</div>
-            <div id="envChip" class="state">State: idle</div>
+            <div id="envChip" class="state">Trạng thái: Sẵn sàng</div>
           </div>
 
           <section class="card overview-top-card">
@@ -2367,41 +2373,50 @@ linear-gradient(to right, transparent, transparent)}
                 </div>
                 <div id="ovHistoryBars" class="overview-history-bars"></div>
               </div>
-              <aside class="overview-greeting-card">
-                <div class="overview-greeting-head">
-                  <div id="ovGreetingKicker" class="overview-greeting-kicker">Daily Greeting</div>
-                  <span id="ovGreetingRole" class="auth-role auth-role-__AUTH_ROLE_CLASS__">__AUTH_ROLE_DISPLAY__</span>
-                </div>
-                <div class="overview-greeting-visual">
-                  <div class="overview-greeting-orbit">
-                    <div id="ovGreetingAvatar" class="overview-greeting-avatar">EV</div>
-                  </div>
-                </div>
-                <div id="ovGreetingTitle" class="overview-greeting-title">Good Morning</div>
-                <div id="ovGreetingSub" class="overview-greeting-sub">Continue your workflow and keep today's runs on track.</div>
-                <div class="overview-greeting-footer">
-                  <div id="ovGreetingEmail" class="overview-greeting-email">__AUTH_EMAIL_DISPLAY__</div>
-                </div>
+              <aside class="overview-top-side">
+                <section class="overview-side-card">
+                  <div id="ovModeSplitTitle" class="overview-side-title">Mode split</div>
+                  <div id="ovModeSplitSub" class="overview-side-sub">Distribution of tracked jobs by mode.</div>
+                  <div id="ovModeSplit" class="overview-mode-list"></div>
+                </section>
               </aside>
             </div>
           </section>
 
           <div class="layout">
-            <section class="card overview-stats-card">
-              <div class="stats">
-                <div class="stat"><div class="k">Jobs today</div><div id="ovTodayJobs" class="v">0</div><div class="s">created in the last 24h</div></div>
-                <div class="stat"><div class="k">Average success rate</div><div id="ovAvgSuccess" class="v">0%</div><div class="s">across tracked jobs</div></div>
-                <div class="stat"><div class="k">Latest job</div><div id="ovLatestJob" class="v">-</div><div id="ovLatestMeta" class="s">no recent run</div></div>
-                <div class="stat"><div class="k">Top error</div><div id="ovTopError" class="v">-</div><div id="ovTopErrorMeta" class="s">no recurring issues</div></div>
+            <section class="overview-stats-grid">
+              <div class="cards-4 overview-stat-cards">
+                <section class="card pad overview-stat-card">
+                  <div id="ovTodayJobsLabel" class="k">Jobs today</div>
+                  <div id="ovTodayJobs" class="big-number">0</div>
+                  <div id="ovTodayJobsMeta" class="s">created in the last 24h</div>
+                </section>
+                <section class="card pad overview-stat-card">
+                  <div id="ovAvgSuccessLabel" class="k">Average success rate</div>
+                  <div id="ovAvgSuccess" class="big-number">0%</div>
+                  <div id="ovAvgSuccessMeta" class="s">across tracked jobs</div>
+                </section>
+                <section class="card pad overview-stat-card">
+                  <div id="ovLatestJobLabel" class="k">Latest job</div>
+                  <div id="ovLatestJob" class="big-number">-</div>
+                  <div id="ovLatestMeta" class="s">no recent run</div>
+                </section>
+                <section class="card pad overview-stat-card">
+                  <div id="ovTopErrorLabel" class="k">Top error</div>
+                  <div id="ovTopError" class="big-number">-</div>
+                  <div id="ovTopErrorMeta" class="s">no recurring issues</div>
+                </section>
               </div>
-              <div class="overview-note">
-                <span id="overviewText">No run selected.</span>
-                <button class="overview-cta" onclick="switchView('runs')">
-                  <span id="overviewRunCtaLabel">Open Run Center</span>
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12"></path><path d="m13 6 6 6-6 6"></path></svg>
-                </button>
-              </div>
-              <div class="mini">
+              <section class="card overview-note-card">
+                <div class="overview-note">
+                  <span id="overviewText">No run selected.</span>
+                  <button class="overview-cta" onclick="switchView('runs')">
+                    <span id="overviewRunCtaLabel">Open Run Center</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12"></path><path d="m13 6 6 6-6 6"></path></svg>
+                  </button>
+                </div>
+              </section>
+              <section class="card mini mini-card">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)"><span>Overall progress</span><span id="pctText">0%</span></div>
                 <div class="progress" style="margin-top:6px"><span id="pfill"></span></div>
                 <div class="jobs-wrap">
@@ -2410,7 +2425,7 @@ linear-gradient(to right, transparent, transparent)}
                     <tbody id="jobsBody"></tbody>
                   </table>
                 </div>
-              </div>
+              </section>
             </section>
 
             <aside class="card">
@@ -2431,13 +2446,6 @@ linear-gradient(to right, transparent, transparent)}
                     <button class="summary-action" onclick="switchView('activities')"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg><span>View</span></button>
                   </div>
                 </div>
-                <div class="overview-side-panels single">
-                  <section class="overview-side-card">
-                    <div id="ovModeSplitTitle" class="overview-side-title">Mode split</div>
-                    <div id="ovModeSplitSub" class="overview-side-sub">Distribution of tracked jobs by mode.</div>
-                    <div id="ovModeSplit" class="overview-mode-list"></div>
-                  </section>
-                </div>
               </div>
             </aside>
           </div>
@@ -2447,7 +2455,7 @@ linear-gradient(to right, transparent, transparent)}
         <section id="view-runs" class="view">
           <div class="runs-head">
             <div class="headline">
-              <div id="runTitleText" class="h1">Runs - Seeding</div>
+              <div id="runTitleText" class="h1">Seeding</div>
             </div>
             <div class="run-share-note run-share-top">
               <div id="runShareLabel" class="run-share-title">Chia sẻ Sheet & Drive folder cho (quyền Editor):</div>
@@ -2456,7 +2464,7 @@ linear-gradient(to right, transparent, transparent)}
           </div>
           <div class="run-layout">
             <section class="card run-form">
-              <div id="runConfigTitle" class="run-config-head">Run Config - Seeding</div>
+              <div id="runConfigTitle" class="run-config-head">Run Config</div>
               <div class="run-grid" style="margin-top:14px">
                 <div class="field"><label>Sheet URL</label><input id="sheet_url" /></div>
                 <div class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
@@ -2504,7 +2512,7 @@ linear-gradient(to right, transparent, transparent)}
                 <div id="runMonitorKicker" class="monitor-kicker">4. Result & Monitor</div>
                 <div id="runMonitorTitle" class="monitor-title">Theo doi tien do va loi</div>
               </div>
-              <div id="runMonitorStatus" class="monitor-badge">Idle</div>
+              <div id="runMonitorStatus" class="monitor-badge">Sẵn sàng</div>
             </div>
             <div class="monitor-grid">
               <section class="monitor-mini">
@@ -2705,30 +2713,30 @@ linear-gradient(to right, transparent, transparent)}
               </div>
             </div>
             <div class="access-filter-row">
-              <div class="access-filter-group">
-                <span id="accessFilterRoleLabel" class="access-filter-label">Role</span>
-                <div class="access-segmented">
-                  <button id="accessRoleFilterAll" class="active" type="button" onclick="setAccessDirectoryRole('all')">All</button>
-                  <button id="accessRoleFilterAdmin" type="button" onclick="setAccessDirectoryRole('admin')">Admin</button>
-                  <button id="accessRoleFilterUser" type="button" onclick="setAccessDirectoryRole('user')">User</button>
-                </div>
+              <div class="access-filter-item">
+                <label id="accessFilterRoleLabel" class="access-filter-label" for="accessRoleFilterSelect">Role</label>
+                <select id="accessRoleFilterSelect" class="access-filter-select" onchange="setAccessDirectoryRole(this.value)">
+                  <option id="accessRoleFilterAll" value="all">All</option>
+                  <option id="accessRoleFilterAdmin" value="admin">Admin</option>
+                  <option id="accessRoleFilterUser" value="user">User</option>
+                </select>
               </div>
-              <div class="access-filter-group">
-                <span id="accessFilterScopeLabel" class="access-filter-label">Access</span>
-                <div class="access-segmented">
-                  <button id="accessScopeFilterAll" class="active" type="button" onclick="setAccessDirectoryScope('all')">All</button>
-                  <button id="accessScopeFilterAllowed" type="button" onclick="setAccessDirectoryScope('allowed')">Allowed</button>
-                  <button id="accessScopeFilterAdmin" type="button" onclick="setAccessDirectoryScope('admin')">Admin</button>
-                  <button id="accessScopeFilterOpen" type="button" onclick="setAccessDirectoryScope('open')">Open OTP</button>
-                </div>
+              <div class="access-filter-item">
+                <label id="accessFilterScopeLabel" class="access-filter-label" for="accessScopeFilterSelect">Access</label>
+                <select id="accessScopeFilterSelect" class="access-filter-select" onchange="setAccessDirectoryScope(this.value)">
+                  <option id="accessScopeFilterAll" value="all">All</option>
+                  <option id="accessScopeFilterAllowed" value="allowed">Allowed</option>
+                  <option id="accessScopeFilterAdmin" value="admin">Admin</option>
+                  <option id="accessScopeFilterOpen" value="open">Open OTP</option>
+                </select>
               </div>
-              <div class="access-filter-group">
-                <span id="accessFilterTypeLabel" class="access-filter-label">Type</span>
-                <div class="access-segmented">
-                  <button id="accessTypeFilterAll" class="active" type="button" onclick="setAccessDirectoryType('all')">All</button>
-                  <button id="accessTypeFilterInternal" type="button" onclick="setAccessDirectoryType('internal')">Internal</button>
-                  <button id="accessTypeFilterExternal" type="button" onclick="setAccessDirectoryType('external')">External</button>
-                </div>
+              <div class="access-filter-item">
+                <label id="accessFilterTypeLabel" class="access-filter-label" for="accessTypeFilterSelect">Type</label>
+                <select id="accessTypeFilterSelect" class="access-filter-select" onchange="setAccessDirectoryType(this.value)">
+                  <option id="accessTypeFilterAll" value="all">All</option>
+                  <option id="accessTypeFilterInternal" value="internal">Internal</option>
+                  <option id="accessTypeFilterExternal" value="external">External</option>
+                </select>
               </div>
             </div>
             <div class="access-table-wrap">
@@ -2871,6 +2879,7 @@ const I18N = {
     access: 'Quản lý người dùng',
     settings: 'Cài đặt',
     state: 'Trạng thái',
+    readyState: 'Sẵn sàng',
     openRuns: 'Mở Runs',
     view: 'Xem',
     sync: 'Đồng bộ',
@@ -3038,6 +3047,7 @@ const I18N = {
     accessFilterUser: 'User',
     accessFilterInternal: 'Nội bộ',
     accessFilterExternal: 'Bên ngoài',
+    accessYouTag: 'You',
     accessScopeAllowed: 'Được phép',
     accessScopeAdmin: 'Admin',
     accessScopeOpen: 'OTP',
@@ -3161,6 +3171,7 @@ const I18N = {
     access: 'User Management',
     settings: 'Settings',
     state: 'State',
+    readyState: 'Ready',
     openRuns: 'Open Runs',
     view: 'View',
     sync: 'Sync',
@@ -3328,6 +3339,7 @@ const I18N = {
     accessFilterUser: 'User',
     accessFilterInternal: 'Internal',
     accessFilterExternal: 'External',
+    accessYouTag: 'You',
     accessScopeAllowed: 'Allowed',
     accessScopeAdmin: 'Admin',
     accessScopeOpen: 'OTP',
@@ -3492,11 +3504,11 @@ function getRunModeLabel(mode) {
 }
 
 function formatRunTitle(mode = currentRunMode) {
-  return `${t('runs')} - ${getRunModeLabel(mode)}`;
+  return getRunModeLabel(mode);
 }
 
 function formatRunConfigTitle(mode = currentRunMode) {
-  return `${t('runConfig')} - ${getRunModeLabel(mode)}`;
+  return t('runConfig');
 }
 
 function sanitizeMappingBlockForMode(mode, block, index = 1) {
@@ -3751,10 +3763,10 @@ function renderMappingEditor() {
   }
   const addRow = document.querySelector('.mapping-add-row');
   if (addRow) {
+    addRow.classList.toggle('booking', currentRunMode === 'booking');
     const bookingExtra = currentRunMode === 'booking'
       ? `<label class="mapping-toggle-card">
           <span class="mapping-toggle-copy">
-            <span class="mapping-toggle-kicker">${esc(t('booking'))}</span>
             <span class="mapping-toggle-title">${esc(t('captureFive'))}</span>
             <span class="mapping-toggle-help">${esc(t('captureFiveHelp'))}</span>
           </span>
@@ -3852,12 +3864,12 @@ function applyLanguage() {
   setText('#view-settings .state', t('settingsState'));
   setText('#view-runs .state', t('runConfigHelp'));
 
-  setText('#view-overview .stats .stat:nth-child(1) .k', t('jobsToday'));
-  setText('#view-overview .stats .stat:nth-child(1) .s', t('createdLast24h'));
-  setText('#view-overview .stats .stat:nth-child(2) .k', t('avgSuccess'));
-  setText('#view-overview .stats .stat:nth-child(2) .s', t('acrossTracked'));
-  setText('#view-overview .stats .stat:nth-child(3) .k', t('latestJob'));
-  setText('#view-overview .stats .stat:nth-child(4) .k', t('topError'));
+  setText('#ovTodayJobsLabel', t('jobsToday'));
+  setText('#ovTodayJobsMeta', t('createdLast24h'));
+  setText('#ovAvgSuccessLabel', t('avgSuccess'));
+  setText('#ovAvgSuccessMeta', t('acrossTracked'));
+  setText('#ovLatestJobLabel', t('latestJob'));
+  setText('#ovTopErrorLabel', t('topError'));
   setText('#ovHistoryTitle', t('overviewTimeline'));
   setText('#ovLegendSuccess', t('overviewCompletedLegend'));
   setText('#ovLegendFailed', t('overviewFailedLegend'));
@@ -4304,6 +4316,7 @@ function classifyLog(log) {
 function prettyWord(value) {
   const raw = String(value || '').trim();
   if (!raw) return '-';
+  if (raw.toLowerCase() === 'idle') return t('readyState');
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
@@ -4503,7 +4516,7 @@ function setStatus(text, status) {
   if (status === 'completed') { chip.style.background = '#dcfce7'; chip.style.color = '#166534'; }
   if (status === 'failed') { chip.style.background = '#fee2e2'; chip.style.color = '#991b1b'; }
   if (status === 'stopped') { chip.style.background = '#ffedd5'; chip.style.color = '#9a3412'; }
-  chip.textContent = `${t('state')}: ` + (status || 'idle');
+  chip.textContent = `${t('state')}: ` + prettyWord(status || 'idle');
 }
 
 function setKPI(summary, jobId) {
@@ -4855,12 +4868,20 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
   const data = policy || { allowed_emails: [], admin_emails: [], updated_at: null };
   const { allowed, admins, managed } = getAccessPolicyLists(data);
   const emailTypes = getAccessEmailTypes(data);
-  const union = Array.from(new Set([...managed, ...admins, ...allowed])).sort((a, b) => a.localeCompare(b));
+  const currentEmail = String(authState.email || '').trim().toLowerCase();
+  const union = Array.from(new Set([...managed, ...admins, ...allowed])).sort((a, b) => {
+    const aSelf = !!currentEmail && String(a || '').trim().toLowerCase() === currentEmail;
+    const bSelf = !!currentEmail && String(b || '').trim().toLowerCase() === currentEmail;
+    if (aSelf && !bSelf) return -1;
+    if (!aSelf && bSelf) return 1;
+    return a.localeCompare(b);
+  });
   const updated = data.updated_at ? toLocalStamp(data.updated_at) : '-';
   const rows = union.map(email => {
     const isAdmin = admins.includes(email);
     const canLogin = isAdmin || allowed.includes(email) || managed.includes(email);
     const type = normalizeAccessType(emailTypes[email], email);
+    const isCurrentUser = !!currentEmail && String(email || '').trim().toLowerCase() === currentEmail;
     return {
       key: email,
       email,
@@ -4873,6 +4894,7 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
       updated,
       initial: email.charAt(0).toUpperCase() || 'G',
       isSystem: false,
+      isCurrentUser,
     };
   });
   rows.unshift({
@@ -4902,22 +4924,12 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
 }
 
 function updateAccessDirectoryFilters() {
-  const mapping = {
-    accessRoleFilterAll: accessDirectoryRole === 'all',
-    accessRoleFilterAdmin: accessDirectoryRole === 'admin',
-    accessRoleFilterUser: accessDirectoryRole === 'user',
-    accessScopeFilterAll: accessDirectoryScope === 'all',
-    accessScopeFilterAllowed: accessDirectoryScope === 'allowed',
-    accessScopeFilterAdmin: accessDirectoryScope === 'admin',
-    accessScopeFilterOpen: accessDirectoryScope === 'open',
-    accessTypeFilterAll: accessDirectoryType === 'all',
-    accessTypeFilterInternal: accessDirectoryType === 'internal',
-    accessTypeFilterExternal: accessDirectoryType === 'external',
-  };
-  Object.entries(mapping).forEach(([id, active]) => {
-    const node = document.getElementById(id);
-    if (node) node.classList.toggle('active', !!active);
-  });
+  const roleSelect = document.getElementById('accessRoleFilterSelect');
+  const scopeSelect = document.getElementById('accessScopeFilterSelect');
+  const typeSelect = document.getElementById('accessTypeFilterSelect');
+  if (roleSelect) roleSelect.value = accessDirectoryRole;
+  if (scopeSelect) scopeSelect.value = accessDirectoryScope;
+  if (typeSelect) typeSelect.value = accessDirectoryType;
 }
 
 function renderAccessDirectory(policy = currentAccessPolicy) {
@@ -4953,7 +4965,7 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
         <div class="access-person">
           <div class="access-avatar ${esc(row.access)}">${esc(row.initial)}</div>
           <div class="access-person-meta">
-            <div class="access-person-name">${esc(row.title)}</div>
+            <div class="access-person-name">${esc(row.title)}${row.isCurrentUser ? ` <span class="access-you-tag">(${esc(t('accessYouTag'))})</span>` : ''}</div>
             <div class="access-person-sub">${esc(row.subtitle)}</div>
           </div>
         </div>
