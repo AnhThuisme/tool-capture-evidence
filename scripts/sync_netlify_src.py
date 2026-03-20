@@ -31,17 +31,17 @@ def main() -> int:
     )
 
     replacements = {
-        "__AUTH_EMAIL_TITLE__": "unknown@example.com",
-        "__AUTH_EMAIL__": "unknown@example.com",
-        "__AUTH_EMAIL_DISPLAY__": "unknown@example.com",
-        "__AUTH_ROLE_CLASS__": "admin",
-        "__AUTH_ROLE__": "admin",
-        "__AUTH_ROLE_DISPLAY__": "Admin",
-        "__ADMIN_NAV_STYLE__": "",
-        "__ADMIN_SECTION_STYLE__": "",
+        "__AUTH_EMAIL_TITLE__": "",
+        "__AUTH_EMAIL__": "",
+        "__AUTH_EMAIL_DISPLAY__": "-",
+        "__AUTH_ROLE_CLASS__": "user",
+        "__AUTH_ROLE__": "user",
+        "__AUTH_ROLE_DISPLAY__": "User",
+        "__ADMIN_NAV_STYLE__": "display:none",
+        "__ADMIN_SECTION_STYLE__": "display:none",
         "__SETTINGS_NAV_STYLE__": "",
         "__SETTINGS_SECTION_STYLE__": "",
-        "__AUTH_IS_ADMIN__": "true",
+        "__AUTH_IS_ADMIN__": "false",
     }
     for old, new in replacements.items():
         root_html = root_html.replace(old, new)

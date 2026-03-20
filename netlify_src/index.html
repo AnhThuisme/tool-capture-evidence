@@ -550,7 +550,7 @@ linear-gradient(to right, transparent, transparent)}
           </div>
           <button class="side-btn" data-view="projects" onclick="switchView('projects', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M8 20h8"/></svg></span><span>Projects</span></button>
           <button class="side-btn" data-view="activities" onclick="switchView('activities', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M4 12h4l2-5 4 10 2-5h4"/><path d="M4 19h16"/></svg></span><span>Activities</span></button>
-          <button id="access_nav_button" class="side-btn" data-view="access" onclick="switchView('access', this)" style=""><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"></path><path d="M5 20a7 7 0 0 1 14 0"></path><path d="M18 7h3"></path><path d="M19.5 5.5v3"></path></svg></span><span>Access</span></button>
+          <button id="access_nav_button" class="side-btn" data-view="access" onclick="switchView('access', this)" style="display:none"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"></path><path d="M5 20a7 7 0 0 1 14 0"></path><path d="M18 7h3"></path><path d="M19.5 5.5v3"></path></svg></span><span>Access</span></button>
           <button id="settings_nav_button" class="side-btn" data-view="settings" onclick="switchView('settings', this)" style=""><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg></span><span>Settings</span></button>
         </div>
       </aside>
@@ -558,8 +558,8 @@ linear-gradient(to right, transparent, transparent)}
         <div class="topbar">
           <div class="actions">
             <div class="auth-box">
-              <span id="authRoleBadge" class="auth-role auth-role-admin">Admin</span>
-              <span class="auth-email" title="unknown@example.com">unknown@example.com</span>
+              <span id="authRoleBadge" class="auth-role auth-role-user">User</span>
+              <span class="auth-email" title="">-</span>
               <button class="auth-logout" type="button" onclick="logoutAuth()"><span id="logoutLabel">Đăng xuất</span></button>
             </div>
             <div class="lang-switch">
@@ -826,7 +826,7 @@ linear-gradient(to right, transparent, transparent)}
           </div>
         </section>
 
-        <section id="view-access" class="view" style="">
+        <section id="view-access" class="view" style="display:none">
           <div class="headline access-headline">
             <div>
               <div class="access-kicker">Admin Control</div>
@@ -1073,9 +1073,9 @@ const DEFAULT_AUTO_LAUNCH_CHROME = false;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
 let currentTheme = localStorage.getItem('ui_theme') || 'light';
 const authState = {
-  email: 'unknown@example.com',
-  role: 'admin',
-  isAdmin: true,
+  email: '',
+  role: 'user',
+  isAdmin: false,
 };
 
 const I18N = {
@@ -2326,6 +2326,14 @@ async function req(url, opts = {}) {
     throw new Error(data.detail || 'Authentication required');
   }
   if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+  return data;
+}
+
+async function loadAuthState() {
+  const data = await req('/api/auth/me');
+  authState.email = String(data.email || '').trim();
+  authState.role = String(data.role || 'user').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+  authState.isAdmin = !!data.is_admin || authState.role === 'admin';
   return data;
 }
 
@@ -4002,6 +4010,7 @@ function ensureTimers() {
 }
 
 async function init() {
+  await loadAuthState();
   syncAuthUI();
   bindSheetNameAutocomplete();
   await loadDefaults();

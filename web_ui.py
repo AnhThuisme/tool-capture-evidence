@@ -4306,6 +4306,14 @@ async function req(url, opts = {}) {
   return data;
 }
 
+async function loadAuthState() {
+  const data = await req('/api/auth/me');
+  authState.email = String(data.email || '').trim();
+  authState.role = String(data.role || 'user').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+  authState.isAdmin = !!data.is_admin || authState.role === 'admin';
+  return data;
+}
+
 async function logActivityEvent(payload = {}) {
   try {
     const out = await req('/api/activity', {
@@ -5979,6 +5987,7 @@ function ensureTimers() {
 }
 
 async function init() {
+  await loadAuthState();
   syncAuthUI();
   bindSheetNameAutocomplete();
   await loadDefaults();
