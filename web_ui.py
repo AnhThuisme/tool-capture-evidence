@@ -3092,6 +3092,96 @@ const authState = {
   role: '__AUTH_ROLE__',
   isAdmin: __AUTH_IS_ADMIN__,
 };
+const localAgentState = {
+  origin: localStorage.getItem('toolEvidence.localAgentOrigin') || 'http://127.0.0.1:8765',
+  enabled: false,
+  checked: false,
+  lastError: '',
+};
+const LOCAL_AGENT_RUNTIME_PREFIXES = [
+  '/api/settings',
+  '/api/sheets/names',
+  '/api/activity',
+  '/api/chrome/',
+  '/api/jobs',
+];
+
+function isLocalBrowserOrigin() {
+  const host = String(window.location.hostname || '').trim().toLowerCase();
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
+function isLocalAgentRuntimePath(url) {
+  const path = String(url || '').trim();
+  if (!path || /^https?:\\/\\//i.test(path)) return false;
+  return LOCAL_AGENT_RUNTIME_PREFIXES.some(prefix => path === prefix || path.startsWith(prefix));
+}
+
+function shouldUseLocalAgent(url) {
+  return !isLocalBrowserOrigin() && !!localAgentState.enabled && isLocalAgentRuntimePath(url);
+}
+
+function runtimeHref(url) {
+  return shouldUseLocalAgent(url) ? `${localAgentState.origin}${url}` : url;
+}
+
+async function detectLocalAgent() {
+  if (isLocalBrowserOrigin()) {
+    localAgentState.enabled = false;
+    localAgentState.checked = true;
+    localAgentState.lastError = '';
+    return false;
+  }
+  try {
+    const res = await fetch(`${localAgentState.origin}/health`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    localAgentState.enabled = true;
+    localAgentState.checked = true;
+    localAgentState.lastError = '';
+    return true;
+  } catch (e) {
+    localAgentState.enabled = false;
+    localAgentState.checked = true;
+    localAgentState.lastError = String(e?.message || e || 'Local agent unavailable');
+    return false;
+  }
+}
+
+async function agentReq(url, opts = {}) {
+  if (!authState.email) throw new Error('Thiếu email đăng nhập để gọi local agent');
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Tool-Evidence-User': authState.email,
+    ...(opts.headers || {}),
+  };
+  let res = null;
+  try {
+    res = await fetch(`${localAgentState.origin}${url}`, { ...opts, headers });
+  } catch (e) {
+    localAgentState.enabled = false;
+    localAgentState.lastError = String(e?.message || e || 'Local agent unavailable');
+    throw new Error('Không kết nối được local agent trên máy này');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+  return data;
+}
+
+window.toolEvidenceSetLocalAgentOrigin = function(origin) {
+  const raw = String(origin || '').trim().replace(/\\/+$/, '');
+  if (!raw) {
+    localStorage.removeItem('toolEvidence.localAgentOrigin');
+    localAgentState.origin = 'http://127.0.0.1:8765';
+    return localAgentState.origin;
+  }
+  localStorage.setItem('toolEvidence.localAgentOrigin', raw);
+  localAgentState.origin = raw;
+  return raw;
+};
 
 const I18N = {
   vi: {
@@ -4334,7 +4424,10 @@ function toggleLanguage() {
 }
 
 async function req(url, opts = {}) {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const useLocalAgent = shouldUseLocalAgent(url);
+  if (useLocalAgent) return agentReq(url, opts);
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const res = await fetch(url, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
     window.location.href = '/login';
@@ -5132,7 +5225,11 @@ function exportCurrentLog() {
     return;
   }
   const link = document.createElement('a');
-  link.href = `/api/jobs/${encodeURIComponent(jobId)}/export-log?ts=${Date.now()}`;
+  const exportQuery = new URLSearchParams({ ts: String(Date.now()) });
+  if (shouldUseLocalAgent(`/api/jobs/${encodeURIComponent(jobId)}/export-log`) && authState.email) {
+    exportQuery.set('user_email', authState.email);
+  }
+  link.href = runtimeHref(`/api/jobs/${encodeURIComponent(jobId)}/export-log?${exportQuery.toString()}`);
   link.target = '_blank';
   link.rel = 'noopener';
   document.body.appendChild(link);
@@ -5790,9 +5887,9 @@ function renderSettingsSummary(settings) {
 async function loadDefaults() {
   const [d, s] = await Promise.all([req('/api/default-config'), req('/api/settings')]);
   currentSettingsCache = s || {};
-  sheet_url.value = d.sheet_url || s.sheet_url || '';
-  sheet_name.value = d.sheet_name || s.sheet_name || '';
-  drive_id.value = d.drive_id || s.drive_id || '';
+  sheet_url.value = s.sheet_url || d.sheet_url || '';
+  sheet_name.value = s.sheet_name || d.sheet_name || '';
+  drive_id.value = s.drive_id || d.drive_id || '';
   const overwriteNode = document.getElementById('force_run_all');
   if (overwriteNode) overwriteNode.checked = true;
   document.getElementById('settings_viewport_width').value = s.viewport_width || 1920;
@@ -6049,6 +6146,7 @@ function ensureTimers() {
 
 async function init() {
   await loadAuthState();
+  await detectLocalAgent();
   syncAuthUI();
   bindSheetNameAutocomplete();
   await loadDefaults();
