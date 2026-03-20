@@ -1,6 +1,6 @@
 param(
   [string]$VenvPath = ".venv",
-  [string]$Host = "0.0.0.0",
+  [string]$BindHost = "0.0.0.0",
   [int]$Port = 8000
 )
 
@@ -17,6 +17,14 @@ if (Test-Path ".env") {
     if ($parts.Count -eq 2) {
       [Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim())
     }
+  }
+}
+
+if (-not $PSBoundParameters.ContainsKey('Port')) {
+  $envPortRaw = [Environment]::GetEnvironmentVariable("PORT")
+  $envPort = 0
+  if ($envPortRaw -and [int]::TryParse($envPortRaw, [ref]$envPort) -and $envPort -gt 0) {
+    $Port = $envPort
   }
 }
 
@@ -39,4 +47,4 @@ if (Test-PortBusy $selectedPort) {
 }
 
 Write-Host "Starting web app at http://127.0.0.1:$selectedPort"
-& "$VenvPath\Scripts\python.exe" -m uvicorn web_ui:app --host $Host --port $selectedPort
+& "$VenvPath\Scripts\python.exe" -m uvicorn web_ui:app --host $BindHost --port $selectedPort
