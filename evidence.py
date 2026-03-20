@@ -4358,6 +4358,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
     def ui_set_detail(text: str):
         app.label_detail.config(text=text)
 
+    def ui_set_status(text: str, fg: str = ""):
+        app.label_status.config(text=text, fg=fg)
+
     def ui_set_done():
         app.label_status.config(text="HOÀN TẤT", fg="#34C759")
 
@@ -4830,8 +4833,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 if _is_target_row(block["start_line"], r, str(lnk), mode_key=block_mode_key):
                     target_total += 1
         if target_total == 0:
+            empty_msg = "Không có dòng hợp lệ để xử lý. Kiểm tra Link URL, Start Line hoặc chế độ retry."
             write_log("[WARN] target_total=0: no eligible links found to process.")
-            ui_call(ui_set_detail, "Không có dữ liệu hợp lệ để xử lý. Kiểm tra Image Column và Start Line.")
+            ui_call(ui_set_detail, empty_msg)
+            ui_call(ui_set_status, "KHÔNG CÓ DỮ LIỆU", "#b45309")
+            ui_call(ui_add_log, 0, "WARN", "EMPTY", empty_msg, "warning")
 
         run_started_at = time.time()
         started_count = 0

@@ -1913,7 +1913,10 @@ def _run_job(job_id: str):
                         job["status"] = "completed"
                     else:
                         job["status"] = "stopped"
-                        if not str(job.get("detail") or "").strip():
+                        detail_text = str(job.get("detail") or "").strip()
+                        if total <= 0 and not done:
+                            job["detail"] = "Không có dòng hợp lệ để xử lý. Kiểm tra Link URL, Start Line hoặc chế độ retry."
+                        elif not detail_text:
                             job["detail"] = (
                                 "Chưa có tác vụ nào được xử lý."
                                 if not has_runtime_activity
@@ -3081,7 +3084,7 @@ let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 
 let jobStatusMemory = {};
 let notifiedCompletedJobKeys = new Set();
 const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9423, scan: 9623 };
-const DEFAULT_AUTO_LAUNCH_CHROME = false;
+const DEFAULT_AUTO_LAUNCH_CHROME = true;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
 let currentTheme = localStorage.getItem('ui_theme') || 'light';
 const authState = {
@@ -6298,15 +6301,21 @@ def start_job(request: Request, payload: JobStartRequest):
     browser_port = _get_mode_base_port(run_mode)
     profile_path = _get_mode_profile(run_mode, 0)
 
-    if payload.auto_launch_chrome:
-        has_non_scan = any(str((m or {}).get("mode", "seeding")).lower() != "scan" for m in mapping_payload)
-        if has_non_scan:
+    if payload.auto_launch_chrome and run_mode != "scan":
+        for idx, mapping in enumerate(mapping_payload):
+            block_mode = _normalize_run_mode(str((mapping or {}).get("mode", run_mode)))
+            if block_mode == "scan":
+                continue
+            block_port = evidence.get_post_port(idx, _get_mode_base_port(block_mode))
+            block_profile = _get_mode_profile(block_mode, idx)
             ok, info = evidence.launch_chrome_for_login(
-                browser_port=browser_port,
-                profile_path=profile_path,
+                browser_port=block_port,
+                profile_path=block_profile,
             )
             if not ok:
-                raise HTTPException(status_code=500, detail=f"Launch Chrome thất bại: {info}")
+                evidence.write_log(
+                    f"[WARN] Auto launch Chrome failed ({block_mode} block {idx + 1}, port {block_port}): {info}"
+                )
 
     request_snapshot = {
         "owner_email": owner_email,
