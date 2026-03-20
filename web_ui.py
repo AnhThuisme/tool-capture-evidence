@@ -127,12 +127,21 @@ class WebAppAdapter:
         self._job_store["inputs_enabled"] = bool(enabled)
         self._persist()
 
-    def update_progress_summary(self, done: int, total: int, ok_count: int, fail_count: int, eta_text: str = "---"):
+    def update_progress_summary(
+        self,
+        done: int,
+        total: int,
+        ok_count: int,
+        fail_count: int,
+        eta_text: str = "---",
+        unavailable_count: int = 0,
+    ):
         self._job_store["summary"] = {
             "done": int(done),
             "total": int(total),
             "success": int(ok_count),
             "failed": int(fail_count),
+            "unavailable": int(unavailable_count),
             "eta": str(eta_text or "---"),
         }
         self._persist()
@@ -1813,7 +1822,7 @@ def _enqueue_job(
         "finished_at": None,
         "request": dict(request_snapshot or {}),
         "adapter": adapter,
-        "summary": {"done": 0, "total": 0, "success": 0, "failed": 0, "eta": "---"},
+        "summary": {"done": 0, "total": 0, "success": 0, "failed": 0, "unavailable": 0, "eta": "---"},
         "detail": str(detail or "Chờ chạy"),
         "ui_status": "READY",
         "ui_color": "",
@@ -1887,7 +1896,18 @@ def _run_job(job_id: str):
                     failed_count = int(summary.get("failed") or 0)
                 except Exception:
                     failed_count = 0
-                has_runtime_activity = bool(job.get("logs")) or done > 0 or success_count > 0 or failed_count > 0
+                unavailable_count = 0
+                try:
+                    unavailable_count = int(summary.get("unavailable") or 0)
+                except Exception:
+                    unavailable_count = 0
+                has_runtime_activity = (
+                    bool(job.get("logs"))
+                    or done > 0
+                    or success_count > 0
+                    or failed_count > 0
+                    or unavailable_count > 0
+                )
                 if current_status not in {"stopped", "failed"}:
                     if total > 0 and done >= total:
                         job["status"] = "completed"
@@ -4411,7 +4431,7 @@ function getTerminalLogStats(job) {
     return {
       success: Number(summary.success || 0),
       failed: Number(summary.failed || 0),
-      unavailable: 0,
+      unavailable: Number(summary.unavailable || 0),
     };
   }
   let success = 0;
@@ -4438,6 +4458,7 @@ function getTerminalLogStats(job) {
     const summary = getJobSummary(job);
     success = Number(summary.success || 0);
     failed = Number(summary.failed || 0);
+    unavailable = Number(summary.unavailable || 0);
   }
   return { success, failed, unavailable };
 }
@@ -4467,7 +4488,7 @@ function toDateKeyFromDate(date) {
 }
 
 function getJobSummary(job) {
-  return job?.summary || { done: 0, total: 0, success: 0, failed: 0, eta: '---' };
+  return job?.summary || { done: 0, total: 0, success: 0, failed: 0, unavailable: 0, eta: '---' };
 }
 
 function getJobSheetLabel(job) {
@@ -4668,7 +4689,7 @@ function processJobLifecycleNotifications(jobs) {
     const done = Number(summary.done || 0);
     const total = Number(summary.total || 0);
     const completionKey = `${jobId}:${String(job?.finished_at || '')}:${done}/${total}`;
-    const isReallyCompleted = status === 'completed' && (total <= 0 || done >= total);
+    const isReallyCompleted = status === 'completed' && total > 0 && done >= total;
     if (isReallyCompleted && previousStatus && previousStatus !== 'completed' && !notifiedCompletedJobKeys.has(completionKey)) {
       notifiedCompletedJobKeys.add(completionKey);
       showToast(t('jobFinishedToastFmt')(getJobSheetLabel(job), done, total), 'success', t('jobFinishedTitle'));
@@ -4710,6 +4731,13 @@ function isFailedLog(log) {
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
   return raw.includes('fail') || raw.includes('error');
+}
+
+function isSuccessLog(log) {
+  const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
+  if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
+  if (raw.includes('fail') || raw.includes('error')) return false;
+  return raw.includes('ok') || raw.includes('success') || raw.includes('done');
 }
 
 function canReplayLog(log) {
@@ -4966,7 +4994,8 @@ function renderRunMonitor(snapshot, logs) {
   const errorRows = st.error_rows || {};
   const errorKeys = Object.keys(errorRows);
   const logItems = Array.isArray(logs) ? logs : [];
-  const unavailableCount = logItems.filter(isUnavailableLog).length;
+  const successCount = logItems.length ? logItems.filter(isSuccessLog).length : Number(s.success || 0);
+  const unavailableCount = Math.max(Number(s.unavailable || 0), logItems.filter(isUnavailableLog).length);
   const failedLogCount = logItems.filter(isFailedLog).length;
   const issueRows = new Set();
   errorKeys.forEach(key => {
@@ -5023,9 +5052,9 @@ function renderRunMonitor(snapshot, logs) {
   document.getElementById('runMonitorErrorMain').textContent = hasIssueState ? `${Math.max(derivedIssueCount, 1)}` : t('monitorNoErrors');
   document.getElementById('runMonitorErrorMeta').textContent = hasIssueState
     ? (issueRows.size
-        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount)}`
-        : t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount))
-    : t('monitorSuccessFailedFmt')(s.success || 0, 0, unavailableCount);
+        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount)}`
+        : t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount))
+    : t('monitorSuccessFailedFmt')(successCount, 0, unavailableCount);
 
   const rows = (logs || []).slice().reverse();
   const replayLocked = ['running', 'paused'].includes(displayStatus);

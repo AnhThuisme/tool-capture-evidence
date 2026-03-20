@@ -4034,10 +4034,19 @@ class ProgressApp:
             pass
         self.update_progress_summary(0, 0, 0, 0, "---")
 
-    def update_progress_summary(self, done: int, total: int, ok_count: int, fail_count: int, eta_text: str = "---"):
+    def update_progress_summary(
+        self,
+        done: int,
+        total: int,
+        ok_count: int,
+        fail_count: int,
+        eta_text: str = "---",
+        unavailable_count: int = 0,
+    ):
         try:
+            unavailable_text = f" | Unavailable: {unavailable_count}" if int(unavailable_count or 0) > 0 else ""
             self.progress_summary_var.set(
-                f"✔ Progress: {done}/{total} | Success: {ok_count} | Failed: {fail_count} | ETA: {eta_text}"
+                f"✔ Progress: {done}/{total} | Success: {ok_count} | Failed: {fail_count}{unavailable_text} | ETA: {eta_text}"
             )
         except Exception:
             pass
@@ -4352,9 +4361,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
     def ui_set_done():
         app.label_status.config(text="HOÀN TẤT", fg="#34C759")
 
-    def ui_update_summary(done: int, total: int, ok_count: int, fail_count: int, eta_text: str):
+    def ui_update_summary(done: int, total: int, ok_count: int, fail_count: int, eta_text: str, unavailable_count: int = 0):
         if hasattr(app, "update_progress_summary"):
-            app.update_progress_summary(done, total, ok_count, fail_count, eta_text)
+            app.update_progress_summary(done, total, ok_count, fail_count, eta_text, unavailable_count)
 
     def ui_add_log(row: int, state_left: str, state_right: str, message: str, tag: str):
         if hasattr(app, "add_live_log"):
@@ -4829,7 +4838,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         processed_count = 0
         success_count = 0
         fail_count = 0
-        ui_call(ui_update_summary, 0, target_total, 0, 0, "---")
+        unavailable_count = 0
+        ui_call(ui_update_summary, 0, target_total, 0, 0, "---", 0)
 
         counter_lock = threading.Lock()
         error_lock = threading.Lock()
@@ -4885,11 +4895,12 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 done = processed_count
                 okv = success_count
                 failv = fail_count
+                unavailv = unavailable_count
                 percent = int((done / max(1, target_total)) * 100)
                 eta = _calc_eta(done)
             ui_call(ui_set_progress, percent)
             ui_call(ui_set_detail, f"{block_name} - hàng {row}")
-            ui_call(ui_update_summary, done, target_total, okv, failv, eta)
+            ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
             ui_call(ui_add_log, row, "START", "START", f"{block_name}: Link {url[:110]}", "start")
             return eta
 
@@ -4901,7 +4912,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             msg: str | None = None,
             log_tag: str = "ok",
         ):
-            nonlocal processed_count, success_count, fail_count
+            nonlocal processed_count, success_count, fail_count, unavailable_count
             with error_lock:
                 tracked_error_rows.discard(row)
                 tracked_error_details.pop(row, None)
@@ -4912,6 +4923,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 done = processed_count
                 okv = success_count
                 failv = fail_count
+                unavailv = unavailable_count
                 percent = int((done / max(1, target_total)) * 100)
                 eta = _calc_eta(done)
             text = msg if msg else f"{block_name}: {url[:110]}"
@@ -4919,10 +4931,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             if hasattr(app, "update_error_row_live"):
                 ui_call(app.update_error_row_live, row, "", False)
             ui_call(ui_set_progress, percent)
-            ui_call(ui_update_summary, done, target_total, okv, failv, eta)
+            ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
 
         def _finish_row_fail(block_name: str, row: int, err: str, eta: str):
-            nonlocal processed_count, fail_count
+            nonlocal processed_count, fail_count, unavailable_count
             with error_lock:
                 tracked_error_rows.add(row)
                 err_text = str(err).strip()
@@ -4939,13 +4951,31 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 done = processed_count
                 okv = success_count
                 failv = fail_count
+                unavailv = unavailable_count
                 percent = int((done / max(1, target_total)) * 100)
                 eta = _calc_eta(done)
             ui_call(ui_add_log, row, "FAIL", "FAIL", f"{block_name}: {err}", "fail")
             if hasattr(app, "update_error_row_live"):
                 ui_call(app.update_error_row_live, row, msg_store, True)
             ui_call(ui_set_progress, percent)
-            ui_call(ui_update_summary, done, target_total, okv, failv, eta)
+            ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
+
+        def _finish_row_unavailable(block_name: str, row: int, message: str, eta: str):
+            nonlocal processed_count, fail_count, unavailable_count
+            text = str(message or "").strip() or "Nội dung không khả dụng"
+            with counter_lock:
+                processed_count += 1
+                unavailable_count += 1
+                fail_count = len(tracked_error_rows)
+                done = processed_count
+                okv = success_count
+                failv = fail_count
+                unavailv = unavailable_count
+                percent = int((done / max(1, target_total)) * 100)
+                eta = _calc_eta(done)
+            ui_call(ui_add_log, row, "WARN", "UNAVAILABLE", f"{block_name}: {text}", "unavailable")
+            ui_call(ui_set_progress, percent)
+            ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
 
         def _start_worker_driver(block_index: int, block_mode: str):
             if scan_only_request:
@@ -5293,14 +5323,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             else:
                                 _finish_row_fail(log_block_name, row, "NO_MATCH", eta_text)
                         elif unavailable:
-                            _finish_row_ok(
-                                log_block_name,
-                                row,
-                                url,
-                                eta_text,
-                                msg=f"{log_block_name}: Nội dung không khả dụng",
-                                log_tag="unavailable",
-                            )
+                            _finish_row_unavailable(log_block_name, row, "Nội dung không khả dụng", eta_text)
                         else:
                             _finish_row_ok(log_block_name, row, url, eta_text)
                     except Exception as e:
@@ -5370,7 +5393,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
         final_fail_count = len(tracked_error_details)
         fail_count = final_fail_count
-        ui_call(ui_update_summary, processed_count, target_total, success_count, final_fail_count, "---")
+        ui_call(ui_update_summary, processed_count, target_total, success_count, final_fail_count, "---", unavailable_count)
         ui_call(ui_set_done)
         if messagebox:
             try:
@@ -5378,14 +5401,15 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 summary_text = (
                     f"Đã xử lý: {processed_count}/{target_total}\n"
                     f"Success: {success_count}\n"
-                    f"Failed: {final_fail_count}"
+                    f"Failed: {final_fail_count}\n"
+                    f"Unavailable: {unavailable_count}"
                 )
                 if stopped_early:
                     if hasattr(app, "show_completion_popup"):
                         ui_call(app.show_completion_popup, "Đã dừng", f"Tiến trình đã dừng giữa chừng.\n\n{summary_text}", "warn")
                     else:
                         ui_call(messagebox.showwarning, "Đã dừng", f"Tiến trình đã dừng giữa chừng.\n\n{summary_text}")
-                elif fail_count > 0:
+                elif fail_count > 0 or unavailable_count > 0:
                     if hasattr(app, "show_completion_popup"):
                         ui_call(app.show_completion_popup, "Hoàn tất (có lỗi)", summary_text, "warn")
                     else:
