@@ -253,6 +253,7 @@ class SettingsUpdateRequest(BaseModel):
     page_timeout_ms: int = 3000
     ready_state: str = "interactive"
     full_page_capture: bool = False
+    mappings_by_mode: dict[str, list[MappingBlock]] = Field(default_factory=dict)
 
 
 class AccessPolicyUpdateRequest(BaseModel):
@@ -331,6 +332,7 @@ SETTINGS_USER_KEYS = {
     "page_timeout_ms",
     "ready_state",
     "full_page_capture",
+    "mappings_by_mode",
 }
 
 
@@ -348,7 +350,55 @@ def _read_saved_settings_root() -> dict[str, Any]:
 def _filter_settings_payload(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
-    return {key: data.get(key) for key in SETTINGS_USER_KEYS if key in data}
+    filtered = {key: data.get(key) for key in SETTINGS_USER_KEYS if key in data}
+    if "mappings_by_mode" in filtered:
+        filtered["mappings_by_mode"] = _normalize_mappings_by_mode(filtered.get("mappings_by_mode"))
+    return filtered
+
+
+def _normalize_saved_mapping_block(raw: Any, mode: str, index: int) -> dict[str, Any]:
+    mode_key = _normalize_run_mode(mode)
+    base = dict(_default_mapping(4, mode_key))
+    if isinstance(raw, dict):
+        base.update(raw)
+    base["mode"] = mode_key
+    try:
+        base["start_line"] = max(1, int(str(base.get("start_line", 4)).strip() or 4))
+    except Exception:
+        base["start_line"] = 4
+    text_keys = (
+        "name",
+        "col_url",
+        "col_profile",
+        "col_content",
+        "col_screenshot",
+        "col_drive",
+        "col_air_date",
+        "fixed_air_date",
+    )
+    for key in text_keys:
+        base[key] = str(base.get(key, "") or "").strip()
+    for key in ("col_url", "col_profile", "col_content", "col_screenshot", "col_drive", "col_air_date"):
+        base[key] = base[key].upper()
+    base["name"] = base["name"] or f"{'Scan' if mode_key == 'scan' else 'Post'} {index}"
+    return base
+
+
+def _normalize_mappings_by_mode(data: Any) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(data, dict):
+        return {}
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for raw_mode, items in data.items():
+        mode_key = _normalize_run_mode(raw_mode)
+        if mode_key not in {"seeding", "booking", "scan"}:
+            continue
+        if not isinstance(items, list) or not items:
+            continue
+        normalized[mode_key] = [
+            _normalize_saved_mapping_block(item, mode_key, idx + 1)
+            for idx, item in enumerate(items)
+        ]
+    return normalized
 
 
 def _normalize_email(value: str) -> str:
@@ -1397,6 +1447,7 @@ def _settings_defaults() -> dict[str, Any]:
         "page_timeout_ms": int(float(getattr(evidence, "PAGE_READY_TIMEOUT", 3)) * 1000),
         "ready_state": "interactive",
         "full_page_capture": False,
+        "mappings_by_mode": {},
     }
 
 
@@ -1425,6 +1476,7 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     merged.update(data or {})
     cred_path = str(merged.get("credentials_path", "")).strip()
     merged["credentials_path"] = cred_path
+    merged["mappings_by_mode"] = _normalize_mappings_by_mode(merged.get("mappings_by_mode"))
     merged["service_account_email"] = evidence.get_service_account_email(cred_path) if cred_path else ""
     merged["service_account_saved"] = bool(cred_path and os.path.exists(cred_path))
     merged["service_account_fixed"] = bool(
@@ -3868,6 +3920,28 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
   return next;
 }
 
+function normalizeMappingsByModeForClient(raw = {}) {
+  const next = {};
+  ['seeding', 'booking', 'scan'].forEach(mode => {
+    const items = Array.isArray(raw?.[mode]) ? raw[mode] : [];
+    if (!items.length) return;
+    next[mode] = items.map((block, index) => sanitizeMappingBlockForMode(mode, block, index + 1));
+  });
+  return next;
+}
+
+function serializeMappingsByModeForSave() {
+  const payload = {};
+  Object.entries(currentMappingBlocksByMode || {}).forEach(([mode, items]) => {
+    const key = String(mode || '').toLowerCase();
+    if (!['seeding', 'booking', 'scan'].includes(key)) return;
+    const blocks = Array.isArray(items) ? items : [];
+    if (!blocks.length) return;
+    payload[key] = blocks.map((block, index) => sanitizeMappingBlockForMode(key, block, index + 1));
+  });
+  return payload;
+}
+
 function getRunModeHelp(mode) {
   if (mode === 'booking') return t('runModeBookingHelp');
   if (mode === 'scan') return t('runModeScanHelp');
@@ -5890,6 +5964,7 @@ function renderSettingsSummary(settings) {
 async function loadDefaults() {
   const [d, s] = await Promise.all([req('/api/default-config'), req('/api/settings')]);
   currentSettingsCache = s || {};
+  currentMappingBlocksByMode = normalizeMappingsByModeForClient(currentSettingsCache.mappings_by_mode || {});
   sheet_url.value = s.sheet_url || d.sheet_url || '';
   sheet_name.value = s.sheet_name || d.sheet_name || '';
   drive_id.value = s.drive_id || d.drive_id || '';
@@ -5918,10 +5993,12 @@ async function saveSidebarSettings() {
       page_timeout_ms: Number(document.getElementById('settings_page_timeout_ms').value || 3000),
       ready_state: currentSettingsCache.ready_state || 'interactive',
       full_page_capture: document.getElementById('settings_full_page_capture').checked,
+      mappings_by_mode: serializeMappingsByModeForSave(),
     };
     const out = await req('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
     const saved = out.settings || payload;
     currentSettingsCache = saved;
+    currentMappingBlocksByMode = normalizeMappingsByModeForClient(saved.mappings_by_mode || serializeMappingsByModeForSave());
     resetServiceAccountFileInput();
     renderSettingsSummary(saved);
     if (String(sheet_url.value || '').trim()) scheduleSheetNameSuggestions(true);
@@ -6267,6 +6344,12 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
         "page_timeout_ms": max(500, int(payload.page_timeout_ms or 3000)),
         "ready_state": str(payload.ready_state or "interactive").strip() or "interactive",
         "full_page_capture": bool(payload.full_page_capture),
+        "mappings_by_mode": _normalize_mappings_by_mode(
+            {
+                mode: [item.model_dump() for item in items]
+                for mode, items in dict(payload.mappings_by_mode or {}).items()
+            }
+        ),
     }
     data = _build_settings_payload(_write_saved_settings(user_email, patch))
     return {"ok": True, "settings": data}
@@ -6378,6 +6461,8 @@ def start_job(request: Request, payload: JobStartRequest):
 
     sheet_url = evidence.normalize_sheet_input(payload.sheet_url)
     drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
+    mapping_payload = [m.model_dump() for m in payload.mappings] or [_default_mapping(payload.start_line, payload.run_mode)]
+    run_mode = _infer_job_mode(mapping_payload, fallback=run_mode)
     merged_settings = _build_settings_payload(saved_settings)
     runtime_settings = {
         "credentials_path": credentials_path,
@@ -6387,6 +6472,8 @@ def start_job(request: Request, payload: JobStartRequest):
         "ready_state": str(merged_settings.get("ready_state", "interactive") or "interactive"),
         "full_page_capture": bool(merged_settings.get("full_page_capture", False)),
     }
+    saved_mappings_by_mode = _normalize_mappings_by_mode(saved_settings.get("mappings_by_mode"))
+    saved_mappings_by_mode[run_mode] = _normalize_mappings_by_mode({run_mode: mapping_payload}).get(run_mode, [])
     _write_saved_settings(
         owner_email,
         {
@@ -6394,11 +6481,9 @@ def start_job(request: Request, payload: JobStartRequest):
             "sheet_url": sheet_url,
             "sheet_name": payload.sheet_name.strip(),
             "drive_id": drive_id,
+            "mappings_by_mode": saved_mappings_by_mode,
         }
     )
-
-    mapping_payload = [m.model_dump() for m in payload.mappings] or [_default_mapping(payload.start_line, payload.run_mode)]
-    run_mode = _infer_job_mode(mapping_payload, fallback=run_mode)
     browser_port = _get_mode_base_port(run_mode)
     profile_path = _get_mode_profile(run_mode, 0)
 

@@ -4824,6 +4824,24 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 return bool(normalize_scan_source_url(link_val))
             return str(link_val).strip().startswith("http")
 
+        def _discover_candidate_url_columns(scan_start: int = 4) -> list[str]:
+            letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            max_scan_cols = min(len(letters), int(getattr(worksheet, "col_count", 26) or 26))
+            found: list[str] = []
+            for col_idx in range(1, max_scan_cols + 1):
+                try:
+                    values = worksheet.col_values(col_idx)
+                except Exception:
+                    continue
+                hit_count = 0
+                for cell in values[max(0, scan_start - 1):]:
+                    raw = str(cell or "").strip()
+                    if raw.startswith("http"):
+                        hit_count += 1
+                if hit_count > 0:
+                    found.append(f"{letters[col_idx - 1]}({hit_count})")
+            return found
+
         target_total = 0
         for block in prepared_blocks:
             block_mode_key = str(block.get("mode", "seeding")).strip().lower()
@@ -4833,7 +4851,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 if _is_target_row(block["start_line"], r, str(lnk), mode_key=block_mode_key):
                     target_total += 1
         if target_total == 0:
-            empty_msg = "Không có dòng hợp lệ để xử lý. Kiểm tra Link URL, Start Line hoặc chế độ retry."
+            configured_url_cols = ", ".join(
+                sorted({str(block.get("col_url", "")).strip().upper() for block in prepared_blocks if str(block.get("col_url", "")).strip()})
+            ) or "-"
+            scan_start = min([int(block.get("start_line", 4) or 4) for block in prepared_blocks] or [4])
+            detected_url_cols = _discover_candidate_url_columns(scan_start=scan_start)
+            empty_msg = (
+                f"Không có dòng hợp lệ để xử lý. Link URL hiện đang trỏ tới cột: {configured_url_cols}."
+            )
+            if detected_url_cols:
+                empty_msg += f" Sheet này đang có URL ở: {', '.join(detected_url_cols[:8])}."
+            empty_msg += " Kiểm tra lại Link URL, Start Line hoặc chế độ retry."
             write_log("[WARN] target_total=0: no eligible links found to process.")
             ui_call(ui_set_detail, empty_msg)
             ui_call(ui_set_status, "KHÔNG CÓ DỮ LIỆU", "#b45309")
