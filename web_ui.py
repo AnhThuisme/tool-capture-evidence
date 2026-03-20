@@ -1877,13 +1877,28 @@ def _run_job(job_id: str):
                     total = int(summary.get("total") or 0)
                 except Exception:
                     total = 0
+                success_count = 0
+                failed_count = 0
+                try:
+                    success_count = int(summary.get("success") or 0)
+                except Exception:
+                    success_count = 0
+                try:
+                    failed_count = int(summary.get("failed") or 0)
+                except Exception:
+                    failed_count = 0
+                has_runtime_activity = bool(job.get("logs")) or done > 0 or success_count > 0 or failed_count > 0
                 if current_status not in {"stopped", "failed"}:
-                    if total <= 0 or done >= total:
+                    if total > 0 and done >= total:
                         job["status"] = "completed"
                     else:
                         job["status"] = "stopped"
                         if not str(job.get("detail") or "").strip():
-                            job["detail"] = "Tiến trình kết thúc trước khi xử lý hết dữ liệu."
+                            job["detail"] = (
+                                "Chưa có tác vụ nào được xử lý."
+                                if not has_runtime_activity
+                                else "Tiến trình kết thúc trước khi xử lý hết dữ liệu."
+                            )
                 if summary:
                     summary["eta"] = "---"
                     job["summary"] = summary
@@ -4943,6 +4958,10 @@ function renderActivities(logs) {
 function renderRunMonitor(snapshot, logs) {
   const st = snapshot || {};
   const s = st.summary || { done: 0, total: 0, success: 0, failed: 0, eta: '---' };
+  let displayStatus = String(st.status || 'idle').toLowerCase();
+  if (displayStatus === 'completed' && Number(s.total || 0) <= 0 && !(Array.isArray(logs) && logs.length)) {
+    displayStatus = 'stopped';
+  }
   const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
   const errorRows = st.error_rows || {};
   const errorKeys = Object.keys(errorRows);
@@ -4962,7 +4981,7 @@ function renderRunMonitor(snapshot, logs) {
   const failedCount = Math.max(Number(s.failed || 0), failedLogCount, errorKeys.length);
   const derivedIssueCount = issueRows.size || failedCount + unavailableCount;
   const hasIssueState = derivedIssueCount > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
-  const statusLabel = prettyWord(st.status || 'idle');
+  const statusLabel = prettyWord(displayStatus || 'idle');
   const latestLog = (logs || []).length ? logs[logs.length - 1] : null;
   const detailText = String(st.detail || latestLog?.message || '').trim();
   const etaText = s.eta && s.eta !== '---' ? `${t('eta')}: ${s.eta}` : '';
@@ -4976,19 +4995,19 @@ function renderRunMonitor(snapshot, logs) {
   statusNode.style.background = 'var(--blue-soft)';
   statusNode.style.color = 'var(--blue)';
   statusNode.style.borderColor = 'rgba(91,147,211,.25)';
-  if (st.status === 'completed') {
+  if (displayStatus === 'completed') {
     statusNode.style.background = 'rgba(52,195,143,.16)';
     statusNode.style.color = 'var(--green)';
     statusNode.style.borderColor = 'rgba(52,195,143,.35)';
-  } else if (st.status === 'paused') {
+  } else if (displayStatus === 'paused') {
     statusNode.style.background = 'rgba(245,158,11,.16)';
     statusNode.style.color = '#b45309';
     statusNode.style.borderColor = 'rgba(245,158,11,.35)';
-  } else if (st.status === 'failed') {
+  } else if (displayStatus === 'failed') {
     statusNode.style.background = 'rgba(240,138,160,.16)';
     statusNode.style.color = 'var(--red)';
     statusNode.style.borderColor = 'rgba(240,138,160,.35)';
-  } else if (st.status === 'stopped') {
+  } else if (displayStatus === 'stopped') {
     statusNode.style.background = 'rgba(243,197,142,.16)';
     statusNode.style.color = '#b45309';
     statusNode.style.borderColor = 'rgba(243,197,142,.35)';
@@ -5009,7 +5028,7 @@ function renderRunMonitor(snapshot, logs) {
     : t('monitorSuccessFailedFmt')(s.success || 0, 0, unavailableCount);
 
   const rows = (logs || []).slice().reverse();
-  const replayLocked = ['running', 'paused'].includes(String(st.status || '').toLowerCase());
+  const replayLocked = ['running', 'paused'].includes(displayStatus);
   document.getElementById('runMonitorRows').innerHTML = rows.length
     ? rows.map(x => {
         const postName = getLogPostLabel(x);
@@ -5570,11 +5589,21 @@ function syncAuthUI() {
     roleBadge.textContent = getRoleLabel();
     roleBadge.className = `auth-role auth-role-${authState.role || 'user'}`;
   }
+  const authEmailNode = document.querySelector('.auth-email');
+  if (authEmailNode) {
+    const emailText = String(authState.email || '').trim() || '-';
+    authEmailNode.textContent = emailText;
+    authEmailNode.title = emailText === '-' ? '' : emailText;
+  }
   renderOverviewGreeting();
   const accessButton = document.getElementById('access_nav_button');
   if (accessButton) accessButton.style.display = isAdminUser() ? 'flex' : 'none';
   const settingsButton = document.getElementById('settings_nav_button');
   if (settingsButton) settingsButton.style.display = 'flex';
+  const accessView = document.getElementById('view-access');
+  if (accessView) accessView.style.display = isAdminUser() ? '' : 'none';
+  const settingsView = document.getElementById('view-settings');
+  if (settingsView) settingsView.style.display = '';
   const stateNode = document.querySelector('#view-settings .state');
   if (stateNode) stateNode.textContent = t('settingsState');
   const accessStateNode = document.querySelector('#view-access .state');
