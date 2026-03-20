@@ -3113,7 +3113,9 @@ function isLocalBrowserOrigin() {
 
 function isLocalAgentRuntimePath(url) {
   const path = String(url || '').trim();
-  if (!path || /^https?:\\/\\//i.test(path)) return false;
+  if (!path) return false;
+  const lowered = path.toLowerCase();
+  if (lowered.startsWith('http://') || lowered.startsWith('https://')) return false;
   return LOCAL_AGENT_RUNTIME_PREFIXES.some(prefix => path === prefix || path.startsWith(prefix));
 }
 
@@ -3172,7 +3174,8 @@ async function agentReq(url, opts = {}) {
 }
 
 window.toolEvidenceSetLocalAgentOrigin = function(origin) {
-  const raw = String(origin || '').trim().replace(/\\/+$/, '');
+  let raw = String(origin || '').trim();
+  while (raw.endsWith('/')) raw = raw.slice(0, -1);
   if (!raw) {
     localStorage.removeItem('toolEvidence.localAgentOrigin');
     localAgentState.origin = 'http://127.0.0.1:8765';

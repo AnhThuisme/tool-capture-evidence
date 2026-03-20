@@ -1069,13 +1069,106 @@ let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 
 let jobStatusMemory = {};
 let notifiedCompletedJobKeys = new Set();
 const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9423, scan: 9623 };
-const DEFAULT_AUTO_LAUNCH_CHROME = false;
+const DEFAULT_AUTO_LAUNCH_CHROME = true;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
 let currentTheme = localStorage.getItem('ui_theme') || 'light';
 const authState = {
   email: '',
   role: 'user',
   isAdmin: false,
+};
+const localAgentState = {
+  origin: localStorage.getItem('toolEvidence.localAgentOrigin') || 'http://127.0.0.1:8765',
+  enabled: false,
+  checked: false,
+  lastError: '',
+};
+const LOCAL_AGENT_RUNTIME_PREFIXES = [
+  '/api/settings',
+  '/api/sheets/names',
+  '/api/activity',
+  '/api/chrome/',
+  '/api/jobs',
+];
+
+function isLocalBrowserOrigin() {
+  const host = String(window.location.hostname || '').trim().toLowerCase();
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
+function isLocalAgentRuntimePath(url) {
+  const path = String(url || '').trim();
+  if (!path) return false;
+  const lowered = path.toLowerCase();
+  if (lowered.startsWith('http://') || lowered.startsWith('https://')) return false;
+  return LOCAL_AGENT_RUNTIME_PREFIXES.some(prefix => path === prefix || path.startsWith(prefix));
+}
+
+function shouldUseLocalAgent(url) {
+  return !isLocalBrowserOrigin() && !!localAgentState.enabled && isLocalAgentRuntimePath(url);
+}
+
+function runtimeHref(url) {
+  return shouldUseLocalAgent(url) ? `${localAgentState.origin}${url}` : url;
+}
+
+async function detectLocalAgent() {
+  if (isLocalBrowserOrigin()) {
+    localAgentState.enabled = false;
+    localAgentState.checked = true;
+    localAgentState.lastError = '';
+    return false;
+  }
+  try {
+    const res = await fetch(`${localAgentState.origin}/health`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    localAgentState.enabled = true;
+    localAgentState.checked = true;
+    localAgentState.lastError = '';
+    return true;
+  } catch (e) {
+    localAgentState.enabled = false;
+    localAgentState.checked = true;
+    localAgentState.lastError = String(e?.message || e || 'Local agent unavailable');
+    return false;
+  }
+}
+
+async function agentReq(url, opts = {}) {
+  if (!authState.email) throw new Error('Thiếu email đăng nhập để gọi local agent');
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Tool-Evidence-User': authState.email,
+    ...(opts.headers || {}),
+  };
+  let res = null;
+  try {
+    res = await fetch(`${localAgentState.origin}${url}`, { ...opts, headers });
+  } catch (e) {
+    localAgentState.enabled = false;
+    localAgentState.lastError = String(e?.message || e || 'Local agent unavailable');
+    throw new Error('Không kết nối được local agent trên máy này');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+  return data;
+}
+
+window.toolEvidenceSetLocalAgentOrigin = function(origin) {
+  let raw = String(origin || '').trim();
+  while (raw.endsWith('/')) raw = raw.slice(0, -1);
+  if (!raw) {
+    localStorage.removeItem('toolEvidence.localAgentOrigin');
+    localAgentState.origin = 'http://127.0.0.1:8765';
+    return localAgentState.origin;
+  }
+  localStorage.setItem('toolEvidence.localAgentOrigin', raw);
+  localAgentState.origin = raw;
+  return raw;
 };
 
 const I18N = {
@@ -2319,7 +2412,10 @@ function toggleLanguage() {
 }
 
 async function req(url, opts = {}) {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const useLocalAgent = shouldUseLocalAgent(url);
+  if (useLocalAgent) return agentReq(url, opts);
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const res = await fetch(url, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
     window.location.href = '/login';
@@ -2419,7 +2515,7 @@ function getTerminalLogStats(job) {
     return {
       success: Number(summary.success || 0),
       failed: Number(summary.failed || 0),
-      unavailable: 0,
+      unavailable: Number(summary.unavailable || 0),
     };
   }
   let success = 0;
@@ -2446,6 +2542,7 @@ function getTerminalLogStats(job) {
     const summary = getJobSummary(job);
     success = Number(summary.success || 0);
     failed = Number(summary.failed || 0);
+    unavailable = Number(summary.unavailable || 0);
   }
   return { success, failed, unavailable };
 }
@@ -2475,7 +2572,7 @@ function toDateKeyFromDate(date) {
 }
 
 function getJobSummary(job) {
-  return job?.summary || { done: 0, total: 0, success: 0, failed: 0, eta: '---' };
+  return job?.summary || { done: 0, total: 0, success: 0, failed: 0, unavailable: 0, eta: '---' };
 }
 
 function getJobSheetLabel(job) {
@@ -2676,7 +2773,7 @@ function processJobLifecycleNotifications(jobs) {
     const done = Number(summary.done || 0);
     const total = Number(summary.total || 0);
     const completionKey = `${jobId}:${String(job?.finished_at || '')}:${done}/${total}`;
-    const isReallyCompleted = status === 'completed' && (total <= 0 || done >= total);
+    const isReallyCompleted = status === 'completed' && total > 0 && done >= total;
     if (isReallyCompleted && previousStatus && previousStatus !== 'completed' && !notifiedCompletedJobKeys.has(completionKey)) {
       notifiedCompletedJobKeys.add(completionKey);
       showToast(t('jobFinishedToastFmt')(getJobSheetLabel(job), done, total), 'success', t('jobFinishedTitle'));
@@ -2718,6 +2815,13 @@ function isFailedLog(log) {
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
   return raw.includes('fail') || raw.includes('error');
+}
+
+function isSuccessLog(log) {
+  const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
+  if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
+  if (raw.includes('fail') || raw.includes('error')) return false;
+  return raw.includes('ok') || raw.includes('success') || raw.includes('done');
 }
 
 function canReplayLog(log) {
@@ -2966,11 +3070,16 @@ function renderActivities(logs) {
 function renderRunMonitor(snapshot, logs) {
   const st = snapshot || {};
   const s = st.summary || { done: 0, total: 0, success: 0, failed: 0, eta: '---' };
+  let displayStatus = String(st.status || 'idle').toLowerCase();
+  if (displayStatus === 'completed' && Number(s.total || 0) <= 0 && !(Array.isArray(logs) && logs.length)) {
+    displayStatus = 'stopped';
+  }
   const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
   const errorRows = st.error_rows || {};
   const errorKeys = Object.keys(errorRows);
   const logItems = Array.isArray(logs) ? logs : [];
-  const unavailableCount = logItems.filter(isUnavailableLog).length;
+  const successCount = logItems.length ? logItems.filter(isSuccessLog).length : Number(s.success || 0);
+  const unavailableCount = Math.max(Number(s.unavailable || 0), logItems.filter(isUnavailableLog).length);
   const failedLogCount = logItems.filter(isFailedLog).length;
   const issueRows = new Set();
   errorKeys.forEach(key => {
@@ -2985,7 +3094,7 @@ function renderRunMonitor(snapshot, logs) {
   const failedCount = Math.max(Number(s.failed || 0), failedLogCount, errorKeys.length);
   const derivedIssueCount = issueRows.size || failedCount + unavailableCount;
   const hasIssueState = derivedIssueCount > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
-  const statusLabel = prettyWord(st.status || 'idle');
+  const statusLabel = prettyWord(displayStatus || 'idle');
   const latestLog = (logs || []).length ? logs[logs.length - 1] : null;
   const detailText = String(st.detail || latestLog?.message || '').trim();
   const etaText = s.eta && s.eta !== '---' ? `${t('eta')}: ${s.eta}` : '';
@@ -2999,19 +3108,19 @@ function renderRunMonitor(snapshot, logs) {
   statusNode.style.background = 'var(--blue-soft)';
   statusNode.style.color = 'var(--blue)';
   statusNode.style.borderColor = 'rgba(91,147,211,.25)';
-  if (st.status === 'completed') {
+  if (displayStatus === 'completed') {
     statusNode.style.background = 'rgba(52,195,143,.16)';
     statusNode.style.color = 'var(--green)';
     statusNode.style.borderColor = 'rgba(52,195,143,.35)';
-  } else if (st.status === 'paused') {
+  } else if (displayStatus === 'paused') {
     statusNode.style.background = 'rgba(245,158,11,.16)';
     statusNode.style.color = '#b45309';
     statusNode.style.borderColor = 'rgba(245,158,11,.35)';
-  } else if (st.status === 'failed') {
+  } else if (displayStatus === 'failed') {
     statusNode.style.background = 'rgba(240,138,160,.16)';
     statusNode.style.color = 'var(--red)';
     statusNode.style.borderColor = 'rgba(240,138,160,.35)';
-  } else if (st.status === 'stopped') {
+  } else if (displayStatus === 'stopped') {
     statusNode.style.background = 'rgba(243,197,142,.16)';
     statusNode.style.color = '#b45309';
     statusNode.style.borderColor = 'rgba(243,197,142,.35)';
@@ -3027,12 +3136,12 @@ function renderRunMonitor(snapshot, logs) {
   document.getElementById('runMonitorErrorMain').textContent = hasIssueState ? `${Math.max(derivedIssueCount, 1)}` : t('monitorNoErrors');
   document.getElementById('runMonitorErrorMeta').textContent = hasIssueState
     ? (issueRows.size
-        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount)}`
-        : t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount))
-    : t('monitorSuccessFailedFmt')(s.success || 0, 0, unavailableCount);
+        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount)}`
+        : t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount))
+    : t('monitorSuccessFailedFmt')(successCount, 0, unavailableCount);
 
   const rows = (logs || []).slice().reverse();
-  const replayLocked = ['running', 'paused'].includes(String(st.status || '').toLowerCase());
+  const replayLocked = ['running', 'paused'].includes(displayStatus);
   document.getElementById('runMonitorRows').innerHTML = rows.length
     ? rows.map(x => {
         const postName = getLogPostLabel(x);
@@ -3104,7 +3213,11 @@ function exportCurrentLog() {
     return;
   }
   const link = document.createElement('a');
-  link.href = `/api/jobs/${encodeURIComponent(jobId)}/export-log?ts=${Date.now()}`;
+  const exportQuery = new URLSearchParams({ ts: String(Date.now()) });
+  if (shouldUseLocalAgent(`/api/jobs/${encodeURIComponent(jobId)}/export-log`) && authState.email) {
+    exportQuery.set('user_email', authState.email);
+  }
+  link.href = runtimeHref(`/api/jobs/${encodeURIComponent(jobId)}/export-log?${exportQuery.toString()}`);
   link.target = '_blank';
   link.rel = 'noopener';
   document.body.appendChild(link);
@@ -3762,9 +3875,9 @@ function renderSettingsSummary(settings) {
 async function loadDefaults() {
   const [d, s] = await Promise.all([req('/api/default-config'), req('/api/settings')]);
   currentSettingsCache = s || {};
-  sheet_url.value = d.sheet_url || s.sheet_url || '';
-  sheet_name.value = d.sheet_name || s.sheet_name || '';
-  drive_id.value = d.drive_id || s.drive_id || '';
+  sheet_url.value = s.sheet_url || d.sheet_url || '';
+  sheet_name.value = s.sheet_name || d.sheet_name || '';
+  drive_id.value = s.drive_id || d.drive_id || '';
   const overwriteNode = document.getElementById('force_run_all');
   if (overwriteNode) overwriteNode.checked = true;
   document.getElementById('settings_viewport_width').value = s.viewport_width || 1920;
@@ -4021,6 +4134,7 @@ function ensureTimers() {
 
 async function init() {
   await loadAuthState();
+  await detectLocalAgent();
   syncAuthUI();
   bindSheetNameAutocomplete();
   await loadDefaults();
