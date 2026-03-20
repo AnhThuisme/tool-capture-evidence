@@ -47,6 +47,7 @@ def main() -> int:
         [
             f"/api/*  {backend_origin}/api/:splat  200",
             f"/health  {backend_origin}/health  200",
+            f"/assets/*  {backend_origin}/assets/:splat  200",
             "/login  /login.html  200",
             "/  /index.html  200",
             "/*  /index.html  200",

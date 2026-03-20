@@ -11,9 +11,8 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear
 .wrap{width:min(460px,calc(100vw - 32px))}
 .card{background:rgba(18,27,43,.96);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
-.dot{position:relative;width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#102040 0%,#24488f 54%,#6c98ff 100%);box-shadow:0 10px 22px rgba(36,72,143,.28);border:1px solid rgba(191,219,254,.34);overflow:hidden;flex:0 0 auto}
-.dot::before{content:"";position:absolute;left:6px;right:10px;top:7px;bottom:11px;border-radius:8px;border:1.5px solid rgba(255,255,255,.82);transform:skewY(-8deg)}
-.dot::after{content:"";position:absolute;top:5px;right:5px;width:11px;height:11px;border-radius:4px;background:linear-gradient(145deg,#f8fbff,#a9c5ff);box-shadow:0 0 0 3px rgba(147,197,253,.12)}
+.dot{position:relative;width:54px;height:54px;border-radius:16px;background:#ffffff url('/assets/brand-mascot') center/88% no-repeat;box-shadow:0 12px 24px rgba(36,72,143,.24);border:1px solid rgba(191,219,254,.34);overflow:hidden;flex:0 0 auto}
+.dot::before,.dot::after{display:none}
 .brand strong{display:block;font-size:18px}
 .brand span{display:block;font-size:12px;color:var(--muted);margin-top:3px}
 h1{margin:0 0 10px;font-size:28px;letter-spacing:-.02em}
@@ -45,13 +44,13 @@ button:disabled{opacity:.55;cursor:not-allowed}
         </div>
       </div>
       <h1>Đăng nhập bằng mail</h1>
-      <p>Nhập email của bạn. Hệ thống sẽ gửi mã xác nhận 6 số qua Gmail trước khi vào dashboard.</p>
+      <p>Nhập email của bạn. Hệ thống sẽ gửi mã xác nhận 6 số qua email trước khi vào dashboard.</p>
       <div id="stepEmail" class="step active">
         <div class="row">
           <div>
             <label for="login_email">Email</label>
             <input id="login_email" type="email" placeholder="you@example.com" autocomplete="email" />
-            <div class="hint">Luồng mặc định dùng Gmail App Password. Chỉ mail đã được thêm trong danh sách người dùng mới có quyền nhập OTP.</div>
+            <div class="hint">Chỉ mail đã được thêm trong danh sách người dùng mới có quyền nhập OTP.</div>
           </div>
         </div>
         <div class="actions">

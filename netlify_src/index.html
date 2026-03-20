@@ -12,9 +12,8 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .shell{width:100%;min-height:100vh;padding:10px}
 .board{width:100%;min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:236px 1fr;overflow:hidden}
 .sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
-.dot{position:relative;width:42px;height:42px;border-radius:13px;background:linear-gradient(145deg,#102040 0%,#2851a3 56%,#7ea7ff 100%);box-shadow:0 12px 28px rgba(59,130,246,.22);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
-.dot::before{content:"";position:absolute;left:8px;right:12px;top:8px;bottom:13px;border-radius:10px;border:1.6px solid rgba(255,255,255,.86);transform:skewY(-8deg)}
-.dot::after{content:"";position:absolute;top:6px;right:6px;width:13px;height:13px;border-radius:5px;background:linear-gradient(145deg,#f8fbff,#b4ccff);box-shadow:0 0 0 4px rgba(147,197,253,.12)}
+.dot{position:relative;width:56px;height:56px;border-radius:18px;background:#ffffff url('/assets/brand-mascot') center/88% no-repeat;box-shadow:0 14px 30px rgba(59,130,246,.2);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
+.dot::before,.dot::after{display:none}
 .brand-row{position:relative;display:flex;align-items:center;gap:14px;min-height:94px;padding:16px 16px;border:1px solid rgba(123,168,255,.14);border-radius:20px;background:linear-gradient(135deg,rgba(76,110,196,.18),rgba(255,255,255,.02) 48%,rgba(37,99,235,.08));overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
 .brand-row::after{content:"";position:absolute;right:-28px;top:-24px;width:108px;height:108px;border-radius:50%;background:rgba(96,139,255,.12);filter:blur(6px)}
 .brand-copy{position:relative;z-index:1;display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -44,21 +43,6 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-textarea::placeholder{color:var(--muted)}
 .access-kicker{font-size:11px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:#7b8aa5;margin-bottom:8px}
 .access-headline .state{display:inline-flex}
-.access-stats{margin-top:8px}
-.access-stat{position:relative;overflow:hidden;min-height:138px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft)}
-.access-stat::after{content:"";position:absolute;inset:auto -28px -34px auto;width:120px;height:120px;border-radius:999px;background:rgba(91,147,211,.08);filter:blur(2px)}
-.access-stat-main{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;min-height:108px}
-.access-stat-left{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-width:0}
-.access-stat-right{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;text-align:right;min-width:0}
-.access-stat .k{font-size:12px;font-weight:700;letter-spacing:.02em}
-.access-stat .big-number{font-size:42px;line-height:1}
-.access-stat .s{display:block !important;margin-top:10px;font-size:12px;color:var(--muted);max-width:220px}
-.access-stat-right .s{margin-left:auto}
-.access-stat-icon{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;margin-bottom:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:#dbe6f5}
-.access-stat-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
-.access-stat.access-stat-allowed::after{background:rgba(91,147,211,.12)}
-.access-stat.access-stat-admin::after{background:rgba(52,195,143,.12)}
-.access-stat.access-stat-role::after{background:rgba(245,158,11,.12)}
 .access-layout{display:grid;grid-template-columns:1.45fr .95fr;gap:12px;margin-top:12px}
 .access-editor,.access-summary-card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.01)),var(--panel)}
 .access-section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px}
@@ -77,6 +61,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-role-pill{display:inline-flex;align-items:center;min-height:34px;padding:0 14px;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border:1px solid transparent}
 .access-role-pill.admin{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.26);color:var(--green)}
 .access-role-pill.user{background:var(--blue-soft);border-color:rgba(91,147,211,.26);color:var(--blue)}
+.access-role-pill.otp{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#ffcd73}
 .access-chip-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .access-chip{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);font-size:12px;font-weight:600;color:var(--text)}
 .access-chip.empty{background:transparent;color:var(--muted);border-style:dashed}
@@ -102,7 +87,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-entry-editor.open>.access-entry-meta{grid-area:meta;margin-top:0;align-self:end}
 .access-entry-editor.open>.access-entry-foot{grid-area:actions;margin-top:0;align-self:end;justify-content:flex-end;flex-direction:column;align-items:flex-end}
 .access-entry-editor.open>.access-entry-foot .settings-note{text-align:right}
-.access-entry-grid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(160px,210px);gap:12px}
+.access-entry-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(150px,200px) minmax(150px,200px);gap:12px}
 .access-entry-grid .field label{display:block;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8ea0bf;margin-bottom:8px}
 .access-entry-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
 .access-entry-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px}
@@ -113,12 +98,11 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-search input{width:100%;border:0;outline:0;background:transparent;color:var(--text);font-size:13px}
 .access-search input::placeholder{color:var(--muted)}
 .access-add-btn{min-height:42px;border-radius:14px;padding:0 16px;font-weight:700;white-space:nowrap}
-.access-filter-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-.access-filter-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.access-filter-row{display:flex;justify-content:flex-start;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.access-filter-item{display:flex;flex-direction:column;gap:6px;min-width:140px}
 .access-filter-label{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#7b8aa5}
-.access-segmented{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.access-segmented button{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel-soft);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;transition:all .16s ease}
-.access-segmented button.active{background:var(--blue-soft);border-color:rgba(91,147,211,.28);color:var(--blue)}
+.access-filter-select{width:100%;min-height:38px;padding:0 12px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015)),var(--panel-soft);color:var(--text);font-size:12px;font-weight:700;outline:0}
+.access-filter-select:focus{border-color:rgba(91,147,211,.35);box-shadow:0 0 0 3px rgba(91,147,211,.12)}
 .access-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.008)),var(--panel-soft)}
 .access-table{width:100%;border-collapse:separate;border-spacing:0;min-width:860px}
 .access-table thead th{position:sticky;top:0;background:rgba(11,18,32,.96);backdrop-filter:blur(6px);z-index:2;padding:14px 16px;border-bottom:1px solid var(--line);text-align:left;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#7b8aa5}
@@ -140,6 +124,10 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-table-pill.allowed{background:rgba(91,147,211,.12);border-color:rgba(91,147,211,.22);color:#8bbdff}
 .access-table-pill.admin{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.26);color:#7df0ba}
 .access-table-pill.open{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#ffcd73}
+.access-type-pill{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid transparent;font-size:12px;font-weight:700;white-space:nowrap}
+.access-type-pill.internal{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.22);color:#7df0ba}
+.access-type-pill.external{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#ffcd73}
+.access-you-tag{display:inline-flex;align-items:center;margin-left:8px;padding:2px 8px;border-radius:999px;border:1px solid rgba(123,168,255,.24);background:rgba(123,168,255,.1);color:#9cc3ff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;vertical-align:middle}
 .access-status{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text)}
 .access-status::before{content:"";width:8px;height:8px;border-radius:50%;background:#93c5fd;box-shadow:0 0 0 4px rgba(147,197,253,.08)}
 .access-status.admin::before{background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.08)}
@@ -194,6 +182,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px}
 .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
 .stat{padding:14px;border-right:1px solid var(--line)}.stat:last-child{border-right:0}
+.cards-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .k{font-size:12px;color:var(--muted)}.v{font-size:34px;font-weight:700;margin-top:2px}.s{font-size:11px;color:#98a2b3}
 .chart{padding:16px;border-top:1px solid var(--line);overflow:hidden}
 .bars{height:172px;display:flex;gap:8px;align-items:flex-end}
@@ -224,6 +213,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 @keyframes summary-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 [data-theme="light"] .summary-action{color:#17315c;background:linear-gradient(180deg,rgba(91,147,211,.08),rgba(91,147,211,.03))}
 .mini{padding:12px;border-top:1px solid var(--line)}
+.mini-card{padding:12px 14px;border-top:0}
 .progress{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden}.progress > span{display:block;height:100%;width:0%;background:#2f80ed;transition:width .35s ease}
 .jobs-wrap{max-height:248px;overflow:auto;margin-top:8px}
 .jobs{width:100%;border-collapse:collapse;margin-top:0}
@@ -241,8 +231,8 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .runs-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
 .runs-head .headline{flex:1;justify-content:flex-start;padding:14px 0 0}
 .run-config-head{font-size:18px;font-weight:700}
-.run-layout{display:grid;grid-template-columns:1.35fr .95fr;gap:12px}
-.run-form{padding:14px}
+.run-layout{display:grid;grid-template-columns:minmax(420px,.9fr) minmax(760px,1.1fr);gap:12px;align-items:start}
+.run-form{padding:12px 14px}
 .run-grid{display:grid;grid-template-columns:1fr;gap:10px}
 .run-share-note{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center;gap:12px}
 .run-share-top{margin:0 0 0 auto;max-width:720px;min-width:520px}
@@ -250,13 +240,13 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .run-share-email{margin-top:0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);font-size:13px;color:var(--input-fg);word-break:break-all}
 .run-form .run-actions{justify-content:space-between;align-items:center}
 .mapping-panel{border:1px solid var(--line);border-radius:16px;background:var(--panel-soft);overflow:hidden}
-.mapping-panel-body{padding:14px 16px}
+.mapping-panel-body{padding:16px 18px}
 .mapping-blocks{display:flex;flex-direction:column;gap:12px}
 .mapping-block{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:12px}
 .mapping-block-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
 .mapping-block-title{font-size:13px;font-weight:700}
 .mapping-block-grid{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center}
-.mapping-seeding-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(300px,340px);gap:12px;overflow-x:auto;align-items:start;padding-bottom:4px;scroll-behavior:smooth}
+.mapping-seeding-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(340px,390px);gap:14px;overflow-x:auto;align-items:start;padding-bottom:4px;scroll-behavior:smooth}
 .mapping-seeding-row .mapping-block{height:100%}
 .mapping-block-new{animation:mappingSlideIn .28s ease}
 @keyframes mappingSlideIn{
@@ -275,11 +265,11 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .mapping-icon-btn{min-width:34px;height:34px;padding:0}
 .mapping-chrome-btn{justify-self:start}
 .mapping-add-row{display:flex;justify-content:flex-start;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+.mapping-add-row.booking{justify-content:space-between;align-items:flex-start}
 .mapping-check{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text)}
 .mapping-check input{width:16px;height:16px}
-.mapping-toggle-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;min-width:280px;max-width:360px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer;flex:1 1 320px}
+.mapping-toggle-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;min-width:280px;max-width:360px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer;flex:0 0 auto}
 .mapping-toggle-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
-.mapping-toggle-kicker{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#f59e0b}
 .mapping-toggle-title{font-size:13px;font-weight:700;color:var(--text)}
 .mapping-toggle-help{font-size:12px;color:var(--muted);line-height:1.45}
 .mapping-toggle-switch{position:relative;display:inline-flex;align-items:center;justify-content:center;width:52px;height:30px;flex:0 0 auto}
@@ -368,16 +358,18 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 [data-theme="dark"] .result-pill.running,[data-theme="dark"] .result-pill.info{background:#1a2940;color:#b7d2f3;border-color:#355072}
 [data-theme="dark"] .result-pill.warning{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
 .muted{font-size:12px;color:var(--muted)}
-.overview-note{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.overview-stats-grid{display:flex;flex-direction:column;gap:12px}
+.overview-stat-card{min-height:118px;display:flex;flex-direction:column;justify-content:space-between}
+.overview-note-card{padding:14px 16px}
+.overview-note{display:flex;justify-content:space-between;align-items:center;gap:16px;font-size:12px;color:var(--muted)}
+.overview-note span{flex:1;min-width:0}
 .overview-cta{display:inline-flex;align-items:center;gap:10px;min-height:42px;padding:0 16px;border:1px solid rgba(123,168,255,.24);border-radius:14px;background:linear-gradient(135deg,#4f8df7,#2f6fe4);color:#fff;font-size:12px;font-weight:800;letter-spacing:.02em;cursor:pointer;box-shadow:0 10px 24px rgba(47,111,228,.24);transition:transform .15s ease,box-shadow .15s ease,filter .15s ease}
 .overview-cta:hover{transform:translateY(-1px);box-shadow:0 14px 28px rgba(47,111,228,.28);filter:saturate(1.05)}
 .overview-cta svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 [data-theme="dark"] .overview-cta{background:linear-gradient(135deg,#548ff8,#2563eb);border-color:rgba(123,168,255,.22)}
 .overview-top-card{margin-bottom:12px;padding:18px}
 .overview-top-card .chart{padding:0;border-top:0}
-.overview-top-grid{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(280px,.78fr);gap:16px;align-items:stretch}
-.overview-stats-card .stats{grid-template-columns:repeat(4,minmax(0,1fr))}
-.overview-stats-card .stat{min-height:118px}
+.overview-top-grid{display:grid;grid-template-columns:minmax(0,1.82fr) minmax(260px,.7fr);gap:16px;align-items:stretch}
 .overview-history-chart{display:flex;flex-direction:column;gap:12px}
 .overview-history-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .overview-history-title{font-size:18px;font-weight:700;color:var(--text)}
@@ -421,6 +413,8 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .overview-greeting-email{background:rgba(91,147,211,.12)}
 .overview-side-panels{display:flex;flex-direction:column;gap:12px;margin-top:12px}
 .overview-side-card{padding:14px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft)}
+.overview-top-side{display:flex;align-items:stretch}
+.overview-top-side .overview-side-card{width:100%;padding:16px;min-height:0}
 .overview-side-title{font-size:13px;font-weight:700;letter-spacing:.03em;color:var(--text)}
 .overview-side-sub{margin-top:4px;font-size:12px;color:var(--muted)}
 .overview-mode-list{display:flex;flex-direction:column;gap:12px;margin-top:14px}
@@ -516,8 +510,21 @@ linear-gradient(to right, transparent, transparent)}
 .mini-bar-fill.active{background:#2f80ed}
 .mini-bar-label{font-size:11px;color:var(--muted)}
 .mini-bar-value{font-size:11px;color:#344054}
+.toast-host{position:fixed;top:18px;right:18px;display:flex;flex-direction:column;gap:10px;z-index:9999;pointer-events:none;max-width:min(360px,calc(100vw - 32px))}
+.toast{pointer-events:auto;display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(18,27,43,.98),rgba(15,22,36,.98));box-shadow:0 18px 48px rgba(0,0,0,.34);color:var(--text);transform:translateY(-8px);opacity:0;animation:toast-in .18s ease forwards}
+.toast.success{border-color:rgba(52,195,143,.34);box-shadow:0 18px 48px rgba(0,0,0,.34),0 0 0 1px rgba(52,195,143,.08)}
+.toast.failed{border-color:rgba(239,68,68,.3)}
+.toast-icon{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;background:rgba(91,147,211,.12);border:1px solid rgba(91,147,211,.2);color:#9cc3ff;font-size:16px;font-weight:900}
+.toast.success .toast-icon{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.26);color:#7df0ba}
+.toast.failed .toast-icon{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.26);color:#fda4af}
+.toast-copy{min-width:0;flex:1}
+.toast-title{font-size:13px;font-weight:800;line-height:1.2}
+.toast-message{margin-top:4px;font-size:12px;line-height:1.45;color:var(--muted)}
+.toast-close{flex:0 0 auto;width:28px;height:28px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
+.toast-close:hover{color:var(--text);border-color:rgba(91,147,211,.3)}
+@keyframes toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
-@media (max-width:980px){.run-layout,.run-grid,.cards-3,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.access-stat-main{grid-template-columns:1fr}.access-stat-right{align-items:flex-start;text-align:left}.access-stat-right .s{margin-left:0}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}}
+@media (max-width:980px){.run-layout,.run-grid,.cards-3,.cards-4,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}.overview-note{flex-direction:column;align-items:stretch}.overview-cta{justify-content:center}}
 </style>
 </head>
 <body>
@@ -552,7 +559,7 @@ linear-gradient(to right, transparent, transparent)}
           <div class="actions">
             <div class="auth-box">
               <span id="authRoleBadge" class="auth-role auth-role-admin">Admin</span>
-              <span class="auth-email" title="thu.phannguyenanh@fanscom.vn">thu.phannguyenanh@fanscom.vn</span>
+              <span class="auth-email" title="unknown@example.com">unknown@example.com</span>
               <button class="auth-logout" type="button" onclick="logoutAuth()"><span id="logoutLabel">Đăng xuất</span></button>
             </div>
             <div class="lang-switch">
@@ -585,7 +592,7 @@ linear-gradient(to right, transparent, transparent)}
         <section id="view-overview" class="view active">
           <div class="headline">
             <div class="h1">Overview</div>
-            <div id="envChip" class="state">State: idle</div>
+            <div id="envChip" class="state">Trạng thái: Sẵn sàng</div>
           </div>
 
           <section class="card overview-top-card">
@@ -604,41 +611,42 @@ linear-gradient(to right, transparent, transparent)}
                 </div>
                 <div id="ovHistoryBars" class="overview-history-bars"></div>
               </div>
-              <aside class="overview-greeting-card">
-                <div class="overview-greeting-head">
-                  <div id="ovGreetingKicker" class="overview-greeting-kicker">Daily Greeting</div>
-                  <span id="ovGreetingRole" class="auth-role auth-role-admin">Admin</span>
-                </div>
-                <div class="overview-greeting-visual">
-                  <div class="overview-greeting-orbit">
-                    <div id="ovGreetingAvatar" class="overview-greeting-avatar">EV</div>
-                  </div>
-                </div>
-                <div id="ovGreetingTitle" class="overview-greeting-title">Good Morning</div>
-                <div id="ovGreetingSub" class="overview-greeting-sub">Continue your workflow and keep today's runs on track.</div>
-                <div class="overview-greeting-footer">
-                  <div id="ovGreetingEmail" class="overview-greeting-email">thu.phannguyenanh@fanscom.vn</div>
-                </div>
+              <aside class="overview-top-side">
+                <section class="overview-side-card">
+                  <div id="ovModeSplitTitle" class="overview-side-title">Mode split</div>
+                  <div id="ovModeSplitSub" class="overview-side-sub">Distribution of tracked jobs by mode.</div>
+                  <div id="ovModeSplit" class="overview-mode-list"></div>
+                </section>
               </aside>
             </div>
           </section>
 
           <div class="layout">
-            <section class="card overview-stats-card">
-              <div class="stats">
-                <div class="stat"><div class="k">Jobs today</div><div id="ovTodayJobs" class="v">0</div><div class="s">created in the last 24h</div></div>
-                <div class="stat"><div class="k">Average success rate</div><div id="ovAvgSuccess" class="v">0%</div><div class="s">across tracked jobs</div></div>
-                <div class="stat"><div class="k">Latest job</div><div id="ovLatestJob" class="v">-</div><div id="ovLatestMeta" class="s">no recent run</div></div>
-                <div class="stat"><div class="k">Top error</div><div id="ovTopError" class="v">-</div><div id="ovTopErrorMeta" class="s">no recurring issues</div></div>
+            <section class="overview-stats-grid">
+              <div class="cards-3 overview-stat-cards">
+                <section class="card pad overview-stat-card">
+                  <div id="ovSavedProjectsLabel" class="k">Saved Projects</div>
+                  <div id="ovSavedProjects" class="big-number">0</div>
+                </section>
+                <section class="card pad overview-stat-card">
+                  <div id="ovSavedSheetsLabel" class="k">Saved Sheets</div>
+                  <div id="ovSavedSheets" class="big-number">0</div>
+                </section>
+                <section class="card pad overview-stat-card">
+                  <div id="ovSelectedProjectLabel" class="k">Selected Project</div>
+                  <div id="ovSelectedProject" class="big-number">-</div>
+                </section>
               </div>
-              <div class="overview-note">
-                <span id="overviewText">No run selected.</span>
-                <button class="overview-cta" onclick="switchView('runs')">
-                  <span id="overviewRunCtaLabel">Open Run Center</span>
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12"></path><path d="m13 6 6 6-6 6"></path></svg>
-                </button>
-              </div>
-              <div class="mini">
+              <section class="card overview-note-card">
+                <div class="overview-note">
+                  <span id="overviewText">No run selected.</span>
+                  <button class="overview-cta" onclick="switchView('runs')">
+                    <span id="overviewRunCtaLabel">Open Run Center</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12"></path><path d="m13 6 6 6-6 6"></path></svg>
+                  </button>
+                </div>
+              </section>
+              <section class="card mini mini-card">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)"><span>Overall progress</span><span id="pctText">0%</span></div>
                 <div class="progress" style="margin-top:6px"><span id="pfill"></span></div>
                 <div class="jobs-wrap">
@@ -647,7 +655,7 @@ linear-gradient(to right, transparent, transparent)}
                     <tbody id="jobsBody"></tbody>
                   </table>
                 </div>
-              </div>
+              </section>
             </section>
 
             <aside class="card">
@@ -668,13 +676,6 @@ linear-gradient(to right, transparent, transparent)}
                     <button class="summary-action" onclick="switchView('activities')"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg><span>View</span></button>
                   </div>
                 </div>
-                <div class="overview-side-panels single">
-                  <section class="overview-side-card">
-                    <div id="ovModeSplitTitle" class="overview-side-title">Mode split</div>
-                    <div id="ovModeSplitSub" class="overview-side-sub">Distribution of tracked jobs by mode.</div>
-                    <div id="ovModeSplit" class="overview-mode-list"></div>
-                  </section>
-                </div>
               </div>
             </aside>
           </div>
@@ -684,7 +685,7 @@ linear-gradient(to right, transparent, transparent)}
         <section id="view-runs" class="view">
           <div class="runs-head">
             <div class="headline">
-              <div id="runTitleText" class="h1">Runs - Seeding</div>
+              <div id="runTitleText" class="h1">Seeding</div>
             </div>
             <div class="run-share-note run-share-top">
               <div id="runShareLabel" class="run-share-title">Chia sẻ Sheet & Drive folder cho (quyền Editor):</div>
@@ -693,8 +694,7 @@ linear-gradient(to right, transparent, transparent)}
           </div>
           <div class="run-layout">
             <section class="card run-form">
-              <div id="runConfigTitle" class="run-config-head">Run Config - Seeding</div>
-              <div class="run-grid" style="margin-top:14px">
+              <div class="run-grid">
                 <div class="field"><label>Sheet URL</label><input id="sheet_url" /></div>
                 <div class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
                 <div class="field"><label>Drive Folder ID</label><input id="drive_id" /></div>
@@ -739,9 +739,8 @@ linear-gradient(to right, transparent, transparent)}
             <div class="monitor-head">
               <div>
                 <div id="runMonitorKicker" class="monitor-kicker">4. Result & Monitor</div>
-                <div id="runMonitorTitle" class="monitor-title">Theo doi tien do va loi</div>
               </div>
-              <div id="runMonitorStatus" class="monitor-badge">Idle</div>
+              <div id="runMonitorStatus" class="monitor-badge">Sẵn sàng</div>
             </div>
             <div class="monitor-grid">
               <section class="monitor-mini">
@@ -798,23 +797,6 @@ linear-gradient(to right, transparent, transparent)}
             <div class="h1">Projects</div>
             <div class="state">Portfolio of stored runs</div>
           </div>
-          <div class="cards-3">
-            <section class="card pad">
-              <div class="k">Grouped Projects</div>
-              <div id="projectsTotalJobs" class="big-number">0</div>
-              <div class="s">by sheet name or url</div>
-            </section>
-            <section class="card pad">
-              <div class="k">Completed Groups</div>
-              <div id="projectsCompletedJobs" class="big-number">0</div>
-              <div class="s">groups with completed jobs</div>
-            </section>
-            <section class="card pad">
-              <div class="k">Largest Group</div>
-              <div id="projectsSelectedJob" class="big-number">-</div>
-              <div class="s">most jobs under one sheet</div>
-            </section>
-          </div>
           <div class="bottom">
             <section class="card pad">
               <div class="project-list-head">
@@ -851,44 +833,6 @@ linear-gradient(to right, transparent, transparent)}
               <div class="h1">Access</div>
             </div>
             <div class="state">Admin manages user access</div>
-          </div>
-          <div class="cards-3 access-stats">
-            <section class="card pad access-stat access-stat-allowed">
-              <div class="access-stat-main">
-                <div class="access-stat-left">
-                  <div class="access-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h16"></path><path d="M12 4v16"></path></svg></div>
-                  <div class="k" id="accessAllowedCountLabel">Allowed emails</div>
-                </div>
-                <div class="access-stat-right">
-                  <div id="accessAllowedCount" class="big-number">0</div>
-                  <div class="s" id="accessAllowedCountSub">emails can request OTP login</div>
-                </div>
-              </div>
-            </section>
-            <section class="card pad access-stat access-stat-admin">
-              <div class="access-stat-main">
-                <div class="access-stat-left">
-                  <div class="access-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"></path><path d="M5 20a7 7 0 0 1 14 0"></path><path d="M18 7h3"></path></svg></div>
-                  <div class="k" id="accessAdminCountLabel">Admin emails</div>
-                </div>
-                <div class="access-stat-right">
-                  <div id="accessAdminCount" class="big-number">0</div>
-                  <div class="s" id="accessAdminCountSub">emails keep admin control</div>
-                </div>
-              </div>
-            </section>
-            <section class="card pad access-stat access-stat-role">
-              <div class="access-stat-main">
-                <div class="access-stat-left">
-                  <div class="access-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"></path><path d="M12 3 4 7v5c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7l-8-4Z"></path></svg></div>
-                  <div class="k" id="accessCurrentRoleLabel">Current role</div>
-                </div>
-                <div class="access-stat-right">
-                  <div id="accessCurrentRole" class="big-number">-</div>
-                  <div class="s" id="accessUpdatedAt">-</div>
-                </div>
-              </div>
-            </section>
           </div>
           <section class="card pad access-mail-card">
             <div class="access-section-head">
@@ -936,14 +880,21 @@ linear-gradient(to right, transparent, transparent)}
                 <label for="access_entry_email" id="accessEntryEmailLabel">Địa chỉ Gmail</label>
                 <input id="access_entry_email" type="email" placeholder="user@example.com" />
               </div>
-              <div class="field">
-                <label for="access_entry_role" id="accessEntryRoleLabel">Role</label>
-                <select id="access_entry_role">
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
+                <div class="field">
+                  <label for="access_entry_role" id="accessEntryRoleLabel">Role</label>
+                  <select id="access_entry_role">
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="access_entry_type" id="accessEntryTypeLabel">Type</label>
+                  <select id="access_entry_type">
+                    <option value="internal">Internal</option>
+                    <option value="external">Ngoại bộ</option>
+                  </select>
+                </div>
               </div>
-            </div>
             <div class="access-entry-meta">
               <span id="accessEntryCurrentPill" class="access-mail-pill">Đang sửa: -</span>
             </div>
@@ -973,22 +924,30 @@ linear-gradient(to right, transparent, transparent)}
               </div>
             </div>
             <div class="access-filter-row">
-              <div class="access-filter-group">
-                <span id="accessFilterRoleLabel" class="access-filter-label">Role</span>
-                <div class="access-segmented">
-                  <button id="accessRoleFilterAll" class="active" type="button" onclick="setAccessDirectoryRole('all')">All</button>
-                  <button id="accessRoleFilterAdmin" type="button" onclick="setAccessDirectoryRole('admin')">Admin</button>
-                  <button id="accessRoleFilterUser" type="button" onclick="setAccessDirectoryRole('user')">User</button>
-                </div>
+              <div class="access-filter-item">
+                <label id="accessFilterRoleLabel" class="access-filter-label" for="accessRoleFilterSelect">Role</label>
+                <select id="accessRoleFilterSelect" class="access-filter-select" onchange="setAccessDirectoryRole(this.value)">
+                  <option id="accessRoleFilterAll" value="all">All</option>
+                  <option id="accessRoleFilterAdmin" value="admin">Admin</option>
+                  <option id="accessRoleFilterUser" value="user">User</option>
+                </select>
               </div>
-              <div class="access-filter-group">
-                <span id="accessFilterScopeLabel" class="access-filter-label">Access</span>
-                <div class="access-segmented">
-                  <button id="accessScopeFilterAll" class="active" type="button" onclick="setAccessDirectoryScope('all')">All</button>
-                  <button id="accessScopeFilterAllowed" type="button" onclick="setAccessDirectoryScope('allowed')">Allowed</button>
-                  <button id="accessScopeFilterAdmin" type="button" onclick="setAccessDirectoryScope('admin')">Admin</button>
-                  <button id="accessScopeFilterOpen" type="button" onclick="setAccessDirectoryScope('open')">Open OTP</button>
-                </div>
+              <div class="access-filter-item">
+                <label id="accessFilterScopeLabel" class="access-filter-label" for="accessScopeFilterSelect">Access</label>
+                <select id="accessScopeFilterSelect" class="access-filter-select" onchange="setAccessDirectoryScope(this.value)">
+                  <option id="accessScopeFilterAll" value="all">All</option>
+                  <option id="accessScopeFilterAllowed" value="allowed">Allowed</option>
+                  <option id="accessScopeFilterAdmin" value="admin">Admin</option>
+                  <option id="accessScopeFilterOpen" value="open">Open OTP</option>
+                </select>
+              </div>
+              <div class="access-filter-item">
+                <label id="accessFilterTypeLabel" class="access-filter-label" for="accessTypeFilterSelect">Type</label>
+                <select id="accessTypeFilterSelect" class="access-filter-select" onchange="setAccessDirectoryType(this.value)">
+                  <option id="accessTypeFilterAll" value="all">All</option>
+                  <option id="accessTypeFilterInternal" value="internal">Internal</option>
+                  <option id="accessTypeFilterExternal" value="external">Ngoại bộ</option>
+                </select>
               </div>
             </div>
             <div class="access-table-wrap">
@@ -996,8 +955,8 @@ linear-gradient(to right, transparent, transparent)}
                 <thead>
                   <tr>
                     <th id="accessTableHeadEmail">Gmail</th>
-                    <th id="accessTableHeadAccess">Access</th>
                     <th id="accessTableHeadRole">Role</th>
+                    <th id="accessTableHeadType">Type</th>
                     <th id="accessTableHeadStatus">Status</th>
                     <th id="accessTableHeadUpdated">Updated</th>
                     <th id="accessTableHeadActions">Actions</th>
@@ -1043,18 +1002,22 @@ linear-gradient(to right, transparent, transparent)}
                 </div>
                 <input id="settings_full_page_capture" type="checkbox" style="width:18px;height:18px" />
               </div>
-              <div class="card pad" style="margin-top:14px;background:var(--panel-soft)">
+              <div id="settings_service_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
                 <div style="font-size:15px;font-weight:700">JSON service account</div>
-                <div class="muted" style="margin-top:4px">Paste JSON to save it locally and update the credentials path automatically.</div>
+                <div class="muted" style="margin-top:4px">Chọn file .json hoặc dán JSON trực tiếp để lưu credentials và tự cập nhật credentials path.</div>
                 <div id="settings_service_status" class="badge info" style="margin-top:10px">Not saved</div>
                 <div class="field" style="margin-top:12px">
-                  <label for="settings_service_account_json">Service account JSON</label>
-                  <textarea id="settings_service_account_json" style="width:100%;min-height:210px;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:12px;resize:vertical;font-family:Consolas,monospace;background:var(--input-bg);color:var(--input-fg)" placeholder='{"type":"service_account","project_id":"..."}'></textarea>
+                  <label for="settings_service_account_file" id="settingsServiceAccountFileLabel">Chọn file JSON</label>
+                  <input id="settings_service_account_file" type="file" accept=".json,application/json" onchange="handleServiceAccountFileChange(event)" />
+                  <div id="settings_service_account_file_hint" class="muted" style="margin-top:8px">Chưa chọn file</div>
+                </div>
+                <div class="field" style="margin-top:14px">
+                  <label for="settings_service_account_json" id="settingsServiceAccountJsonLabel">Hoặc dán JSON trực tiếp</label>
+                  <textarea id="settings_service_account_json" placeholder='{"type":"service_account","project_id":"..."}'></textarea>
                 </div>
               </div>
               <div class="run-actions">
                 <button id="saveSettingsButton" class="btn blue" onclick="saveSidebarSettings()">Save Settings</button>
-                <button id="reloadSettingsButton" class="btn" onclick="loadDefaults()">Reload Settings</button>
               </div>
               <div id="settings_note" class="settings-note"></div>
             </section>
@@ -1073,6 +1036,7 @@ linear-gradient(to right, transparent, transparent)}
       </main>
     </div>
   </div>
+<div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="false"></div>
 <script>
 let currentJobId = null;
 let pollTimer = null;
@@ -1093,19 +1057,23 @@ let sheetNameSuggestKey = '';
 let sheetNameSuggestCache = {};
 let pendingMappingScrollMode = '';
 let pendingMappingHighlightIndex = -1;
-let currentAccessPolicy = { allowed_emails: [], admin_emails: [], updated_at: null };
+let currentAccessPolicy = { allowed_emails: [], admin_emails: [], managed_emails: [], email_types: {}, updated_at: null };
 let currentMailConfig = { sender_email: '', from_email: '', has_password: false, updated_at: null, source: 'env' };
+let currentActivityEvents = [];
 let accessDirectoryQuery = '';
 let accessDirectoryRole = 'all';
 let accessDirectoryScope = 'all';
+let accessDirectoryType = 'all';
 let accessMailEditorOpen = false;
-let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 'user' };
+let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 'user', type: 'internal' };
+let jobStatusMemory = {};
+let notifiedCompletedJobKeys = new Set();
 const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9423, scan: 9623 };
 const DEFAULT_AUTO_LAUNCH_CHROME = false;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
 let currentTheme = localStorage.getItem('ui_theme') || 'light';
 const authState = {
-  email: 'thu.phannguyenanh@fanscom.vn',
+  email: 'unknown@example.com',
   role: 'admin',
   isAdmin: true,
 };
@@ -1129,6 +1097,7 @@ const I18N = {
     access: 'Quản lý người dùng',
     settings: 'Cài đặt',
     state: 'Trạng thái',
+    readyState: 'Sẵn sàng',
     openRuns: 'Mở Runs',
     view: 'Xem',
     sync: 'Đồng bộ',
@@ -1223,6 +1192,8 @@ const I18N = {
     monitorTable: 'Bảng log xử lý',
     monitorNoJob: 'Chưa chọn job',
     monitorNoErrors: 'Không có lỗi',
+    jobFinishedTitle: 'Hoàn tất',
+    jobFinishedToastFmt: (name, done, total) => `${name} đã chạy xong ${done}/${total} dòng.`,
     monitorNoLogs: 'Chưa có dữ liệu',
     monitorSuccessFailedFmt: (ok, fail, unavailable = 0) => `Success ${ok} · Failed ${fail} · Không khả dụng ${unavailable}`,
     unavailableLabel: 'Không khả dụng',
@@ -1259,11 +1230,6 @@ const I18N = {
     activitiesState: 'Dòng thời gian runtime có phân loại',
     recentTimeline: 'Dòng thời gian gần nhất',
     accessState: 'Admin quản lý người dùng được đăng nhập và mail admin',
-    accessAllowedCountLabel: 'Mail được phép',
-    accessAllowedCountSub: 'mail có thể xin OTP để vào web',
-    accessAdminCountLabel: 'Mail admin',
-    accessAdminCountSub: 'mail giữ toàn quyền quản trị',
-    accessCurrentRoleLabel: 'Vai trò hiện tại',
     accessMailTitle: 'Mail gửi OTP',
     accessMailHelp: 'Đổi Gmail gửi mã xác nhận ngay trên giao diện admin. App password cũ sẽ được giữ kín và chỉ thay khi bạn nhập mới.',
     accessMailSenderLabel: 'Gmail gửi OTP',
@@ -1283,6 +1249,7 @@ const I18N = {
     accessEntryHelp: 'Đổi địa chỉ Gmail hoặc role của dòng đang chọn rồi lưu lại.',
     accessEntryEmailLabel: 'Địa chỉ Gmail',
     accessEntryRoleLabel: 'Role',
+    accessEntryTypeLabel: 'Loại',
     accessEntryCurrentFmt: email => `Đang sửa: ${email || '-'}`,
     accessEntrySave: 'Lưu chỉnh sửa',
     accessEntryCancel: 'Hủy',
@@ -1294,15 +1261,20 @@ const I18N = {
     accessQuickAdd: '+ Thêm Gmail',
     accessFilterRole: 'Role',
     accessFilterScope: 'Truy cập',
+    accessFilterType: 'Loại',
     accessFilterAll: 'Tất cả',
     accessFilterAdmin: 'Admin',
     accessFilterUser: 'User',
+    accessFilterInternal: 'Nội bộ',
+    accessFilterExternal: 'Ngoại bộ',
+    accessYouTag: 'You',
     accessScopeAllowed: 'Được phép',
     accessScopeAdmin: 'Admin',
     accessScopeOpen: 'OTP',
     accessTableEmail: 'Gmail',
     accessTableAccess: 'Truy cập',
-    accessTableRole: 'Role',
+    accessTableRole: 'Quyền',
+    accessTableType: 'Loại',
     accessTableStatus: 'Trạng thái',
     accessTableUpdated: 'Cập nhật',
     accessTableActions: 'Thao tác',
@@ -1315,6 +1287,8 @@ const I18N = {
     accessStatusActive: 'Đang được phép',
     accessStatusAdmin: 'Toàn quyền quản trị',
     accessStatusOpen: 'OTP giới hạn theo danh sách',
+    accessTypeInternal: 'Nội bộ',
+    accessTypeExternal: 'Ngoại bộ',
     accessMakeAdmin: 'Lên admin',
     accessMakeUser: 'Hạ user',
     accessRemove: 'Gỡ',
@@ -1340,6 +1314,8 @@ const I18N = {
     saveAccessPolicy: 'Lưu phân quyền',
     reloadAccessPolicy: 'Tải lại phân quyền',
     accessPolicySaved: 'Đã lưu phân quyền',
+    accessNotifySentFmt: count => `Đã gửi mail thông báo cho ${count} người dùng`,
+    accessNotifyPartialFmt: (sent, failed) => `Đã lưu phân quyền. Gửi mail thành công ${sent}, lỗi ${failed}`,
     accessPolicySelfProtect: 'Không thể tự gỡ quyền admin của chính bạn trong phiên này',
     viewportWidth: 'Viewport width',
     viewportHeight: 'Viewport height',
@@ -1348,8 +1324,12 @@ const I18N = {
     fullPageCapture: 'Chụp full page',
     fullPageHelp: 'Bật nếu bạn muốn giữ toàn bộ chiều dài trang thay vì chỉ phần đang thấy.',
     jsonServiceAccount: 'JSON service account',
-    jsonHelp: 'Dán JSON để lưu cục bộ và tự cập nhật credentials path.',
-    serviceJsonLabel: 'Nội dung JSON mới',
+    jsonHelp: 'Chọn file service account .json hoặc dán JSON trực tiếp để lưu cục bộ và tự cập nhật credentials path.',
+    serviceJsonLabel: 'Chọn file JSON',
+    serviceJsonPasteLabel: 'Hoặc dán JSON trực tiếp',
+    serviceJsonNoFile: 'Chưa chọn file',
+    serviceJsonSelectedFmt: name => `Đã chọn: ${name}`,
+    serviceJsonReadError: 'Không đọc được file JSON đã chọn',
     saveSettings: 'Lưu cài đặt',
     reloadSettings: 'Tải lại cài đặt',
     currentConfigSummary: 'Tóm tắt cấu hình hiện tại',
@@ -1365,6 +1345,7 @@ const I18N = {
     fullPage: 'Chụp toàn bộ trang',
     viewportOnly: 'Chỉ chụp phần nhìn thấy',
     noServiceEmail: 'Chưa có email service account',
+    fixedCredentials: 'Đã dùng credentials cố định',
     persistent: 'Lưu bền',
     noRunSelected: 'Chưa có job được chọn.',
     noGroupsYet: 'Chưa có dự án nào được lưu',
@@ -1414,6 +1395,7 @@ const I18N = {
     access: 'User Management',
     settings: 'Settings',
     state: 'State',
+    readyState: 'Ready',
     openRuns: 'Open Runs',
     view: 'View',
     sync: 'Sync',
@@ -1508,6 +1490,8 @@ const I18N = {
     monitorTable: 'Processing log table',
     monitorNoJob: 'No job selected',
     monitorNoErrors: 'No errors',
+    jobFinishedTitle: 'Completed',
+    jobFinishedToastFmt: (name, done, total) => `${name} finished ${done}/${total} rows.`,
     monitorNoLogs: 'No data yet',
     monitorSuccessFailedFmt: (ok, fail, unavailable = 0) => `Success ${ok} · Failed ${fail} · Unavailable ${unavailable}`,
     unavailableLabel: 'Unavailable',
@@ -1544,11 +1528,6 @@ const I18N = {
     activitiesState: 'Latest runtime events with severity',
     recentTimeline: 'Recent Timeline',
     accessState: 'Admins manage user access and admin emails',
-    accessAllowedCountLabel: 'Allowed emails',
-    accessAllowedCountSub: 'emails can request OTP login',
-    accessAdminCountLabel: 'Admin emails',
-    accessAdminCountSub: 'emails keep admin control',
-    accessCurrentRoleLabel: 'Current role',
     accessMailTitle: 'OTP Sender',
     accessMailHelp: 'Change the Gmail account that sends login codes from the admin UI. The old app password stays hidden and is only replaced when you enter a new one.',
     accessMailSenderLabel: 'Gmail sender',
@@ -1568,6 +1547,7 @@ const I18N = {
     accessEntryHelp: 'Change the selected Gmail address or role, then save it.',
     accessEntryEmailLabel: 'Gmail address',
     accessEntryRoleLabel: 'Role',
+    accessEntryTypeLabel: 'Type',
     accessEntryCurrentFmt: email => `Editing: ${email || '-'}`,
     accessEntrySave: 'Save changes',
     accessEntryCancel: 'Cancel',
@@ -1579,15 +1559,20 @@ const I18N = {
     accessQuickAdd: '+ Add Gmail',
     accessFilterRole: 'Role',
     accessFilterScope: 'Access',
+    accessFilterType: 'Type',
     accessFilterAll: 'All',
     accessFilterAdmin: 'Admin',
     accessFilterUser: 'User',
+    accessFilterInternal: 'Internal',
+    accessFilterExternal: 'External',
+    accessYouTag: 'You',
     accessScopeAllowed: 'Allowed',
     accessScopeAdmin: 'Admin',
     accessScopeOpen: 'OTP',
     accessTableEmail: 'Gmail',
     accessTableAccess: 'Access',
-    accessTableRole: 'Role',
+    accessTableRole: 'Permission',
+    accessTableType: 'Type',
     accessTableStatus: 'Status',
     accessTableUpdated: 'Updated',
     accessTableActions: 'Actions',
@@ -1600,6 +1585,8 @@ const I18N = {
     accessStatusActive: 'Allowed',
     accessStatusAdmin: 'Admin control',
     accessStatusOpen: 'OTP restricted by list',
+    accessTypeInternal: 'Internal',
+    accessTypeExternal: 'External',
     accessMakeAdmin: 'Make admin',
     accessMakeUser: 'Make user',
     accessRemove: 'Remove',
@@ -1625,6 +1612,8 @@ const I18N = {
     saveAccessPolicy: 'Save Access',
     reloadAccessPolicy: 'Reload Access',
     accessPolicySaved: 'Access control saved',
+    accessNotifySentFmt: count => `Notification email sent to ${count} users`,
+    accessNotifyPartialFmt: (sent, failed) => `Access control saved. Email sent: ${sent}, failed: ${failed}`,
     accessPolicySelfProtect: 'You cannot remove your own admin right in this session',
     viewportWidth: 'Viewport width',
     viewportHeight: 'Viewport height',
@@ -1633,8 +1622,12 @@ const I18N = {
     fullPageCapture: 'Full page capture',
     fullPageHelp: 'Enable this if you want to keep the entire page length instead of only the visible area.',
     jsonServiceAccount: 'JSON service account',
-    jsonHelp: 'Paste JSON to save it locally and update the credentials path automatically.',
-    serviceJsonLabel: 'Service account JSON',
+    jsonHelp: 'Upload a service account .json file or paste the JSON directly to save it locally and update the credentials path automatically.',
+    serviceJsonLabel: 'Choose JSON file',
+    serviceJsonPasteLabel: 'Or paste JSON directly',
+    serviceJsonNoFile: 'No file selected',
+    serviceJsonSelectedFmt: name => `Selected: ${name}`,
+    serviceJsonReadError: 'Unable to read the selected JSON file',
     saveSettings: 'Save Settings',
     reloadSettings: 'Reload Settings',
     currentConfigSummary: 'Current config summary',
@@ -1650,6 +1643,7 @@ const I18N = {
     fullPage: 'Full page',
     viewportOnly: 'Viewport only',
     noServiceEmail: 'No service account email',
+    fixedCredentials: 'Using fixed credentials',
     persistent: 'Persistent',
     noRunSelected: 'No run selected.',
     noGroupsYet: 'No saved projects yet',
@@ -1693,7 +1687,7 @@ function getRoleLabel(role = authState.role) {
 
 function deriveGreetingName(email = authState.email) {
   const local = String(email || '').split('@')[0] || '';
-  const parts = local.split(/[._-]+/).map(part => part.replace(/\d+/g, '').trim()).filter(Boolean);
+  const parts = local.split(/[._-]+/).map(part => part.replace(/\\d+/g, '').trim()).filter(Boolean);
   const base = parts[0] || '';
   if (!base) return t('overviewGreetingFallbackName');
   return base.charAt(0).toUpperCase() + base.slice(1);
@@ -1701,7 +1695,7 @@ function deriveGreetingName(email = authState.email) {
 
 function deriveGreetingInitials(email = authState.email) {
   const local = String(email || '').split('@')[0] || '';
-  const parts = local.split(/[._-]+/).map(part => part.replace(/\d+/g, '').trim()).filter(Boolean);
+  const parts = local.split(/[._-]+/).map(part => part.replace(/\\d+/g, '').trim()).filter(Boolean);
   const initials = (parts.slice(0, 2).map(part => part.charAt(0).toUpperCase()).join('') || 'EV').slice(0, 2);
   return initials || 'EV';
 }
@@ -1740,11 +1734,11 @@ function getRunModeLabel(mode) {
 }
 
 function formatRunTitle(mode = currentRunMode) {
-  return `${t('runs')} - ${getRunModeLabel(mode)}`;
+  return getRunModeLabel(mode);
 }
 
 function formatRunConfigTitle(mode = currentRunMode) {
-  return `${t('runConfig')} - ${getRunModeLabel(mode)}`;
+  return t('runConfig');
 }
 
 function sanitizeMappingBlockForMode(mode, block, index = 1) {
@@ -1893,9 +1887,55 @@ function applyAirDate(mode, index, value) {
   renderMappingEditor();
 }
 
-async function launchChromeBlock(index) {
+function isLocalWebHost() {
+  const host = String(window.location.hostname || '').toLowerCase();
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
+function launchChromeViaLocalProtocol(mode, index, port) {
+  const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+  const blockIndex = Number(index) || 0;
+  const resolvedPort = Number(port) || getChromePortForBlock(blockIndex, runMode);
+  const href = `tool-evidence://launch?mode=${encodeURIComponent(runMode)}&block=${blockIndex}&port=${resolvedPort}`;
+  const frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  frame.src = href;
+  document.body.appendChild(frame);
+  window.setTimeout(() => frame.remove(), 1500);
+  return { href, port: resolvedPort };
+}
+
+async function launchChromeBlock(index, mode = currentRunMode, explicitPort = null) {
   try {
-    const out = await req(`/api/chrome/launch-block/${Number(index)}?run_mode=${encodeURIComponent(currentRunMode)}`, { method: 'POST' });
+    const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+    const blockIndex = Number(index) || 0;
+    const port = Number(explicitPort) || getChromePortForBlock(blockIndex, runMode);
+    const previousMode = currentRunMode;
+    currentRunMode = runMode;
+    const blockName = getBlockActivityName(blockIndex);
+    currentRunMode = previousMode;
+    if (!isLocalWebHost()) {
+      await logActivityEvent({
+        kind: 'login',
+        level: 'info',
+        run_mode: runMode,
+        block_name: blockName,
+        browser_port: port,
+        message: `${blockName}: đã gửi lệnh mở Chrome ${port} trên máy cục bộ`,
+      });
+      const local = launchChromeViaLocalProtocol(runMode, blockIndex, port);
+      setStatus(`Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`, 'running');
+      return;
+    }
+    const out = await req(`/api/chrome/launch-block/${blockIndex}?run_mode=${encodeURIComponent(runMode)}&browser_port=${port}`, { method: 'POST' });
+    await logActivityEvent({
+      kind: 'login',
+      level: 'info',
+      run_mode: runMode,
+      block_name: blockName,
+      browser_port: Number(out?.browser_port || port),
+      message: `${blockName}: đã mở Chrome ${Number(out?.browser_port || port)} để đăng nhập`,
+    });
     setStatus(out.message || 'Chrome launch requested', 'running');
   } catch (e) {
     alert(e.message);
@@ -1941,7 +1981,8 @@ function renderMappingEditor() {
         }
         return `<div class="mapping-label">${esc(field.label)}</div><div><input class="mapping-input" type="${inputType}" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
       }).join('');
-      const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index})">${esc(`${t('chrome')} ${getChromePortForBlock(index, currentRunMode)}`)}</button></div>`;
+      const chromePort = getChromePortForBlock(index, currentRunMode);
+      const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
       return `<section class="${blockClass}"><div class="mapping-block-grid">${rows}${chromeRow}</div></section>`;
     }).join('')}</div>`;
   } else {
@@ -1971,16 +2012,19 @@ function renderMappingEditor() {
       }).join('');
     const chromeRow = [
       `<div class="mapping-matrix-label">${esc(t('chrome'))}</div>`,
-      ...blocks.map((_, index) => `<div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index})">${esc(`${t('chrome')} ${getChromePortForBlock(index, currentRunMode)}`)}</button></div>`)
+      ...blocks.map((_, index) => {
+        const chromePort = getChromePortForBlock(index, currentRunMode);
+        return `<div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
+      })
     ].join('');
     host.innerHTML = `<section class="mapping-matrix"><div class="mapping-matrix-grid" style="grid-template-columns:${colTemplate}">${nameRow}${rows}${chromeRow}</div></section>`;
   }
   const addRow = document.querySelector('.mapping-add-row');
   if (addRow) {
+    addRow.classList.toggle('booking', currentRunMode === 'booking');
     const bookingExtra = currentRunMode === 'booking'
       ? `<label class="mapping-toggle-card">
           <span class="mapping-toggle-copy">
-            <span class="mapping-toggle-kicker">${esc(t('booking'))}</span>
             <span class="mapping-toggle-title">${esc(t('captureFive'))}</span>
             <span class="mapping-toggle-help">${esc(t('captureFiveHelp'))}</span>
           </span>
@@ -2018,8 +2062,6 @@ function applyRunModeUI() {
   });
   const runTitle = document.getElementById('runTitleText');
   if (runTitle) runTitle.textContent = formatRunTitle(currentRunMode);
-  const runConfigTitle = document.getElementById('runConfigTitle');
-  if (runConfigTitle) runConfigTitle.textContent = formatRunConfigTitle(currentRunMode);
   const runsGroup = document.getElementById('runs_group');
   if (runsGroup) runsGroup.classList.toggle('open', document.getElementById('view-runs')?.classList.contains('active'));
   renderMappingEditor();
@@ -2078,12 +2120,9 @@ function applyLanguage() {
   setText('#view-settings .state', t('settingsState'));
   setText('#view-runs .state', t('runConfigHelp'));
 
-  setText('#view-overview .stats .stat:nth-child(1) .k', t('jobsToday'));
-  setText('#view-overview .stats .stat:nth-child(1) .s', t('createdLast24h'));
-  setText('#view-overview .stats .stat:nth-child(2) .k', t('avgSuccess'));
-  setText('#view-overview .stats .stat:nth-child(2) .s', t('acrossTracked'));
-  setText('#view-overview .stats .stat:nth-child(3) .k', t('latestJob'));
-  setText('#view-overview .stats .stat:nth-child(4) .k', t('topError'));
+  setText('#ovSavedProjectsLabel', t('groupedProjects'));
+  setText('#ovSavedSheetsLabel', t('completedGroups'));
+  setText('#ovSelectedProjectLabel', t('largestGroup'));
   setText('#ovHistoryTitle', t('overviewTimeline'));
   setText('#ovLegendSuccess', t('overviewCompletedLegend'));
   setText('#ovLegendFailed', t('overviewFailedLegend'));
@@ -2109,7 +2148,6 @@ function applyLanguage() {
 
   setText('#view-runs .headline .state', t('runConfigHelp'));
   setText('#runShareLabel', t('runShareLabel'));
-  setText('#runConfigTitle', formatRunConfigTitle());
   applyRunModeUI();
   setText('label[for="sheet_url"]', t('sheetUrl'));
   setText('label[for="sheet_name"]', t('sheetName'));
@@ -2118,7 +2156,6 @@ function applyLanguage() {
   setText('#overwriteRunLabel', t('overwriteRun'));
   setText('#overwriteRunHelp', t('overwriteRunHelp'));
   setText('#runMonitorKicker', t('monitorKicker'));
-  setText('#runMonitorTitle', t('monitorTitle'));
   setText('#runMonitorJobLabel', t('monitorJob'));
   setText('#runMonitorProgressLabel', t('monitorProgress'));
   setText('#runMonitorErrorLabel', t('monitorErrors'));
@@ -2139,11 +2176,6 @@ function applyLanguage() {
 
   setText('#view-activities .card > div:first-child', t('recentTimeline'));
 
-  setText('#accessAllowedCountLabel', t('accessAllowedCountLabel'));
-  setText('#accessAllowedCountSub', t('accessAllowedCountSub'));
-  setText('#accessAdminCountLabel', t('accessAdminCountLabel'));
-  setText('#accessAdminCountSub', t('accessAdminCountSub'));
-  setText('#accessCurrentRoleLabel', t('accessCurrentRoleLabel'));
   setText('#accessMailTitle', t('accessMailTitle'));
   setText('#accessMailHelp', t('accessMailHelp'));
   setText('#accessMailSenderLabel', t('accessMailSenderLabel'));
@@ -2155,16 +2187,21 @@ function applyLanguage() {
   setText('#accessEntryHelp', t('accessEntryHelp'));
   setText('#accessEntryEmailLabel', t('accessEntryEmailLabel'));
   setText('#accessEntryRoleLabel', t('accessEntryRoleLabel'));
+  setText('#accessEntryTypeLabel', t('accessEntryTypeLabel'));
   setText('#accessEntryCancelTop', t('accessEntryCancel'));
   setText('#accessEntryCancelButton', t('accessEntryCancel'));
   setText('#accessEntrySaveButton', t('accessEntrySave'));
   const accessEntryRole = document.getElementById('access_entry_role');
   if (accessEntryRole?.options?.[0]) accessEntryRole.options[0].text = t('roleUser');
   if (accessEntryRole?.options?.[1]) accessEntryRole.options[1].text = t('roleAdmin');
+  const accessEntryType = document.getElementById('access_entry_type');
+  if (accessEntryType?.options?.[0]) accessEntryType.options[0].text = t('accessTypeInternal');
+  if (accessEntryType?.options?.[1]) accessEntryType.options[1].text = t('accessTypeExternal');
   setText('#accessDirectoryTitle', t('accessDirectoryTitle'));
   setText('#accessDirectoryHelp', t('accessDirectoryHelp'));
   setText('#accessFilterRoleLabel', t('accessFilterRole'));
   setText('#accessFilterScopeLabel', t('accessFilterScope'));
+  setText('#accessFilterTypeLabel', t('accessFilterType'));
   setText('#accessRoleFilterAll', t('accessFilterAll'));
   setText('#accessRoleFilterAdmin', t('accessFilterAdmin'));
   setText('#accessRoleFilterUser', t('accessFilterUser'));
@@ -2172,9 +2209,13 @@ function applyLanguage() {
   setText('#accessScopeFilterAllowed', t('accessScopeAllowed'));
   setText('#accessScopeFilterAdmin', t('accessScopeAdmin'));
   setText('#accessScopeFilterOpen', t('accessScopeOpen'));
+  setText('#accessTypeFilterAll', t('accessFilterAll'));
+  setText('#accessTypeFilterInternal', t('accessFilterInternal'));
+  setText('#accessTypeFilterExternal', t('accessFilterExternal'));
   setText('#accessTableHeadEmail', t('accessTableEmail'));
   setText('#accessTableHeadAccess', t('accessTableAccess'));
   setText('#accessTableHeadRole', t('accessTableRole'));
+  setText('#accessTableHeadType', t('accessTableType'));
   setText('#accessTableHeadStatus', t('accessTableStatus'));
   setText('#accessTableHeadUpdated', t('accessTableUpdated'));
   setText('#accessTableHeadActions', t('accessTableActions'));
@@ -2194,9 +2235,11 @@ function applyLanguage() {
   setText('#view-settings .list-row .muted', t('fullPageHelp'));
   setText('#view-settings .settings-layout .card:first-child .card > div:first-child', t('jsonServiceAccount'));
   setText('#view-settings .settings-layout .card:first-child .card > div:nth-child(2)', t('jsonHelp'));
-  setText('label[for="settings_service_account_json"]', t('serviceJsonLabel'));
+  setText('#settingsServiceAccountFileLabel', t('serviceJsonLabel'));
+  setText('#settingsServiceAccountJsonLabel', t('serviceJsonPasteLabel'));
+  const serviceFileHint = document.getElementById('settings_service_account_file_hint');
+  if (serviceFileHint && !serviceFileHint.dataset.fileName) serviceFileHint.textContent = t('serviceJsonNoFile');
   setText('#saveSettingsButton', t('saveSettings'));
-  setText('#reloadSettingsButton', t('reloadSettings'));
   setText('#accessPolicyTitle', t('accessPolicyTitle'));
   setText('#accessPolicyHelp', t('accessPolicyHelp'));
   setText('#accessAllowedLabel', t('accessAllowedLabel'));
@@ -2266,7 +2309,7 @@ function setLanguage(lang) {
   applyLanguage();
   renderOverview();
   renderProjects();
-  renderActivities(currentLogsCache);
+  renderActivities(getCombinedActivities());
   renderRunMonitor(currentJobSnapshot, currentLogsCache);
   if (String(document.getElementById('sheet_url')?.value || '').trim()) scheduleSheetNameSuggestions(false);
 }
@@ -2284,6 +2327,27 @@ async function req(url, opts = {}) {
   }
   if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
   return data;
+}
+
+async function logActivityEvent(payload = {}) {
+  try {
+    const out = await req('/api/activity', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (out?.item) {
+      currentActivityEvents = [out.item, ...(currentActivityEvents || [])].slice(0, 50);
+      renderActivities(getCombinedActivities());
+    }
+    return out?.item || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function getBlockActivityName(index) {
+  const block = ensureMappingBlocks(currentRunMode)[Number(index) || 0] || {};
+  return String(block?.name || '').trim() || `Post ${Number(index) + 1}`;
 }
 
 async function logoutAuth() {
@@ -2323,7 +2387,7 @@ function toCalendarDayKey(iso) {
 function toLocalDayLabel(value) {
   if (!value) return '-';
   let d = null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(String(value))) {
     const [year, month, day] = String(value).split('-').map(Number);
     d = new Date(year, month - 1, day);
   } else {
@@ -2477,6 +2541,42 @@ function setProjectModeFilter(mode) {
   renderProjects();
 }
 
+function getActivityLogsFromJobs() {
+  const rows = [];
+  (jobsCache || []).forEach(job => {
+    const logs = Array.isArray(job?.recent_logs) ? job.recent_logs : [];
+    logs.forEach(item => {
+      rows.push({
+        ...item,
+        __job_id: String(job?.id || ''),
+        __job_mode: getJobMode(job),
+      });
+    });
+  });
+  rows.sort((a, b) => {
+    const left = new Date(a?.ts || 0).getTime();
+    const right = new Date(b?.ts || 0).getTime();
+    return right - left;
+  });
+  return rows.slice(0, 20);
+}
+
+function getCombinedActivities() {
+  const jobLogs = getActivityLogsFromJobs().map(item => ({ ...item, __source: 'job' }));
+  const manualEvents = (currentActivityEvents || []).map(item => ({
+    ...item,
+    row: item?.row ?? '-',
+    state: String(item?.kind || 'action').toUpperCase(),
+    result: String(item?.run_mode || 'manual').toUpperCase(),
+    __source: 'activity',
+    __job_id: String(item?.job_id || ''),
+    __job_mode: String(item?.run_mode || ''),
+  }));
+  return [...jobLogs, ...manualEvents]
+    .sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
+    .slice(0, 20);
+}
+
 function openProjectInRuns(jobId) {
   const job = (jobsCache || []).find(item => item.id === jobId);
   if (!job) return;
@@ -2516,6 +2616,9 @@ async function deleteProject(jobId, ev = null) {
 }
 
 function classifyLog(log) {
+  const level = String(log?.level || '').toLowerCase();
+  if (level === 'error' || level === 'failed') return 'error';
+  if (level === 'warning' || level === 'warn') return 'warning';
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   if (raw.includes('fail') || raw.includes('error')) return 'error';
   if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return 'warning';
@@ -2526,7 +2629,52 @@ function classifyLog(log) {
 function prettyWord(value) {
   const raw = String(value || '').trim();
   if (!raw) return '-';
+  if (raw.toLowerCase() === 'idle') return t('readyState');
   return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function showToast(message, type = 'info', title = '') {
+  const host = document.getElementById('toastHost');
+  if (!host) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <div class="toast-icon">${type === 'success' ? '✓' : '!'}</div>
+    <div class="toast-copy">
+      <div class="toast-title">${esc(title || t('jobFinishedTitle'))}</div>
+      <div class="toast-message">${esc(message)}</div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">×</button>
+  `;
+  const closeToast = () => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-8px)';
+    setTimeout(() => toast.remove(), 160);
+  };
+  toast.querySelector('.toast-close')?.addEventListener('click', closeToast);
+  host.appendChild(toast);
+  setTimeout(closeToast, 5200);
+}
+
+function processJobLifecycleNotifications(jobs) {
+  const nextStatusMemory = {};
+  (jobs || []).forEach(job => {
+    const jobId = String(job?.id || '').trim();
+    if (!jobId) return;
+    const status = String(job?.status || '').trim().toLowerCase();
+    const previousStatus = String(jobStatusMemory[jobId] || '').trim().toLowerCase();
+    nextStatusMemory[jobId] = status;
+    const summary = getJobSummary(job);
+    const done = Number(summary.done || 0);
+    const total = Number(summary.total || 0);
+    const completionKey = `${jobId}:${String(job?.finished_at || '')}:${done}/${total}`;
+    const isReallyCompleted = status === 'completed' && (total <= 0 || done >= total);
+    if (isReallyCompleted && previousStatus && previousStatus !== 'completed' && !notifiedCompletedJobKeys.has(completionKey)) {
+      notifiedCompletedJobKeys.add(completionKey);
+      showToast(t('jobFinishedToastFmt')(getJobSheetLabel(job), done, total), 'success', t('jobFinishedTitle'));
+    }
+  });
+  jobStatusMemory = nextStatusMemory;
 }
 
 function resultPill(result, state = '', tag = '', message = '') {
@@ -2556,6 +2704,12 @@ function getLogPostLabel(log) {
 function isUnavailableLog(log) {
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   return raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung');
+}
+
+function isFailedLog(log) {
+  const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
+  if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
+  return raw.includes('fail') || raw.includes('error');
 }
 
 function canReplayLog(log) {
@@ -2602,31 +2756,21 @@ function groupJobsBySheet(jobs) {
 }
 
 function renderOverview() {
-  const todayKey = toCalendarDayKey(new Date().toISOString());
-  const todayJobs = jobsCache.filter(j => toCalendarDayKey(j.created_at || '') === todayKey);
+  const savedProjects = getSavedProjectJobs();
+  const savedSheets = new Set(savedProjects.map(job => getJobSheetLabel(job))).size;
+  let selectedProject = currentProjectJobId ? savedProjects.find(job => job.id === currentProjectJobId) : null;
+  if (!selectedProject && savedProjects.length) selectedProject = savedProjects[0];
+  const selectedProjectSummary = getJobSummary(selectedProject);
   const modeCounts = ['seeding', 'booking', 'scan'].map(mode => ({
     mode,
     count: jobsCache.filter(job => getJobMode(job) === mode).length,
   }));
   const modeTotal = modeCounts.reduce((sum, item) => sum + item.count, 0);
-  const ratios = jobsCache
-    .map(j => {
-      const s = getJobSummary(j);
-      return s.total > 0 ? (s.success / s.total) * 100 : null;
-    })
-    .filter(v => v !== null);
-  const avg = ratios.length ? Math.round(ratios.reduce((a, b) => a + b, 0) / ratios.length) : 0;
-  const latest = jobsCache[0] || null;
-  const topError = aggregateErrorCounts(jobsCache)[0] || null;
-
-  document.getElementById('ovTodayJobs').textContent = todayJobs.length;
-  document.getElementById('ovAvgSuccess').textContent = avg + '%';
-  document.getElementById('ovLatestJob').textContent = latest ? latest.id.slice(0, 8) : '-';
-  document.getElementById('ovLatestMeta').textContent = latest
-    ? t('latestJobMetaFmt')(latest.status, toLocalStamp(latest.created_at))
-    : t('noRecentRun');
-  document.getElementById('ovTopError').textContent = topError ? String(topError[1]) : '-';
-  document.getElementById('ovTopErrorMeta').textContent = topError ? topError[0] : t('noRecurring');
+  document.getElementById('ovSavedProjects').textContent = savedProjects.length;
+  document.getElementById('ovSavedSheets').textContent = savedSheets;
+  document.getElementById('ovSelectedProject').textContent = selectedProject
+    ? `${selectedProjectSummary.done || 0}/${selectedProjectSummary.total || 0}`
+    : '-';
   const modeSplitHost = document.getElementById('ovModeSplit');
   if (modeSplitHost) {
     if (!modeTotal) {
@@ -2725,7 +2869,7 @@ function setStatus(text, status) {
   if (status === 'completed') { chip.style.background = '#dcfce7'; chip.style.color = '#166534'; }
   if (status === 'failed') { chip.style.background = '#fee2e2'; chip.style.color = '#991b1b'; }
   if (status === 'stopped') { chip.style.background = '#ffedd5'; chip.style.color = '#9a3412'; }
-  chip.textContent = `${t('state')}: ` + (status || 'idle');
+  chip.textContent = `${t('state')}: ` + prettyWord(status || 'idle');
 }
 
 function setKPI(summary, jobId) {
@@ -2754,9 +2898,12 @@ function renderProjects() {
     { key: 'booking', label: getRunModeLabel('booking'), count: allSaved.filter(job => getJobMode(job) === 'booking').length },
     { key: 'scan', label: getRunModeLabel('scan'), count: allSaved.filter(job => getJobMode(job) === 'scan').length },
   ];
-  document.getElementById('projectsTotalJobs').textContent = saved.length;
-  document.getElementById('projectsCompletedJobs').textContent = uniqueSheets;
-  document.getElementById('projectsSelectedJob').textContent = selected ? `${summary.done || 0}/${summary.total || 0}` : '-';
+  const totalNode = document.getElementById('projectsTotalJobs');
+  const sheetsNode = document.getElementById('projectsCompletedJobs');
+  const selectedNode = document.getElementById('projectsSelectedJob');
+  if (totalNode) totalNode.textContent = saved.length;
+  if (sheetsNode) sheetsNode.textContent = uniqueSheets;
+  if (selectedNode) selectedNode.textContent = selected ? `${summary.done || 0}/${summary.total || 0}` : '-';
   document.getElementById('projectsModeFilters').innerHTML = filterOptions.map(opt => {
     const active = currentProjectModeFilter === opt.key ? ' active' : '';
     return `<button type="button" class="project-mode-filter mode-${opt.key}${active}" onclick="setProjectModeFilter('${opt.key}')">${esc(opt.label)}<span>${opt.count}</span></button>`;
@@ -2801,7 +2948,9 @@ function renderActivities(logs) {
   document.getElementById('activitiesTimeline').innerHTML = items.length
     ? items.map(x => {
         const level = classifyLog(x);
-        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>#${x.row} ${esc(x.state)}/${esc(x.result)}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${toLocalStamp(x.ts)}</div></div>`;
+        const jobMeta = x.__job_id ? `${String(x.__job_mode || '').trim() ? `${prettyWord(x.__job_mode)} · ` : ''}${String(x.__job_id || '').slice(0, 8)}` : '';
+        const rowLabel = x.__source === 'activity' ? esc(String(x.state || 'ACTION')) : `#${esc(x.row)} ${esc(x.state)}/${esc(x.result)}`;
+        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${rowLabel}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
       }).join('')
     : `<div class="timeline-item"><strong>${t('noActivity')}</strong><div>${t('startOrSelect')}</div></div>`;
 }
@@ -2812,7 +2961,22 @@ function renderRunMonitor(snapshot, logs) {
   const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
   const errorRows = st.error_rows || {};
   const errorKeys = Object.keys(errorRows);
-  const unavailableCount = (logs || []).filter(isUnavailableLog).length;
+  const logItems = Array.isArray(logs) ? logs : [];
+  const unavailableCount = logItems.filter(isUnavailableLog).length;
+  const failedLogCount = logItems.filter(isFailedLog).length;
+  const issueRows = new Set();
+  errorKeys.forEach(key => {
+    const row = Number(key);
+    if (Number.isFinite(row) && row > 0) issueRows.add(row);
+  });
+  logItems.forEach(item => {
+    if (!isUnavailableLog(item) && !isFailedLog(item)) return;
+    const row = Number(item?.row || 0);
+    if (Number.isFinite(row) && row > 0) issueRows.add(row);
+  });
+  const failedCount = Math.max(Number(s.failed || 0), failedLogCount, errorKeys.length);
+  const derivedIssueCount = issueRows.size || failedCount + unavailableCount;
+  const hasIssueState = derivedIssueCount > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
   const statusLabel = prettyWord(st.status || 'idle');
   const latestLog = (logs || []).length ? logs[logs.length - 1] : null;
   const detailText = String(st.detail || latestLog?.message || '').trim();
@@ -2852,10 +3016,12 @@ function renderRunMonitor(snapshot, logs) {
   document.getElementById('runMonitorProgressMeta').textContent = detailText
     ? `${detailText}${etaText ? ' · ' + etaText : ''}`
     : (etaText || '-');
-  document.getElementById('runMonitorErrorMain').textContent = errorKeys.length ? `${errorKeys.length}` : t('monitorNoErrors');
-  document.getElementById('runMonitorErrorMeta').textContent = errorKeys.length
-    ? errorKeys.slice(0, 5).map(x => `#${x}`).join(', ')
-    : t('monitorSuccessFailedFmt')(s.success || 0, s.failed || 0, unavailableCount);
+  document.getElementById('runMonitorErrorMain').textContent = hasIssueState ? `${Math.max(derivedIssueCount, 1)}` : t('monitorNoErrors');
+  document.getElementById('runMonitorErrorMeta').textContent = hasIssueState
+    ? (issueRows.size
+        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount)}`
+        : t('monitorSuccessFailedFmt')(s.success || 0, failedCount, unavailableCount))
+    : t('monitorSuccessFailedFmt')(s.success || 0, 0, unavailableCount);
 
   const rows = (logs || []).slice().reverse();
   const replayLocked = ['running', 'paused'].includes(String(st.status || '').toLowerCase());
@@ -2901,7 +3067,6 @@ function updateRunActionButtons(snapshot = currentJobSnapshot) {
 async function replayLogRow(jobId, row, blockName = '') {
   try {
     if (!jobId) throw new Error('No job selected');
-    const sourceJobId = jobId;
     const payload = {
       row: Number(row || 0),
       block_name: String(blockName || ''),
@@ -2911,8 +3076,8 @@ async function replayLogRow(jobId, row, blockName = '') {
       body: JSON.stringify(payload),
     });
     await refreshJobs();
-    currentJobId = sourceJobId;
-    setSelectedJobIdForMode(currentRunMode, sourceJobId);
+    currentJobId = out.job_id;
+    setSelectedJobIdForMode(currentRunMode, out.job_id);
     await pollCurrent();
     setStatus(`${t('replayStartedFmt')(payload.row)} · ${String(out.job_id || '').slice(0, 8)}`, 'running');
   } catch (e) {
@@ -2957,6 +3122,25 @@ function setAccessEntryNote(text, isError = false) {
   if (!node) return;
   node.textContent = text || '';
   node.style.color = isError ? '#be123c' : '#98a2b3';
+}
+
+function normalizeAccessType(value, email = '') {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'internal' || raw === 'external') return raw;
+  const domain = String(email || '').trim().toLowerCase().split('@')[1] || '';
+  return domain === 'fanscom.vn' ? 'internal' : 'external';
+}
+
+function getAccessEmailTypes(policy = currentAccessPolicy) {
+  const data = policy || {};
+  const raw = data.email_types && typeof data.email_types === 'object' ? data.email_types : {};
+  const lists = getAccessPolicyLists(data);
+  const union = Array.from(new Set([...(lists.managed || []), ...(lists.admins || []), ...(lists.allowed || [])]));
+  const out = {};
+  union.forEach(email => {
+    out[email] = normalizeAccessType(raw[email], email);
+  });
+  return out;
 }
 
 function setAccessMailEditorOpen(open, shouldScroll = false) {
@@ -3010,8 +3194,10 @@ function renderMailConfig(config = currentMailConfig) {
 function renderAccessEntryEditor() {
   const emailNode = document.getElementById('access_entry_email');
   const roleNode = document.getElementById('access_entry_role');
+  const typeNode = document.getElementById('access_entry_type');
   if (emailNode) emailNode.value = accessEntryEditorState.email || '';
   if (roleNode) roleNode.value = accessEntryEditorState.role || 'user';
+  if (typeNode) typeNode.value = accessEntryEditorState.type || 'internal';
   const pill = document.getElementById('accessEntryCurrentPill');
   if (pill) pill.textContent = t('accessEntryCurrentFmt')(accessEntryEditorState.originalEmail || accessEntryEditorState.email || '');
   setAccessEntryEditorOpen(accessEntryEditorState.open, false);
@@ -3026,7 +3212,7 @@ function setAccessPolicyNote(text, isError = false) {
 
 function parseAccessEmailLines(text) {
   return Array.from(new Set(String(text || '')
-    .split(/[\n,;]+/)
+    .split(/[\\n,;]+/)
     .map(item => String(item || '').trim().toLowerCase())
     .filter(Boolean)));
 }
@@ -3044,22 +3230,32 @@ function syncAccessPolicyEditors(policy = currentAccessPolicy) {
   const { allowed, admins } = getAccessPolicyLists(policy);
   const allowedNode = document.getElementById('access_allowed_emails');
   const adminNode = document.getElementById('access_admin_emails');
-  if (allowedNode) allowedNode.value = allowed.join('\n');
-  if (adminNode) adminNode.value = admins.join('\n');
+  if (allowedNode) allowedNode.value = allowed.join('\\n');
+  if (adminNode) adminNode.value = admins.join('\\n');
 }
 
 function isValidAccessEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(email || '').trim());
 }
 
 function buildAccessDirectoryRows(policy = currentAccessPolicy) {
   const data = policy || { allowed_emails: [], admin_emails: [], updated_at: null };
   const { allowed, admins, managed } = getAccessPolicyLists(data);
-  const union = Array.from(new Set([...managed, ...admins, ...allowed])).sort((a, b) => a.localeCompare(b));
+  const emailTypes = getAccessEmailTypes(data);
+  const currentEmail = String(authState.email || '').trim().toLowerCase();
+  const union = Array.from(new Set([...managed, ...admins, ...allowed])).sort((a, b) => {
+    const aSelf = !!currentEmail && String(a || '').trim().toLowerCase() === currentEmail;
+    const bSelf = !!currentEmail && String(b || '').trim().toLowerCase() === currentEmail;
+    if (aSelf && !bSelf) return -1;
+    if (!aSelf && bSelf) return 1;
+    return a.localeCompare(b);
+  });
   const updated = data.updated_at ? toLocalStamp(data.updated_at) : '-';
   const rows = union.map(email => {
     const isAdmin = admins.includes(email);
     const canLogin = isAdmin || allowed.includes(email) || managed.includes(email);
+    const type = normalizeAccessType(emailTypes[email], email);
+    const isCurrentUser = !!currentEmail && String(email || '').trim().toLowerCase() === currentEmail;
     return {
       key: email,
       email,
@@ -3067,10 +3263,12 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
       subtitle: isAdmin ? t('accessAdminEntrySub') : t('accessAllowedEntrySub'),
       access: isAdmin ? 'admin' : 'allowed',
       role: isAdmin ? 'admin' : 'user',
+      type,
       status: isAdmin ? 'admin' : (canLogin ? 'active' : 'open'),
       updated,
       initial: email.charAt(0).toUpperCase() || 'G',
       isSystem: false,
+      isCurrentUser,
     };
   });
   rows.unshift({
@@ -3079,7 +3277,8 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
     title: t('accessOpenEntryTitle'),
     subtitle: `${t('accessOpenEntrySub')} · ${t('accessOpenEntryMailFmt')(currentMailConfig.sender_email || '')}`,
     access: 'open',
-    role: 'user',
+    role: 'otp',
+    type: 'internal',
     status: 'open',
     updated,
     initial: 'OTP',
@@ -3089,28 +3288,22 @@ function buildAccessDirectoryRows(policy = currentAccessPolicy) {
     const query = String(accessDirectoryQuery || '').trim().toLowerCase();
     const roleOk = accessDirectoryRole === 'all' || row.role === accessDirectoryRole;
     const scopeOk = accessDirectoryScope === 'all' || row.access === accessDirectoryScope;
-    const queryOk = !query || [row.title, row.subtitle, row.access, row.role, row.status]
+    const typeOk = accessDirectoryType === 'all' || row.type === accessDirectoryType;
+    const queryOk = !query || [row.title, row.subtitle, row.access, row.role, row.type, row.status]
       .join(' ')
       .toLowerCase()
       .includes(query);
-    return roleOk && scopeOk && queryOk;
+    return roleOk && scopeOk && typeOk && queryOk;
   });
 }
 
 function updateAccessDirectoryFilters() {
-  const mapping = {
-    accessRoleFilterAll: accessDirectoryRole === 'all',
-    accessRoleFilterAdmin: accessDirectoryRole === 'admin',
-    accessRoleFilterUser: accessDirectoryRole === 'user',
-    accessScopeFilterAll: accessDirectoryScope === 'all',
-    accessScopeFilterAllowed: accessDirectoryScope === 'allowed',
-    accessScopeFilterAdmin: accessDirectoryScope === 'admin',
-    accessScopeFilterOpen: accessDirectoryScope === 'open',
-  };
-  Object.entries(mapping).forEach(([id, active]) => {
-    const node = document.getElementById(id);
-    if (node) node.classList.toggle('active', !!active);
-  });
+  const roleSelect = document.getElementById('accessRoleFilterSelect');
+  const scopeSelect = document.getElementById('accessScopeFilterSelect');
+  const typeSelect = document.getElementById('accessTypeFilterSelect');
+  if (roleSelect) roleSelect.value = accessDirectoryRole;
+  if (scopeSelect) scopeSelect.value = accessDirectoryScope;
+  if (typeSelect) typeSelect.value = accessDirectoryType;
 }
 
 function renderAccessDirectory(policy = currentAccessPolicy) {
@@ -3124,8 +3317,8 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
     body.innerHTML = `<tr><td colspan="6"><div class="access-empty">${esc(t('accessDirectoryNoMatch'))}</div></td></tr>`;
     return;
   }
-  const roleLabel = role => role === 'admin' ? t('roleAdmin') : t('roleUser');
-  const accessLabel = access => access === 'admin' ? t('accessScopeAdmin') : (access === 'open' ? t('accessScopeOpen') : t('accessScopeAllowed'));
+  const typeLabel = type => type === 'internal' ? t('accessTypeInternal') : t('accessTypeExternal');
+  const roleLabel = role => role === 'admin' ? t('roleAdmin') : (role === 'otp' ? t('accessScopeOpen') : t('roleUser'));
   const statusLabel = status => status === 'admin' ? t('accessStatusAdmin') : (status === 'open' ? t('accessStatusOpen') : t('accessStatusActive'));
   const rowActions = row => {
     if (row.isSystem) {
@@ -3133,11 +3326,8 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
     }
     const token = encodeURIComponent(row.email);
     const edit = `<button class="access-row-btn edit" type="button" onclick="openAccessEntryEditor('${token}')">${esc(t('accessMailEdit'))}</button>`;
-    const promote = row.role === 'admin'
-      ? `<button class="access-row-btn user" type="button" onclick="changeAccessRole('${token}','user')">${esc(t('accessMakeUser'))}</button>`
-      : `<button class="access-row-btn admin" type="button" onclick="changeAccessRole('${token}','admin')">${esc(t('accessMakeAdmin'))}</button>`;
     const remove = `<button class="access-row-btn remove" type="button" onclick="removeAccessEmail('${token}')">${esc(t('accessRemove'))}</button>`;
-    return `<div class="access-row-actions">${edit}${promote}${remove}</div>`;
+    return `<div class="access-row-actions">${edit}${remove}</div>`;
   };
   body.innerHTML = rows.map(row => `
     <tr>
@@ -3145,13 +3335,13 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
         <div class="access-person">
           <div class="access-avatar ${esc(row.access)}">${esc(row.initial)}</div>
           <div class="access-person-meta">
-            <div class="access-person-name">${esc(row.title)}</div>
+            <div class="access-person-name">${esc(row.title)}${row.isCurrentUser ? ` <span class="access-you-tag">(${esc(t('accessYouTag'))})</span>` : ''}</div>
             <div class="access-person-sub">${esc(row.subtitle)}</div>
           </div>
         </div>
       </td>
-      <td><span class="access-table-pill ${esc(row.access)}">${esc(accessLabel(row.access))}</span></td>
       <td><span class="access-role-pill ${esc(row.role)}">${esc(roleLabel(row.role))}</span></td>
+      <td><span class="access-type-pill ${esc(row.type)}">${esc(typeLabel(row.type))}</span></td>
       <td><span class="access-status ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td>
       <td>${esc(row.updated)}</td>
       <td>${rowActions(row)}</td>
@@ -3173,16 +3363,23 @@ function setAccessDirectoryScope(scope) {
   renderAccessDirectory(currentAccessPolicy);
 }
 
+function setAccessDirectoryType(type) {
+  accessDirectoryType = ['all', 'internal', 'external'].includes(String(type || '').toLowerCase()) ? String(type).toLowerCase() : 'all';
+  renderAccessDirectory(currentAccessPolicy);
+}
+
 function openAccessEntryEditor(email) {
   const target = decodeURIComponent(String(email || '')).trim().toLowerCase();
   if (!target) return;
   setAccessMailEditorOpen(false, false);
   const lists = getAccessPolicyLists(currentAccessPolicy);
+  const emailTypes = getAccessEmailTypes(currentAccessPolicy);
   accessEntryEditorState = {
     open: true,
     originalEmail: target,
     email: target,
     role: lists.admins.includes(target) ? 'admin' : 'user',
+    type: normalizeAccessType(emailTypes[target], target),
   };
   renderAccessEntryEditor();
   setAccessEntryNote('');
@@ -3229,17 +3426,20 @@ async function saveAccessEntryEditor() {
   const originalEmail = String(accessEntryEditorState.originalEmail || '').trim().toLowerCase();
   const nextEmail = String(document.getElementById('access_entry_email')?.value || '').trim().toLowerCase();
   const nextRole = String(document.getElementById('access_entry_role')?.value || 'user').trim().toLowerCase();
+  const nextType = normalizeAccessType(String(document.getElementById('access_entry_type')?.value || 'internal').trim().toLowerCase(), nextEmail);
   if (!isValidAccessEmail(nextEmail)) {
     setAccessEntryNote(t('accessEntryInvalid'), true);
     return;
   }
   const lists = getAccessPolicyLists(currentAccessPolicy);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy) };
   const allowedSet = new Set(lists.allowed);
   const adminSet = new Set(lists.admins);
   const managedSet = new Set(lists.managed);
   allowedSet.delete(originalEmail);
   adminSet.delete(originalEmail);
   managedSet.delete(originalEmail);
+  delete emailTypes[originalEmail];
   if (nextRole === 'admin') {
     adminSet.add(nextEmail);
     if (allowedSet.size) allowedSet.add(nextEmail);
@@ -3250,11 +3450,12 @@ async function saveAccessEntryEditor() {
   } else {
     managedSet.add(nextEmail);
   }
-  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet) };
+  emailTypes[nextEmail] = nextType;
+  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet), email_types: emailTypes };
   setAccessPolicyListsInEditor(Array.from(allowedSet), Array.from(adminSet));
   try {
     await saveAccessPolicy();
-    accessEntryEditorState = { open: false, originalEmail: nextEmail, email: nextEmail, role: nextRole === 'admin' ? 'admin' : 'user' };
+    accessEntryEditorState = { open: false, originalEmail: nextEmail, email: nextEmail, role: nextRole === 'admin' ? 'admin' : 'user', type: nextType };
     renderAccessEntryEditor();
     setAccessPolicyNote(t('accessEntrySaved'));
   } catch (e) {
@@ -3268,16 +3469,18 @@ function setAccessPolicyListsInEditor(allowed, admins) {
   const normalizedAdmins = Array.from(new Set((admins || []).map(item => String(item || '').trim().toLowerCase()).filter(Boolean)));
   const currentManaged = Array.isArray(currentAccessPolicy?.managed_emails) ? currentAccessPolicy.managed_emails : [];
   const normalizedManaged = Array.from(new Set(currentManaged.map(item => String(item || '').trim().toLowerCase()).filter(Boolean)));
+  const normalizedTypes = getAccessEmailTypes({ ...(currentAccessPolicy || {}), managed_emails: normalizedManaged, allowed_emails: normalizedAllowed, admin_emails: normalizedAdmins });
   currentAccessPolicy = {
     ...(currentAccessPolicy || {}),
     allowed_emails: normalizedAllowed,
     admin_emails: normalizedAdmins,
     managed_emails: normalizedManaged,
+    email_types: normalizedTypes,
   };
   const allowedNode = document.getElementById('access_allowed_emails');
   const adminNode = document.getElementById('access_admin_emails');
-  if (allowedNode) allowedNode.value = normalizedAllowed.join('\n');
-  if (adminNode) adminNode.value = normalizedAdmins.join('\n');
+  if (allowedNode) allowedNode.value = normalizedAllowed.join('\\n');
+  if (adminNode) adminNode.value = normalizedAdmins.join('\\n');
 }
 
 async function addAccessEmailFromSearch() {
@@ -3291,10 +3494,11 @@ async function addAccessEmailFromSearch() {
   const lists = getAccessPolicyLists(currentAccessPolicy);
   const managedSet = new Set(lists.managed);
   managedSet.add(email);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy), [email]: normalizeAccessType('', email) };
   if (lists.allowed.length) {
     lists.allowed = Array.from(new Set([...lists.allowed, email]));
   }
-  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet) };
+  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet), email_types: emailTypes };
   setAccessPolicyListsInEditor(lists.allowed, lists.admins);
   try {
     await saveAccessPolicy();
@@ -3312,6 +3516,7 @@ async function changeAccessRole(email, nextRole) {
   const allowedSet = new Set(lists.allowed);
   const adminSet = new Set(lists.admins);
   const managedSet = new Set(lists.managed);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy) };
   if (String(nextRole || '').toLowerCase() === 'admin') {
     adminSet.add(target);
     if (allowedSet.size) allowedSet.add(target);
@@ -3320,7 +3525,8 @@ async function changeAccessRole(email, nextRole) {
     adminSet.delete(target);
     managedSet.add(target);
   }
-  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet) };
+  emailTypes[target] = normalizeAccessType(emailTypes[target], target);
+  currentAccessPolicy = { ...(currentAccessPolicy || {}), managed_emails: Array.from(managedSet), email_types: emailTypes };
   setAccessPolicyListsInEditor(Array.from(allowedSet), Array.from(adminSet));
   try {
     await saveAccessPolicy();
@@ -3334,9 +3540,12 @@ async function removeAccessEmail(email) {
   const target = decodeURIComponent(String(email || '')).trim().toLowerCase();
   if (!target) return;
   const lists = getAccessPolicyLists(currentAccessPolicy);
+  const emailTypes = { ...getAccessEmailTypes(currentAccessPolicy) };
+  delete emailTypes[target];
   currentAccessPolicy = {
     ...(currentAccessPolicy || {}),
     managed_emails: lists.managed.filter(item => item !== target),
+    email_types: emailTypes,
   };
   setAccessPolicyListsInEditor(
     lists.allowed.filter(item => item !== target),
@@ -3355,14 +3564,6 @@ function renderAccessPolicySummary(policy = currentAccessPolicy) {
   const { allowed, admins, managed } = getAccessPolicyLists(data);
   const allowedUnion = Array.from(new Set([...managed, ...admins, ...allowed]));
   const updated = data.updated_at ? toLocalStamp(data.updated_at) : '-';
-  const currentRoleNode = document.getElementById('accessCurrentRole');
-  if (currentRoleNode) currentRoleNode.textContent = getRoleLabel();
-  const updatedNode = document.getElementById('accessUpdatedAt');
-  if (updatedNode) updatedNode.textContent = `${t('accessSummaryUpdated')}: ${updated}`;
-  const allowedCountNode = document.getElementById('accessAllowedCount');
-  if (allowedCountNode) allowedCountNode.textContent = allowedUnion.length;
-  const adminCountNode = document.getElementById('accessAdminCount');
-  if (adminCountNode) adminCountNode.textContent = admins.length;
   const host = document.getElementById('accessSummaryTimeline');
   if (!host) return;
   const chips = (items, emptyText) => {
@@ -3388,20 +3589,11 @@ function syncAuthUI() {
   const accessButton = document.getElementById('access_nav_button');
   if (accessButton) accessButton.style.display = isAdminUser() ? 'flex' : 'none';
   const settingsButton = document.getElementById('settings_nav_button');
-  if (settingsButton) settingsButton.style.display = isAdminUser() ? 'flex' : 'none';
-  const settingsActionButtons = document.querySelectorAll('#view-settings .run-actions button');
-  settingsActionButtons.forEach(button => {
-    if (!(button instanceof HTMLButtonElement)) return;
-    if (button.id === 'saveAccessButton' || button.id === 'reloadAccessButton') return;
-    button.style.display = isAdminUser() ? '' : 'none';
-  });
+  if (settingsButton) settingsButton.style.display = 'flex';
   const stateNode = document.querySelector('#view-settings .state');
-  if (stateNode) stateNode.textContent = isAdminUser() ? t('settingsState') : t('adminOnly');
+  if (stateNode) stateNode.textContent = t('settingsState');
   const accessStateNode = document.querySelector('#view-access .state');
   if (accessStateNode) accessStateNode.textContent = isAdminUser() ? t('accessState') : t('adminOnly');
-  if (!isAdminUser() && document.getElementById('view-settings')?.classList.contains('active')) {
-    switchView('overview');
-  }
   if (!isAdminUser() && document.getElementById('view-access')?.classList.contains('active')) {
     switchView('overview');
   }
@@ -3483,17 +3675,70 @@ function renderRunShareInfo(settings) {
   emailNode.textContent = s.service_account_email || t('noServiceEmail');
 }
 
+function renderServiceAccountCard(settings) {
+  const s = settings || {};
+  const card = document.getElementById('settings_service_card');
+  if (!card) return;
+  card.style.display = s.service_account_fixed ? 'none' : '';
+}
+
+function resetServiceAccountFileInput() {
+  const fileInput = document.getElementById('settings_service_account_file');
+  const hiddenInput = document.getElementById('settings_service_account_json');
+  const hint = document.getElementById('settings_service_account_file_hint');
+  if (fileInput) fileInput.value = '';
+  if (hiddenInput) hiddenInput.value = '';
+  if (hint) {
+    delete hint.dataset.fileName;
+    hint.textContent = t('serviceJsonNoFile');
+  }
+}
+
+function handleServiceAccountFileChange(event) {
+  const input = event?.target || document.getElementById('settings_service_account_file');
+  const file = input?.files?.[0];
+  const hiddenInput = document.getElementById('settings_service_account_json');
+  const hint = document.getElementById('settings_service_account_file_hint');
+  if (!file) {
+    if (hiddenInput) hiddenInput.value = '';
+    if (hint) {
+      delete hint.dataset.fileName;
+      hint.textContent = t('serviceJsonNoFile');
+    }
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (hiddenInput) hiddenInput.value = String(reader.result || '');
+    if (hint) {
+      hint.dataset.fileName = file.name;
+      hint.textContent = t('serviceJsonSelectedFmt')(file.name);
+    }
+  };
+  reader.onerror = () => {
+    if (hiddenInput) hiddenInput.value = '';
+    if (hint) {
+      delete hint.dataset.fileName;
+      hint.textContent = t('serviceJsonNoFile');
+    }
+    setSettingsNote(t('serviceJsonReadError'), true);
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
 function renderSettingsSummary(settings) {
   const s = settings || {};
   document.getElementById('settings_summary_viewport').textContent = `${s.viewport_width || '-'} x ${s.viewport_height || '-'}`;
   document.getElementById('settings_summary_timeout').textContent = `${s.page_timeout_ms || '-'} ms`;
   document.getElementById('settings_summary_full_page').textContent = s.full_page_capture ? t('fullPage') : t('viewportOnly');
-  document.getElementById('settings_summary_service_account').textContent = s.service_account_saved ? t('saved') : t('notSaved');
+  const serviceState = s.service_account_fixed ? t('fixedCredentials') : (s.service_account_saved ? t('saved') : t('notSaved'));
+  document.getElementById('settings_summary_service_account').textContent = serviceState;
   document.getElementById('settings_summary_service_email').textContent = s.service_account_email || t('noServiceEmail');
   renderRunShareInfo(s);
+  renderServiceAccountCard(s);
   const status = document.getElementById('settings_service_status');
   status.className = 'badge ' + (s.service_account_saved ? 'ok' : 'info');
-  status.textContent = s.service_account_saved ? t('saved') : t('notSaved');
+  status.textContent = serviceState;
 }
 
 async function loadDefaults() {
@@ -3515,10 +3760,6 @@ async function loadDefaults() {
 }
 
 async function saveSidebarSettings() {
-  if (!isAdminUser()) {
-    setSettingsNote(t('adminOnly'), true);
-    return;
-  }
   try {
     const payload = {
       credentials_path: currentSettingsCache.credentials_path || '',
@@ -3535,7 +3776,7 @@ async function saveSidebarSettings() {
     const out = await req('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
     const saved = out.settings || payload;
     currentSettingsCache = saved;
-    document.getElementById('settings_service_account_json').value = '';
+    resetServiceAccountFileInput();
     renderSettingsSummary(saved);
     if (String(sheet_url.value || '').trim()) scheduleSheetNameSuggestions(true);
     setSettingsNote(t('saved'));
@@ -3568,16 +3809,22 @@ async function saveAccessPolicy() {
     const allowedNode = document.getElementById('access_allowed_emails');
     const adminNode = document.getElementById('access_admin_emails');
     const payload = {
-      allowed_emails: allowedNode ? allowedNode.value : (currentAccessPolicy.allowed_emails || []).join('\n'),
-      admin_emails: adminNode ? adminNode.value : (currentAccessPolicy.admin_emails || []).join('\n'),
+      allowed_emails: allowedNode ? allowedNode.value : (currentAccessPolicy.allowed_emails || []).join('\\n'),
+      admin_emails: adminNode ? adminNode.value : (currentAccessPolicy.admin_emails || []).join('\\n'),
       managed_emails: Array.isArray(currentAccessPolicy.managed_emails) ? currentAccessPolicy.managed_emails : [],
+      email_types: currentAccessPolicy.email_types || {},
     };
     const out = await req('/api/admin/access-policy', { method: 'POST', body: JSON.stringify(payload) });
     currentAccessPolicy = out.policy || {};
     syncAccessPolicyEditors(currentAccessPolicy);
     renderAccessDirectory(currentAccessPolicy);
     renderAccessPolicySummary(currentAccessPolicy);
-    setAccessPolicyNote(t('accessPolicySaved'));
+    const sentCount = Array.isArray(out.notifications?.sent) ? out.notifications.sent.length : 0;
+    const failedCount = Array.isArray(out.notifications?.failed) ? out.notifications.failed.length : 0;
+    if (sentCount && failedCount) setAccessPolicyNote(t('accessNotifyPartialFmt')(sentCount, failedCount));
+    else if (sentCount) setAccessPolicyNote(`${t('accessPolicySaved')} · ${t('accessNotifySentFmt')(sentCount)}`);
+    else if (failedCount) setAccessPolicyNote(t('accessNotifyPartialFmt')(0, failedCount), true);
+    else setAccessPolicyNote(t('accessPolicySaved'));
   } catch (e) {
     setAccessPolicyNote(e.message, true);
     throw e;
@@ -3586,9 +3833,17 @@ async function saveAccessPolicy() {
 
 async function launchChrome() {
   try {
+    const browserPort = getModeBasePort(currentRunMode);
     const out = await req('/api/chrome/launch', {
       method: 'POST',
-      body: JSON.stringify({ run_mode: currentRunMode, browser_port: getModeBasePort(currentRunMode) })
+      body: JSON.stringify({ run_mode: currentRunMode, browser_port: browserPort })
+    });
+    await logActivityEvent({
+      kind: 'chrome',
+      level: 'info',
+      run_mode: currentRunMode,
+      browser_port: browserPort,
+      message: `${prettyWord(currentRunMode)}: đã mở Chrome ${browserPort}`,
     });
     setStatus(out.message || 'Chrome launch requested', 'running');
   } catch (e) { alert(e.message); }
@@ -3644,8 +3899,13 @@ async function stopJob() {
 
 async function refreshJobs() {
   try {
-    const out = await req('/api/jobs');
+    const [out, activityOut] = await Promise.all([
+      req('/api/jobs'),
+      req('/api/activity?limit=50'),
+    ]);
     const jobs = out.jobs || [];
+    currentActivityEvents = activityOut.items || [];
+    processJobLifecycleNotifications(jobs);
     jobsCache = jobs;
     syncModeSelections();
     if (currentJobId && !jobs.some(job => job.id === currentJobId)) currentJobId = null;
@@ -3669,6 +3929,7 @@ async function refreshJobs() {
     document.getElementById('jobsBody').innerHTML = rows;
     renderOverview();
     renderProjects();
+    renderActivities(getCombinedActivities());
     return true;
   } catch (e) {
     setStatus('Load jobs error: ' + e.message, 'failed');
@@ -3723,11 +3984,13 @@ async function pollCurrent() {
     const lg = await req('/api/jobs/' + currentJobId + '/logs?limit=200');
     const logs = lg.logs || [];
     currentLogsCache = logs;
+    const targetJob = (jobsCache || []).find(job => job.id === currentJobId);
+    if (targetJob) targetJob.recent_logs = logs.slice(-20);
     renderRunMonitor(st, logs);
     updateRunActionButtons(st);
     renderOverview();
     renderProjects();
-    renderActivities(logs);
+    renderActivities(getCombinedActivities());
   } catch (e) {
     setStatus('Poll error: ' + e.message, 'failed');
   }
@@ -3745,7 +4008,7 @@ async function init() {
   await refreshJobs();
   await pollCurrent();
   renderOverview();
-  renderActivities([]);
+  renderActivities(getCombinedActivities());
   renderRunMonitor(null, []);
   renderAccessPolicySummary(currentAccessPolicy);
   ensureTimers();
