@@ -3593,11 +3593,21 @@ function syncAuthUI() {
     roleBadge.textContent = getRoleLabel();
     roleBadge.className = `auth-role auth-role-${authState.role || 'user'}`;
   }
+  const authEmailNode = document.querySelector('.auth-email');
+  if (authEmailNode) {
+    const emailText = String(authState.email || '').trim() || '-';
+    authEmailNode.textContent = emailText;
+    authEmailNode.title = emailText === '-' ? '' : emailText;
+  }
   renderOverviewGreeting();
   const accessButton = document.getElementById('access_nav_button');
   if (accessButton) accessButton.style.display = isAdminUser() ? 'flex' : 'none';
   const settingsButton = document.getElementById('settings_nav_button');
   if (settingsButton) settingsButton.style.display = 'flex';
+  const accessView = document.getElementById('view-access');
+  if (accessView) accessView.style.display = isAdminUser() ? '' : 'none';
+  const settingsView = document.getElementById('view-settings');
+  if (settingsView) settingsView.style.display = '';
   const stateNode = document.querySelector('#view-settings .state');
   if (stateNode) stateNode.textContent = t('settingsState');
   const accessStateNode = document.querySelector('#view-access .state');

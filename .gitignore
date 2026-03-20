@@ -2,6 +2,7 @@
 credentials.inline.json
 .env
 otp_sender.env
+cloudflare_tunnel.env
 
 # logs
 *.log
