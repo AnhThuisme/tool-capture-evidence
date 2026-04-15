@@ -1,8 +1,9 @@
 {
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
+  "buildCommand": "python scripts/build_netlify_static.py",
+  "outputDirectory": "netlify_src",
+  "functions": {
+    "api/**/*.py": {
+      "runtime": "python3.12"
     }
-  ]
+  }
 }
