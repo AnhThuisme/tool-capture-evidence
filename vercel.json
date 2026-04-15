@@ -1,9 +1,4 @@
 {
   "buildCommand": "python scripts/build_netlify_static.py",
-  "outputDirectory": "netlify_src",
-  "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.12"
-    }
-  }
+  "outputDirectory": "netlify_src"
 }
