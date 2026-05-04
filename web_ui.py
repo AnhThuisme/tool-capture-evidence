@@ -1098,6 +1098,14 @@ def _outlook_auth_enabled() -> bool:
     return str(os.getenv("WEB_AUTH_USE_OUTLOOK", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _running_on_render() -> bool:
+    return bool(str(os.getenv("RENDER", "")).strip())
+
+
+def _allow_smtp_fallback_on_render() -> bool:
+    return str(os.getenv("WEB_AUTH_ALLOW_SMTP_FALLBACK_ON_RENDER", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _gmail_api_config() -> dict[str, Any]:
     client_id = str(os.getenv("GMAIL_API_CLIENT_ID", "") or os.getenv("GOOGLE_CLIENT_ID", "")).strip()
     client_secret = str(os.getenv("GMAIL_API_CLIENT_SECRET", "") or os.getenv("GOOGLE_CLIENT_SECRET", "")).strip()
@@ -1370,6 +1378,16 @@ def _send_platform_email(to_email: str, subject: str, plain_body: str, html_body
         except Exception as gmail_exc:
             # OAuth refresh token can break on cloud deploys; fallback to SMTP/Outlook instead of blocking login.
             gmail_detail = getattr(gmail_exc, "detail", None) if isinstance(gmail_exc, HTTPException) else str(gmail_exc)
+            # Render free instances often block SMTP ports, so avoid misleading SMTP network errors by default.
+            if _running_on_render() and not _allow_smtp_fallback_on_render():
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"Gửi mail thất bại. Google OAuth: {gmail_detail}. "
+                        "Render đang tắt SMTP fallback mặc định; hãy kiểm tra lại GMAIL_API_CLIENT_ID, "
+                        "GMAIL_API_CLIENT_SECRET, GMAIL_API_REFRESH_TOKEN, GMAIL_API_FROM_EMAIL."
+                    ),
+                ) from gmail_exc
             try:
                 _send_email_via_smtp(to_email, subject, plain_body, html_body, from_name)
                 return
@@ -1428,7 +1446,14 @@ def _gmail_api_access_token(config: dict[str, Any]) -> str:
     except Exception:
         data = {}
     if not (200 <= resp.status_code < 300):
-        detail = data.get("error_description") or data.get("error") or resp.text or f"HTTP {resp.status_code}"
+        raw_err = data.get("error")
+        err_code = raw_err if isinstance(raw_err, str) else ""
+        detail = data.get("error_description") or err_code or resp.text or f"HTTP {resp.status_code}"
+        if err_code == "invalid_grant":
+            detail = (
+                f"{detail}. Refresh token không hợp lệ/hết hạn/không cùng OAuth client. "
+                "Hãy tạo lại refresh token (scope gmail.send) đúng với CLIENT_ID/CLIENT_SECRET hiện tại."
+            )
         raise HTTPException(status_code=500, detail=f"Google OAuth thất bại: {detail}")
     token = str(data.get("access_token") or "").strip()
     if not token:
