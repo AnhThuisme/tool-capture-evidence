@@ -42,6 +42,7 @@ def main() -> int:
         "__SETTINGS_NAV_STYLE__": "",
         "__SETTINGS_SECTION_STYLE__": "",
         "__AUTH_IS_ADMIN__": "false",
+        "__LOCAL_BROWSER_HOSTS__": '["127.0.0.1","localhost"]',
     }
     for old, new in replacements.items():
         root_html = root_html.replace(old, new)

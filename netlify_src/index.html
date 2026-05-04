@@ -143,10 +143,10 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-directory-foot .settings-note{margin:0;min-height:auto;flex:1}
 .access-layout{margin-top:12px}
 .main{padding:14px 18px 18px}
-.jobs-wrap::-webkit-scrollbar,.monitor-table-wrap::-webkit-scrollbar{width:10px;height:10px}
-.jobs-wrap::-webkit-scrollbar-thumb,.monitor-table-wrap::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
-.jobs-wrap::-webkit-scrollbar-track,.monitor-table-wrap::-webkit-scrollbar-track{background:transparent}
-[data-theme="dark"] .jobs-wrap::-webkit-scrollbar-thumb,[data-theme="dark"] .monitor-table-wrap::-webkit-scrollbar-thumb{background:#41516d;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+.jobs-wrap::-webkit-scrollbar,.monitor-table-wrap::-webkit-scrollbar,#projectsList::-webkit-scrollbar,#activitiesTimeline::-webkit-scrollbar{width:10px;height:10px}
+.jobs-wrap::-webkit-scrollbar-thumb,.monitor-table-wrap::-webkit-scrollbar-thumb,#projectsList::-webkit-scrollbar-thumb,#activitiesTimeline::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+.jobs-wrap::-webkit-scrollbar-track,.monitor-table-wrap::-webkit-scrollbar-track,#projectsList::-webkit-scrollbar-track,#activitiesTimeline::-webkit-scrollbar-track{background:transparent}
+[data-theme="dark"] .jobs-wrap::-webkit-scrollbar-thumb,[data-theme="dark"] .monitor-table-wrap::-webkit-scrollbar-thumb,[data-theme="dark"] #projectsList::-webkit-scrollbar-thumb,[data-theme="dark"] #activitiesTimeline::-webkit-scrollbar-thumb{background:#41516d;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
 .topbar{display:flex;justify-content:flex-end;align-items:center;border-bottom:1px solid var(--line);padding-bottom:10px}
 .actions{display:flex;gap:8px;align-items:center}
 .auth-box{display:inline-flex;align-items:center;gap:8px;padding:4px 6px 4px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel-soft);max-width:380px}
@@ -289,15 +289,27 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .action-btn .action-label{white-space:nowrap}
 .action-btn.start{background:linear-gradient(135deg,#3b82f6,#2563eb);border-color:#2563eb;color:#fff}
 .action-btn.start .action-icon{background:rgba(255,255,255,.18);color:#fff}
+.action-btn.pause{background:linear-gradient(135deg,#ef4444,#dc2626);border-color:#b91c1c;color:#fff}
+.action-btn.pause .action-icon{background:rgba(255,255,255,.18);color:#fff}
 .action-btn.resume{background:linear-gradient(135deg,#22c55e,#16a34a);border-color:#1f9a4a;color:#fff}
 .action-btn.resume .action-icon{background:rgba(255,255,255,.18);color:#fff}
 .action-btn.red{background:linear-gradient(135deg,#fff1f2,#ffe4e6);border-color:#fecdd3;color:#be123c}
 .action-btn.red .action-icon{background:rgba(190,24,93,.1);color:#be123c}
+.action-btn.soft{background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:none}
+.action-btn.soft:hover{box-shadow:none;filter:none}
+.action-btn.soft .action-icon{background:rgba(148,163,184,.14);color:var(--muted)}
+.action-btn.soft.stop{background:#fff7f7;border-color:#fecdd3;color:#be123c}
+.action-btn.soft.stop .action-icon{background:rgba(190,24,93,.1);color:#be123c}
 [data-theme="dark"] .action-btn{box-shadow:none}
 [data-theme="dark"] .action-btn.start{background:linear-gradient(135deg,#3b82f6,#1d4ed8);border-color:#2563eb}
+[data-theme="dark"] .action-btn.pause{background:linear-gradient(135deg,#dc2626,#991b1b);border-color:#7f1d1d}
 [data-theme="dark"] .action-btn.resume{background:linear-gradient(135deg,#22c55e,#15803d);border-color:#1d8d46}
 [data-theme="dark"] .action-btn.red{background:linear-gradient(135deg,#2b1822,#351a24);border-color:#5b2435;color:#fda4af}
 [data-theme="dark"] .action-btn.red .action-icon{background:rgba(253,164,175,.12);color:#fda4af}
+[data-theme="dark"] .action-btn.soft{background:var(--panel-soft);border-color:var(--line);color:var(--text)}
+[data-theme="dark"] .action-btn.soft .action-icon{background:rgba(148,163,184,.12);color:#cbd5e1}
+[data-theme="dark"] .action-btn.soft.stop{background:#2b1822;border-color:#5b2435;color:#fda4af}
+[data-theme="dark"] .action-btn.soft.stop .action-icon{background:rgba(253,164,175,.12);color:#fda4af}
 .run-overwrite-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer}
 .run-overwrite-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
 .run-overwrite-title{font-size:13px;font-weight:700;color:var(--text)}
@@ -328,9 +340,16 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .monitor-progress-track span{display:block;height:100%;width:0;background:linear-gradient(90deg,#6b63ff,#7d77ff);transition:width .35s ease}
 .monitor-progress-detail{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.45;min-height:18px}
 .monitor-error-main{font-size:24px;font-weight:700;margin-top:10px}
+.monitor-error-summary{font-size:12px;color:var(--text);margin-top:8px;line-height:1.45;min-height:18px}
+.monitor-issue-table-wrap{margin-top:10px;padding:10px 12px;border:1px solid rgba(148,163,184,.18);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02)),var(--panel);display:flex;flex-direction:column;gap:8px}
+.monitor-issue-table-wrap[hidden]{display:none !important}
+.monitor-issue-item{display:grid;grid-template-columns:88px minmax(0,1fr);gap:10px;align-items:flex-start;padding:8px 10px;border-radius:12px;background:rgba(148,163,184,.08)}
+.monitor-issue-item strong{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7b8aa5}
+.monitor-issue-item span{font-size:12px;line-height:1.5;color:var(--text);word-break:break-word}
 .monitor-table-card{margin-top:14px;border:1px solid var(--line);border-radius:22px;overflow:hidden;background:var(--panel-soft)}
 .monitor-table-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
 .monitor-table-title{font-size:16px;font-weight:700}
+.monitor-table-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .monitor-export-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font-size:12px;font-weight:700;cursor:pointer}
 .monitor-export-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .monitor-export-btn:hover{border-color:rgba(47,128,237,.35);color:var(--blue)}
@@ -434,6 +453,7 @@ linear-gradient(to right, transparent, transparent)}
 .pad{padding:14px}
 .big-number{font-size:30px;font-weight:700}
 .list{display:flex;flex-direction:column;gap:8px}
+#projectsList{max-height:min(72vh,980px);overflow-y:auto;padding-right:4px}
 .list-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-soft);font-size:12px}
 .project-item{width:100%;text-align:left;cursor:pointer;gap:12px;background:var(--panel-soft)}
 .project-item.active{border-color:#bfdbfe;background:var(--blue-soft)}
@@ -482,7 +502,21 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .mode-pill.mode-seeding{background:#153527;color:#9be6be;border-color:#25573d}
 [data-theme="dark"] .mode-pill.mode-booking{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
 [data-theme="dark"] .mode-pill.mode-scan{background:#1a2940;color:#dbe6f5;border-color:#355072}
-.project-item-side{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.project-item-side{display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.project-item-progress{font-size:12px;font-weight:700;color:var(--text)}
+.project-status-badge{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 10px;border-radius:999px;border:1px solid transparent;font-size:11px;font-weight:700;letter-spacing:.01em}
+.project-status-badge.status-queued{background:#f8fafc;color:#475569;border-color:#cbd5e1}
+.project-status-badge.status-running{background:#ede9fe;color:#6d28d9;border-color:#c4b5fd}
+.project-status-badge.status-paused{background:#fff7ed;color:#c2410c;border-color:#fdba74}
+.project-status-badge.status-stopped{background:#f8fafc;color:#64748b;border-color:#cbd5e1}
+.project-status-badge.status-completed{background:#eef4ff;color:#1d4ed8;border-color:#bfdbfe}
+.project-status-badge.status-failed{background:#fff1f2;color:#be123c;border-color:#fecdd3}
+[data-theme="dark"] .project-status-badge.status-queued{background:#182338;color:#dbe6f5;border-color:#475467}
+[data-theme="dark"] .project-status-badge.status-running{background:#2a2152;color:#ddd6fe;border-color:#6d56d6}
+[data-theme="dark"] .project-status-badge.status-paused{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
+[data-theme="dark"] .project-status-badge.status-stopped{background:#182338;color:#cbd5e1;border-color:#475467}
+[data-theme="dark"] .project-status-badge.status-completed{background:#1a2940;color:#b7d2f3;border-color:#355072}
+[data-theme="dark"] .project-status-badge.status-failed{background:#2a1620;color:#fda4af;border-color:#5b2435}
 .project-delete-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #fecaca;border-radius:10px;background:#fff1f2;color:#be123c;cursor:pointer}
 .project-delete-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .project-delete-btn:hover{background:#ffe4e6}
@@ -498,6 +532,7 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .project-nav-btn:hover{background:#223149}
 .timeline{display:flex;flex-direction:column;gap:10px}
 .timeline-item{padding:10px 12px;border-left:3px solid var(--blue);background:var(--panel-soft);border-radius:0 10px 10px 0}
+#activitiesTimeline{max-height:min(74vh,960px);overflow-y:auto;padding-right:4px}
 .settings-layout{display:grid;grid-template-columns:1.1fr .9fr;gap:12px}
 .badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;border:1px solid transparent}
 .badge.info{background:#e8f1ff;color:#1d4ed8;border-color:#bfdbfe}
@@ -717,11 +752,11 @@ linear-gradient(to right, transparent, transparent)}
                     </span>
                     <span id="startJobLabel" class="action-label">Start Job</span>
                   </button>
-                  <button class="btn red action-btn" onclick="stopJob()">
-                    <span id="stopJobIconWrap" class="action-icon" aria-hidden="true">
-                      <svg id="stopJobIcon" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg>
+                  <button class="btn action-btn pause" onclick="stopJob()">
+                    <span id="pauseJobIconWrap" class="action-icon" aria-hidden="true">
+                      <svg id="pauseJobIcon" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg>
                     </span>
-                    <span id="stopJobLabel" class="action-label">Stop Job</span>
+                    <span id="pauseJobLabel" class="action-label">Stop</span>
                   </button>
                 </div>
               </div>
@@ -760,16 +795,33 @@ linear-gradient(to right, transparent, transparent)}
               <section class="monitor-mini">
                 <div id="runMonitorErrorLabel" class="monitor-mini-label">Loi theo link sheet</div>
                 <div id="runMonitorErrorMain" class="monitor-error-main">Khong co loi</div>
-                <div id="runMonitorErrorMeta" class="monitor-mini-sub">Success 0 - Failed 0</div>
+                <div id="runMonitorIssueTableWrap" class="monitor-issue-table-wrap" hidden>
+                  <div class="monitor-issue-item">
+                    <strong id="runMonitorIssueRowsLabel">Dong loi</strong>
+                    <span id="runMonitorErrorRows">-</span>
+                  </div>
+                  <div class="monitor-issue-item">
+                    <strong id="runMonitorIssueStatsLabel">Thong ke</strong>
+                    <span id="runMonitorErrorMeta">Success 0 - Failed 0</span>
+                  </div>
+                </div>
               </section>
             </div>
             <div class="monitor-table-card">
-              <div class="monitor-table-head">
-                <div id="runMonitorTableTitle" class="monitor-table-title">Bang log xu ly</div>
-                <button id="exportLogBtn" class="monitor-export-btn" type="button" onclick="exportCurrentLog()">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 19h14"></path></svg>
-                  <span id="exportLogLabel">Xuất log Excel</span>
-                </button>
+                <div class="monitor-table-head">
+                  <div id="runMonitorTableTitle" class="monitor-table-title">Bang log xu ly</div>
+                  <div class="monitor-table-actions">
+                    <button class="btn action-btn soft" type="button" onclick="continueJob()">
+                      <span id="continueJobIconWrap" class="action-icon" aria-hidden="true">
+                        <svg id="continueJobIcon" viewBox="0 0 24 24"><path d="M8 6.5v11l9-5.5-9-5.5Z"></path></svg>
+                      </span>
+                      <span id="continueJobLabel" class="action-label">Continue</span>
+                    </button>
+                  <button id="exportLogBtn" class="monitor-export-btn" type="button" onclick="exportCurrentLog()">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 19h14"></path></svg>
+                    <span id="exportLogLabel">Xuất log Excel</span>
+                  </button>
+                </div>
               </div>
               <div class="monitor-table-wrap">
                 <table class="monitor-table">
@@ -1077,6 +1129,7 @@ const authState = {
   role: 'user',
   isAdmin: false,
 };
+const LOCAL_BROWSER_HOSTS = new Set(["127.0.0.1","localhost"]);
 const localAgentState = {
   origin: localStorage.getItem('toolEvidence.localAgentOrigin') || 'http://127.0.0.1:8765',
   enabled: false,
@@ -1091,9 +1144,12 @@ const LOCAL_AGENT_RUNTIME_PREFIXES = [
   '/api/jobs',
 ];
 
+function isConfiguredLocalBrowserHost(host) {
+  return LOCAL_BROWSER_HOSTS.has(String(host || '').trim().toLowerCase());
+}
+
 function isLocalBrowserOrigin() {
-  const host = String(window.location.hostname || '').trim().toLowerCase();
-  return host === '127.0.0.1' || host === 'localhost';
+  return isConfiguredLocalBrowserHost(window.location.hostname);
 }
 
 function isLocalAgentRuntimePath(url) {
@@ -1269,8 +1325,10 @@ const I18N = {
     autoLaunchChrome: 'Tự mở Chrome',
     startJob: 'Chạy job',
     overwriteRun: 'Chạy đè',
+    pauseJob: 'Tạm dừng',
     stopJob: 'Dừng',
     resumeJob: 'Tiếp tục',
+    continueJob: 'Chạy tiếp',
     refreshJobs: 'Làm mới job',
     runQueue: 'Hàng đợi job',
     runQueueHelp: 'Chọn job để theo dõi. Mỗi mode được chạy 1 job cùng lúc.',
@@ -1285,6 +1343,12 @@ const I18N = {
     monitorTable: 'Bảng log xử lý',
     monitorNoJob: 'Chưa chọn job',
     monitorNoErrors: 'Không có lỗi',
+    monitorIssueSummaryLabel: 'Tóm tắt',
+    monitorIssueRowsLabel: 'Dòng lỗi',
+    monitorIssueStatsLabel: 'Thống kê',
+    monitorIssueSummaryNone: 'Không có lỗi cần tổng hợp',
+    monitorIssueSummaryTopFmt: (label, count) => `Chủ yếu: ${label} (${count})`,
+    monitorIssueSummaryTopMoreFmt: (label, count, more) => `Chủ yếu: ${label} (${count}) · +${more} loại lỗi khác`,
     jobFinishedTitle: 'Hoàn tất',
     jobFinishedToastFmt: (name, done, total) => `${name} đã chạy xong ${done}/${total} dòng.`,
     monitorNoLogs: 'Chưa có dữ liệu',
@@ -1298,6 +1362,7 @@ const I18N = {
     exportLog: 'Xuất log Excel',
     noLogsToExport: 'Chưa có log để xuất',
     replayStartedFmt: row => `Đã tạo replay cho dòng ${row}`,
+    continueStarted: 'Đã tạo job chạy tiếp',
     noData: 'Chưa có dữ liệu',
     projectsState: 'Lưu các run hoàn tất và xem lại chi tiết',
     groupedProjects: 'Dự án đã lưu',
@@ -1321,7 +1386,8 @@ const I18N = {
     errorQueue: 'Hàng đợi lỗi',
     currentProgress: 'Tiến độ hiện tại',
     activitiesState: 'Dòng thời gian runtime có phân loại',
-    recentTimeline: 'Dòng thời gian gần nhất',
+    recentTimeline: 'Lịch sử hoạt động',
+    activityLevel: 'Hoạt động',
     accessState: 'Admin quản lý người dùng được đăng nhập và mail admin',
     accessMailTitle: 'Mail gửi OTP',
     accessMailHelp: 'Đổi Gmail gửi mã xác nhận ngay trên giao diện admin. App password cũ sẽ được giữ kín và chỉ thay khi bạn nhập mới.',
@@ -1567,8 +1633,10 @@ const I18N = {
     autoLaunchChrome: 'Auto Launch Chrome',
     startJob: 'Start Job',
     overwriteRun: 'Overwrite',
-    stopJob: 'Pause',
+    pauseJob: 'Pause',
+    stopJob: 'Stop',
     resumeJob: 'Resume',
+    continueJob: 'Continue',
     refreshJobs: 'Refresh Jobs',
     runQueue: 'Run Queue',
     runQueueHelp: 'Select a job to monitor. One active job is allowed per mode.',
@@ -1583,6 +1651,12 @@ const I18N = {
     monitorTable: 'Processing log table',
     monitorNoJob: 'No job selected',
     monitorNoErrors: 'No errors',
+    monitorIssueSummaryLabel: 'Summary',
+    monitorIssueRowsLabel: 'Rows',
+    monitorIssueStatsLabel: 'Stats',
+    monitorIssueSummaryNone: 'No issue summary',
+    monitorIssueSummaryTopFmt: (label, count) => `Top issue: ${label} (${count})`,
+    monitorIssueSummaryTopMoreFmt: (label, count, more) => `Top issue: ${label} (${count}) · +${more} more issue types`,
     jobFinishedTitle: 'Completed',
     jobFinishedToastFmt: (name, done, total) => `${name} finished ${done}/${total} rows.`,
     monitorNoLogs: 'No data yet',
@@ -1596,6 +1670,7 @@ const I18N = {
     exportLog: 'Export Excel Log',
     noLogsToExport: 'No logs to export',
     replayStartedFmt: row => `Replay job queued for row ${row}`,
+    continueStarted: 'Continue job queued',
     noData: 'No data',
     projectsState: 'Store completed runs and reopen their details',
     groupedProjects: 'Saved Projects',
@@ -1619,7 +1694,8 @@ const I18N = {
     errorQueue: 'Error Queue',
     currentProgress: 'Current Progress',
     activitiesState: 'Latest runtime events with severity',
-    recentTimeline: 'Recent Timeline',
+    recentTimeline: 'Activity History',
+    activityLevel: 'Activity',
     accessState: 'Admins manage user access and admin emails',
     accessMailTitle: 'OTP Sender',
     accessMailHelp: 'Change the Gmail account that sends login codes from the admin UI. The old app password stays hidden and is only replaced when you enter a new one.',
@@ -1853,6 +1929,28 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
   return next;
 }
 
+function normalizeMappingsByModeForClient(raw = {}) {
+  const next = {};
+  ['seeding', 'booking', 'scan'].forEach(mode => {
+    const items = Array.isArray(raw?.[mode]) ? raw[mode] : [];
+    if (!items.length) return;
+    next[mode] = items.map((block, index) => sanitizeMappingBlockForMode(mode, block, index + 1));
+  });
+  return next;
+}
+
+function serializeMappingsByModeForSave() {
+  const payload = {};
+  Object.entries(currentMappingBlocksByMode || {}).forEach(([mode, items]) => {
+    const key = String(mode || '').toLowerCase();
+    if (!['seeding', 'booking', 'scan'].includes(key)) return;
+    const blocks = Array.isArray(items) ? items : [];
+    if (!blocks.length) return;
+    payload[key] = blocks.map((block, index) => sanitizeMappingBlockForMode(key, block, index + 1));
+  });
+  return payload;
+}
+
 function getRunModeHelp(mode) {
   if (mode === 'booking') return t('runModeBookingHelp');
   if (mode === 'scan') return t('runModeScanHelp');
@@ -1981,8 +2079,7 @@ function applyAirDate(mode, index, value) {
 }
 
 function isLocalWebHost() {
-  const host = String(window.location.hostname || '').toLowerCase();
-  return host === '127.0.0.1' || host === 'localhost';
+  return isConfiguredLocalBrowserHost(window.location.hostname);
 }
 
 function launchChromeViaLocalProtocol(mode, index, port) {
@@ -2246,12 +2343,18 @@ function applyLanguage() {
   setText('label[for="sheet_name"]', t('sheetName'));
   setText('label[for="drive_id"]', t('driveFolder'));
   setText('#startJobLabel', t('startJob'));
+  setText('#pauseJobLabel', t('stopJob'));
+  setText('#continueJobLabel', t('continueJob'));
   setText('#overwriteRunLabel', t('overwriteRun'));
   setText('#overwriteRunHelp', t('overwriteRunHelp'));
   setText('#runMonitorKicker', t('monitorKicker'));
   setText('#runMonitorJobLabel', t('monitorJob'));
   setText('#runMonitorProgressLabel', t('monitorProgress'));
   setText('#runMonitorErrorLabel', t('monitorErrors'));
+  setText('#runMonitorIssueRowsLabel', t('monitorIssueRowsLabel'));
+  setText('#runMonitorIssueStatsLabel', t('monitorIssueStatsLabel'));
+  setText('#runMonitorErrorRows', '-');
+  setText('#runMonitorErrorMeta', t('monitorSuccessFailedFmt')(0, 0, 0));
   setText('#runMonitorTableTitle', t('monitorTable'));
   setText('#runMonitorHeadTime', t('time'));
   setText('#runMonitorHeadPost', t('post'));
@@ -2440,7 +2543,7 @@ async function logActivityEvent(payload = {}) {
       body: JSON.stringify(payload),
     });
     if (out?.item) {
-      currentActivityEvents = [out.item, ...(currentActivityEvents || [])].slice(0, 50);
+      currentActivityEvents = [out.item, ...(currentActivityEvents || [])];
       renderActivities(getCombinedActivities());
     }
     return out?.item || null;
@@ -2572,7 +2675,37 @@ function toDateKeyFromDate(date) {
 }
 
 function getJobSummary(job) {
-  return job?.summary || { done: 0, total: 0, success: 0, failed: 0, unavailable: 0, eta: '---' };
+  const base = job?.summary || {};
+  const logs = Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : []);
+  const touchedRows = new Set();
+  const successRows = new Set();
+  const failedRows = new Set();
+  const unavailableRows = new Set();
+  logs.forEach(item => {
+    const row = Number(item?.row || 0);
+    if (!Number.isFinite(row) || row <= 0) return;
+    touchedRows.add(row);
+    if (isUnavailableLog(item)) unavailableRows.add(row);
+    else if (isFailedLog(item)) failedRows.add(row);
+    else if (isSuccessLog(item)) successRows.add(row);
+  });
+  const done = Math.max(Number(base.done || 0), touchedRows.size);
+  const success = Math.max(Number(base.success || 0), successRows.size);
+  const failed = Math.max(Number(base.failed || 0), failedRows.size, Object.keys(job?.error_rows || {}).length);
+  const unavailable = Math.max(Number(base.unavailable || 0), unavailableRows.size);
+  const total = Math.max(
+    Number(base.total || 0),
+    done,
+    success + failed + unavailable
+  );
+  return {
+    done,
+    total,
+    success,
+    failed,
+    unavailable,
+    eta: String(base.eta || '---'),
+  };
 }
 
 function getJobSheetLabel(job) {
@@ -2582,6 +2715,58 @@ function getJobSheetLabel(job) {
 
 function getJobMode(job) {
   return String(job?.mode || job?.request?.mode || job?.request?.mappings?.[0]?.mode || 'seeding').toLowerCase();
+}
+
+function getJobRootId(job) {
+  const req = job?.request || {};
+  return String(req.root_job_id || job?.id || '').trim();
+}
+
+function getJobLineageJobs(job) {
+  const rootId = getJobRootId(job);
+  if (!rootId) return job ? [job] : [];
+  return (jobsCache || [])
+    .filter(item => getJobRootId(item) === rootId)
+    .sort((a, b) => {
+      const at = Date.parse(String(a?.created_at || '')) || 0;
+      const bt = Date.parse(String(b?.created_at || '')) || 0;
+      return at - bt;
+    });
+}
+
+function getLineageDisplayLogs(snapshot, logs) {
+  const currentLogs = Array.isArray(logs) ? logs : [];
+  if (!snapshot) return currentLogs;
+  const lineageJobs = getJobLineageJobs(snapshot);
+  if (lineageJobs.length <= 1) return currentLogs;
+  const out = [];
+  const seen = new Set();
+  lineageJobs.forEach(job => {
+    const sourceLogs = job?.id === snapshot?.id
+      ? currentLogs
+      : (Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : []));
+    sourceLogs.forEach(item => {
+      const key = [
+        String(job?.id || ''),
+        String(item?.ts || ''),
+        String(item?.row || ''),
+        String(item?.state || ''),
+        String(item?.result || ''),
+        String(item?.tag || ''),
+        String(item?.message || ''),
+      ].join('|');
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ ...item, __job_id: job?.id || '' });
+    });
+  });
+  out.sort((a, b) => {
+    const at = Date.parse(String(a?.ts || '')) || 0;
+    const bt = Date.parse(String(b?.ts || '')) || 0;
+    if (at !== bt) return at - bt;
+    return Number(a?.row || 0) - Number(b?.row || 0);
+  });
+  return out;
 }
 
 function getJobsByMode(mode) {
@@ -2614,7 +2799,22 @@ function syncModeSelections() {
 }
 
 function getSavedProjectJobs() {
-  return (jobsCache || []).filter(job => job.status === 'completed');
+  return (jobsCache || []).filter(job => {
+    const status = String(job?.status || '').toLowerCase();
+    if (['queued', 'running', 'paused', 'completed'].includes(status)) return true;
+    if (!['stopped', 'failed'].includes(status)) return false;
+    const summary = getJobSummary(job);
+    return (
+      summary.done > 0 ||
+      summary.total > 0 ||
+      summary.success > 0 ||
+      summary.failed > 0 ||
+      summary.unavailable > 0 ||
+      !!String(job?.detail || '').trim() ||
+      (Array.isArray(job?.recent_logs) && job.recent_logs.length > 0) ||
+      (Array.isArray(job?.logs) && job.logs.length > 0)
+    );
+  });
 }
 
 function getFilteredProjectJobs() {
@@ -2663,7 +2863,7 @@ function getActivityLogsFromJobs() {
     const right = new Date(b?.ts || 0).getTime();
     return right - left;
   });
-  return rows.slice(0, 20);
+  return rows;
 }
 
 function getCombinedActivities() {
@@ -2824,6 +3024,46 @@ function isSuccessLog(log) {
   return raw.includes('ok') || raw.includes('success') || raw.includes('done');
 }
 
+function normalizeIssueSummaryLabel(rawMessage) {
+  let text = String(rawMessage || '').trim();
+  if (!text) return '';
+  text = text.replace(/^[^:]{1,80}: */, '').trim();
+  text = text.replace(/^row *#?[0-9]+ *[-:] */i, '').trim();
+  if (!text) return '';
+  const lowered = text.toLowerCase();
+  if (lowered.includes('không khả dụng') || lowered.includes('khong kha dung') || lowered.includes('unavailable')) {
+    return t('unavailableLabel');
+  }
+  return text.length > 88 ? `${text.slice(0, 85).trim()}...` : text;
+}
+
+function buildIssueSummaryText(errorRows, logs, fallbackError) {
+  const issueCounts = new Map();
+  const addIssue = message => {
+    const normalized = normalizeIssueSummaryLabel(message);
+    if (!normalized) return;
+    issueCounts.set(normalized, (issueCounts.get(normalized) || 0) + 1);
+  };
+
+  Object.values(errorRows || {}).forEach(addIssue);
+  (Array.isArray(logs) ? logs : []).forEach(item => {
+    if (!isUnavailableLog(item) && !isFailedLog(item)) return;
+    addIssue(item?.message || item?.result || item?.state || '');
+  });
+  addIssue(fallbackError);
+
+  if (!issueCounts.size) return t('monitorIssueSummaryNone');
+  const ranked = Array.from(issueCounts.entries()).sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+  const [topLabel, topCount] = ranked[0];
+  const moreKinds = Math.max(ranked.length - 1, 0);
+  return moreKinds > 0
+    ? t('monitorIssueSummaryTopMoreFmt')(topLabel, topCount, moreKinds)
+    : t('monitorIssueSummaryTopFmt')(topLabel, topCount);
+}
+
 function canReplayLog(log) {
   const row = Number(log?.row || 0);
   if (!Number.isFinite(row) || row < 1) return false;
@@ -2833,12 +3073,8 @@ function canReplayLog(log) {
 
 function statusBadge(status) {
   const key = String(status || '').toLowerCase();
-  if (key === 'completed') return '<span class="badge ok">completed</span>';
-  if (key === 'failed') return '<span class="badge error">failed</span>';
-  if (key === 'running') return '<span class="badge info">running</span>';
-  if (key === 'paused') return '<span class="badge warning">paused</span>';
-  if (key === 'stopped') return '<span class="badge warning">stopped</span>';
-  return `<span class="badge info">${esc(key || 'idle')}</span>`;
+  const normalized = key || 'queued';
+  return `<span class="project-status-badge status-${esc(normalized)}">${esc(prettyWord(normalized))}</span>`;
 }
 
 function aggregateErrorCounts(jobs) {
@@ -3034,7 +3270,8 @@ function renderProjects() {
             <div class="project-item-meta"><span class="mode-pill mode-${mode}">${esc(prettyWord(mode))}</span><span>${esc(toLocalStamp(job.finished_at || job.created_at))}</span><span>${esc(job.id.slice(0, 8))}</span></div>
           </div>
           <div class="project-item-side">
-            <span>${jobSummary.success || 0}/${jobSummary.total || 0}</span>
+            ${statusBadge(job.status)}
+            <span class="project-item-progress">${jobSummary.done || 0}/${jobSummary.total || 0}</span>
             ${isAdminUser() ? `<button type="button" class="project-delete-btn" title="${esc(t('deleteLabel'))}" onclick="deleteProject('${job.id}', event)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 12h10l1-12"></path><path d="M9 7V4h6v3"></path></svg>
             </button>` : ''}
@@ -3045,7 +3282,7 @@ function renderProjects() {
   document.getElementById('projectsSnapshot').innerHTML = selected
     ? [
         `<div class="timeline-item"><strong>${t('group')}</strong><div>${esc(getJobSheetLabel(selected))}</div></div>`,
-        `<div class="timeline-item"><strong>${t('state')}</strong><div>${esc(prettyWord(selected.status))} · <span class="mode-pill mode-${getJobMode(selected)}">${esc(prettyWord(getJobMode(selected)))}</span></div></div>`,
+        `<div class="timeline-item"><strong>${t('state')}</strong><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusBadge(selected.status)}<span class="mode-pill mode-${getJobMode(selected)}">${esc(prettyWord(getJobMode(selected)))}</span></div></div>`,
         `<div class="timeline-item"><strong>${t('latestUpdate')}</strong><div>${esc(toLocalStamp(selected.finished_at || selected.created_at))}</div></div>`,
         `<div class="timeline-item"><strong>${t('jobs')}</strong><div>${summary.done || 0}/${summary.total || 0} · ${summary.success || 0} ok · ${summary.failed || 0} ${t('failedLabel').toLowerCase()}</div></div>`,
         `<div class="timeline-item"><strong>${t('driveFolder')}</strong><div>${esc(request.drive_id || '-')}</div></div>`,
@@ -3056,13 +3293,14 @@ function renderProjects() {
 }
 
 function renderActivities(logs) {
-  const items = (logs || []).slice(-10).reverse();
+  const items = (logs || []).slice();
   document.getElementById('activitiesTimeline').innerHTML = items.length
     ? items.map(x => {
         const level = classifyLog(x);
+        const levelLabel = level === 'info' ? t('activityLevel') : prettyWord(level);
         const jobMeta = x.__job_id ? `${String(x.__job_mode || '').trim() ? `${prettyWord(x.__job_mode)} · ` : ''}${String(x.__job_id || '').slice(0, 8)}` : '';
         const rowLabel = x.__source === 'activity' ? esc(String(x.state || 'ACTION')) : `#${esc(x.row)} ${esc(x.state)}/${esc(x.result)}`;
-        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${rowLabel}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
+        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${rowLabel}</strong><span class="badge ${level}">${esc(levelLabel)}</span></div><div>${esc(x.message)}</div><div class="s">${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
       }).join('')
     : `<div class="timeline-item"><strong>${t('noActivity')}</strong><div>${t('startOrSelect')}</div></div>`;
 }
@@ -3078,6 +3316,7 @@ function renderRunMonitor(snapshot, logs) {
   const errorRows = st.error_rows || {};
   const errorKeys = Object.keys(errorRows);
   const logItems = Array.isArray(logs) ? logs : [];
+  const displayLogs = getLineageDisplayLogs(st, logItems);
   const successCount = logItems.length ? logItems.filter(isSuccessLog).length : Number(s.success || 0);
   const unavailableCount = Math.max(Number(s.unavailable || 0), logItems.filter(isUnavailableLog).length);
   const failedLogCount = logItems.filter(isFailedLog).length;
@@ -3095,7 +3334,7 @@ function renderRunMonitor(snapshot, logs) {
   const derivedIssueCount = issueRows.size || failedCount + unavailableCount;
   const hasIssueState = derivedIssueCount > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
   const statusLabel = prettyWord(displayStatus || 'idle');
-  const latestLog = (logs || []).length ? logs[logs.length - 1] : null;
+  const latestLog = logItems.length ? logItems[logItems.length - 1] : null;
   const detailText = String(st.detail || latestLog?.message || '').trim();
   const etaText = s.eta && s.eta !== '---' ? `${t('eta')}: ${s.eta}` : '';
   const title = st.request ? getJobSheetLabel(st) : t('monitorNoJob');
@@ -3134,13 +3373,18 @@ function renderRunMonitor(snapshot, logs) {
     ? `${detailText}${etaText ? ' · ' + etaText : ''}`
     : (etaText || '-');
   document.getElementById('runMonitorErrorMain').textContent = hasIssueState ? `${Math.max(derivedIssueCount, 1)}` : t('monitorNoErrors');
+  const issueTableWrap = document.getElementById('runMonitorIssueTableWrap');
+  const issueRowsText = issueRows.size
+    ? Array.from(issueRows).sort((a, b) => a - b).slice(0, 8).map(x => `#${x}`).join(', ')
+    : '-';
+  document.getElementById('runMonitorErrorRows').textContent = issueRowsText;
+  const issueSummary = buildIssueSummaryText(errorRows, logItems, st.error || detailText);
   document.getElementById('runMonitorErrorMeta').textContent = hasIssueState
-    ? (issueRows.size
-        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount)}`
-        : t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount))
+    ? `${t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount)}${issueSummary ? ` · ${issueSummary}` : ''}`
     : t('monitorSuccessFailedFmt')(successCount, 0, unavailableCount);
+  if (issueTableWrap) issueTableWrap.hidden = !hasIssueState;
 
-  const rows = (logs || []).slice().reverse();
+  const rows = displayLogs.slice().reverse();
   const replayLocked = ['running', 'paused'].includes(displayStatus);
   document.getElementById('runMonitorRows').innerHTML = rows.length
     ? rows.map(x => {
@@ -3166,19 +3410,27 @@ function renderRunMonitor(snapshot, logs) {
 }
 
 function updateRunActionButtons(snapshot = currentJobSnapshot) {
-  const stopLabel = document.getElementById('stopJobLabel');
-  const stopIcon = document.getElementById('stopJobIcon');
-  const stopButton = stopLabel ? stopLabel.closest('button') : null;
-  if (!stopLabel || !stopIcon || !stopButton) return;
+  const pauseLabel = document.getElementById('pauseJobLabel');
+  const pauseIcon = document.getElementById('pauseJobIcon');
+  const pauseButton = pauseLabel ? pauseLabel.closest('button') : null;
+  const continueLabel = document.getElementById('continueJobLabel');
+  const continueIcon = document.getElementById('continueJobIcon');
+  const continueButton = continueLabel ? continueLabel.closest('button') : null;
+  if (!pauseLabel || !pauseIcon || !pauseButton || !continueLabel || !continueIcon || !continueButton) return;
   const status = String(snapshot?.status || '').toLowerCase();
-  const paused = status === 'paused';
-  stopLabel.textContent = paused ? t('resumeJob') : t('stopJob');
-  stopIcon.innerHTML = paused
-    ? '<path d="M8 6.5v11l9-5.5-9-5.5Z"></path>'
-    : '<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>';
-  stopButton.classList.remove('blue');
-  stopButton.classList.toggle('resume', paused);
-  stopButton.classList.toggle('red', !paused);
+  const canStop = ['running', 'paused'].includes(status);
+  pauseLabel.textContent = t('stopJob');
+  pauseIcon.innerHTML = '<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>';
+  pauseButton.classList.remove('resume', 'red');
+  pauseButton.classList.add('pause');
+  pauseButton.disabled = !canStop;
+
+  const canContinue = ['stopped', 'failed', 'completed'].includes(status) && !!String(snapshot?.id || currentJobId || '').trim();
+  continueLabel.textContent = t('continueJob');
+  continueIcon.innerHTML = '<path d="M8 6.5v11l9-5.5-9-5.5Z"></path>';
+  continueButton.classList.remove('pause', 'resume', 'red', 'stop');
+  continueButton.classList.add('soft');
+  continueButton.disabled = !canContinue;
 }
 
 async function replayLogRow(jobId, row, blockName = '') {
@@ -3875,6 +4127,7 @@ function renderSettingsSummary(settings) {
 async function loadDefaults() {
   const [d, s] = await Promise.all([req('/api/default-config'), req('/api/settings')]);
   currentSettingsCache = s || {};
+  currentMappingBlocksByMode = normalizeMappingsByModeForClient(currentSettingsCache.mappings_by_mode || {});
   sheet_url.value = s.sheet_url || d.sheet_url || '';
   sheet_name.value = s.sheet_name || d.sheet_name || '';
   drive_id.value = s.drive_id || d.drive_id || '';
@@ -3903,10 +4156,12 @@ async function saveSidebarSettings() {
       page_timeout_ms: Number(document.getElementById('settings_page_timeout_ms').value || 3000),
       ready_state: currentSettingsCache.ready_state || 'interactive',
       full_page_capture: document.getElementById('settings_full_page_capture').checked,
+      mappings_by_mode: serializeMappingsByModeForSave(),
     };
     const out = await req('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
     const saved = out.settings || payload;
     currentSettingsCache = saved;
+    currentMappingBlocksByMode = normalizeMappingsByModeForClient(saved.mappings_by_mode || serializeMappingsByModeForSave());
     resetServiceAccountFileInput();
     renderSettingsSummary(saved);
     if (String(sheet_url.value || '').trim()) scheduleSheetNameSuggestions(true);
@@ -4020,19 +4275,42 @@ async function stopJob() {
     const st = currentJobSnapshot || await req('/api/jobs/' + currentJobId);
     const status = String(st?.status || '').toLowerCase();
     if (!['running', 'paused'].includes(status)) {
-      throw new Error('Job này không ở trạng thái dừng / tiếp tục được');
+      throw new Error('Ch? c? th? d?ng job ?ang ch?y');
     }
-    await req('/api/jobs/' + currentJobId + '/pause-toggle', { method: 'POST' });
+    await req('/api/jobs/' + currentJobId + '/stop', { method: 'POST' });
     await pollCurrent();
     await refreshJobs();
   } catch (e) { alert(e.message); }
+}
+
+async function continueJob() {
+  if (!currentJobId) { alert(t('monitorNoJob')); return; }
+  try {
+    const st = currentJobSnapshot || await req('/api/jobs/' + currentJobId);
+    const status = String(st?.status || '').toLowerCase();
+    const jobMode = getJobMode(st);
+    if (!['stopped', 'failed', 'completed'].includes(status)) {
+      throw new Error('Chỉ có thể chạy tiếp từ job đã dừng, lỗi hoặc hoàn tất');
+    }
+    const out = await req('/api/jobs/' + currentJobId + '/continue', { method: 'POST' });
+    currentJobId = out.job_id;
+    setSelectedJobIdForMode(jobMode, out.job_id);
+    await refreshJobs();
+    await pollCurrent();
+    ensureTimers();
+    setStatus(`${t('continueStarted')} · ${String(out.job_id || '').slice(0, 8)}`, 'running');
+  } catch (e) { alert(e.message); }
+}
+
+async function pauseJob() {
+  return stopJob();
 }
 
 async function refreshJobs() {
   try {
     const [out, activityOut] = await Promise.all([
       req('/api/jobs'),
-      req('/api/activity?limit=50'),
+      req('/api/activity?limit=0'),
     ]);
     const jobs = out.jobs || [];
     currentActivityEvents = activityOut.items || [];
@@ -4116,7 +4394,7 @@ async function pollCurrent() {
     const logs = lg.logs || [];
     currentLogsCache = logs;
     const targetJob = (jobsCache || []).find(job => job.id === currentJobId);
-    if (targetJob) targetJob.recent_logs = logs.slice(-20);
+    if (targetJob) targetJob.recent_logs = logs.slice();
     renderRunMonitor(st, logs);
     updateRunActionButtons(st);
     renderOverview();

@@ -1,4 +1,6 @@
-﻿import os
+﻿from __future__ import annotations
+
+import os
 import time
 import threading
 import shutil
@@ -65,11 +67,19 @@ CAPTURE_WINDOW_SIZE = "1920,1400"
 CAPTURE_ZOOM_PERCENT = 90
 PAGE_READY_TIMEOUT = 3
 PAGE_READY_FALLBACK_SLEEP = 0.45
-PER_LINK_BASE_WAIT = 0.35
+PER_LINK_BASE_WAIT = 0.22
 TIKTOK_SCROLL_WAIT_1 = 0.35
 TIKTOK_SCROLL_WAIT_2 = 0.5
 ZOOM_SETTLE_SLEEP = 0.08
 SCREENSHOT_CAPTURE_DELAY = 1.0
+# Extra buffer for TikTok before first screenshot to let video/player UI settle.
+TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 1.0
+TIKTOK_CAPTCHA_MAX_WAIT_SEC = 15.0
+TIKTOK_CAPTCHA_POLL_SEC = 1.0
+TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC = 0.7
+TIKTOK_BRING_TO_FRONT_INTERVAL_SEC = 8.0
+TIKTOK_CAPTCHA_FORCE_FOCUS = True
+PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = 2.0
 MULTI_CAPTURE_INTERVAL_SEC = 5.0
 FB_COMMENT_READY_WAIT = 4.0
 UI_CLICK_SETTLE_SLEEP = 0.15
@@ -167,6 +177,42 @@ def normalize_sheet_input(sheet_text: str) -> str:
     return s
 
 
+def extract_sheet_gid(sheet_text: str) -> int | None:
+    s = normalize_sheet_input(sheet_text or "")
+    if not s:
+        return None
+    try:
+        parsed = urlparse(s)
+        query = parse_qs(parsed.query or "")
+        raw_gid = (query.get("gid") or [""])[0].strip()
+        if not raw_gid and parsed.fragment:
+            fragment_query = parse_qs(parsed.fragment or "")
+            raw_gid = (fragment_query.get("gid") or [""])[0].strip()
+            if not raw_gid and parsed.fragment.isdigit():
+                raw_gid = parsed.fragment.strip()
+        if not raw_gid:
+            return None
+        gid = int(raw_gid)
+        return gid if gid >= 0 else None
+    except Exception:
+        return None
+
+
+def resolve_worksheet(spreadsheet, sheet_name: str = "", sheet_url: str = ""):
+    raw_name = str(sheet_name or "").strip()
+    if raw_name:
+        return spreadsheet.worksheet(raw_name)
+    gid = extract_sheet_gid(sheet_url)
+    if gid is not None:
+        try:
+            for ws in spreadsheet.worksheets():
+                if int(getattr(ws, "id", -1) or -1) == gid:
+                    return ws
+        except Exception:
+            pass
+    raise Exception("Thiếu Sheet Name")
+
+
 def normalize_drive_folder_input(folder_text: str) -> str:
     s = (folder_text or "").strip()
     if not s:
@@ -217,6 +263,26 @@ def resolve_chromedriver_service() -> Service:
     driver_path = ChromeDriverManager(cache_manager=cache_manager).install()
     write_log(f"[INFO] WebDriver installed: {driver_path}")
     return Service(driver_path)
+
+
+def create_chrome_driver(options: Options, service: Service | None = None):
+    """
+    Try an explicit chromedriver service first, then fall back to Selenium Manager.
+    This makes local runs more resilient when webdriver-manager cached binaries drift
+    from the installed Chrome version.
+    """
+    errors = []
+    if service is not None:
+        try:
+            return webdriver.Chrome(service=service, options=options)
+        except Exception as exc:
+            errors.append(f"service={exc}")
+            write_log(f"[WARN] Chrome via explicit service failed, fallback to Selenium Manager: {exc}")
+    try:
+        return webdriver.Chrome(options=options)
+    except Exception as exc:
+        errors.append(f"selenium_manager={exc}")
+        raise Exception(" | ".join(errors) if errors else str(exc)) from exc
 
 # ================= HELPERS =================
 def get_service_account_email(path: str | None = None):
@@ -280,7 +346,7 @@ def extract_url_from_hyperlink_formula(formula_text: str) -> str:
     return m.group(1).replace('""', '"').strip()
 
 
-def resolve_links_for_scan(worksheet, col_idx: int, start_row: int = 4) -> list[str]:
+def resolve_links_for_scan(worksheet, col_idx: int, start_row: int = 4, total_rows: int | None = None) -> list[str]:
     """
     Build effective link list for scan mode.
     If displayed cell value is not an URL, try to read URL from HYPERLINK formula.
@@ -288,21 +354,46 @@ def resolve_links_for_scan(worksheet, col_idx: int, start_row: int = 4) -> list[
     if not col_idx:
         return []
 
-    display_vals = worksheet.col_values(col_idx)
-    display_slice = display_vals[start_row - 1 :] if len(display_vals) >= start_row else []
+    col_letter = col_index_to_letter(col_idx)
+    display_slice: list[str] = []
+    if total_rows is not None and total_rows > 0 and col_letter:
+        end_row = start_row + total_rows - 1
+        try:
+            display_rows = worksheet.get(
+                f"{col_letter}{start_row}:{col_letter}{end_row}",
+                value_render_option="UNFORMATTED_VALUE",
+            ) or []
+        except Exception:
+            display_rows = []
+        for r in display_rows:
+            if r and len(r) > 0:
+                display_slice.append(str(r[0]).strip())
+            else:
+                display_slice.append("")
+        if len(display_slice) < total_rows:
+            display_slice.extend([""] * (total_rows - len(display_slice)))
+    else:
+        display_vals = worksheet.col_values(col_idx)
+        display_slice = display_vals[start_row - 1 :] if len(display_vals) >= start_row else []
 
     formula_rows = []
     try:
-        col_letter = col_index_to_letter(col_idx)
         if col_letter:
-            formula_rows = worksheet.get(
-                f"{col_letter}{start_row}:{col_letter}",
-                value_render_option="FORMULA",
-            ) or []
+            if total_rows is not None and total_rows > 0:
+                end_row = start_row + total_rows - 1
+                formula_rows = worksheet.get(
+                    f"{col_letter}{start_row}:{col_letter}{end_row}",
+                    value_render_option="FORMULA",
+                ) or []
+            else:
+                formula_rows = worksheet.get(
+                    f"{col_letter}{start_row}:{col_letter}",
+                    value_render_option="FORMULA",
+                ) or []
     except Exception as e:
         write_log(f"[WARN] resolve_links_for_scan formulas read failed: {e}")
 
-    size = max(len(display_slice), len(formula_rows))
+    size = max(int(total_rows or 0), len(display_slice), len(formula_rows))
     out: list[str] = []
     for i in range(size):
         shown = str(display_slice[i]).strip() if i < len(display_slice) else ""
@@ -315,6 +406,55 @@ def resolve_links_for_scan(worksheet, col_idx: int, start_row: int = 4) -> list[
             formula_cell = str(formula_rows[i][0]).strip()
         parsed = extract_url_from_hyperlink_formula(formula_cell)
         out.append(normalize_scan_source_url(parsed or shown))
+    return out
+
+
+def resolve_links_for_scan_values(display_slice: list[str] | tuple[str, ...], formula_rows: list | tuple | None = None) -> list[str]:
+    """
+    Build effective link list for scan mode from preloaded display/formula values.
+    """
+    formula_rows = list(formula_rows or [])
+    size = max(len(display_slice or []), len(formula_rows))
+    out: list[str] = []
+    for i in range(size):
+        shown = str(display_slice[i]).strip() if i < len(display_slice or []) else ""
+        shown_norm = normalize_scan_source_url(shown)
+        if shown_norm:
+            out.append(shown_norm)
+            continue
+        formula_cell = ""
+        if i < len(formula_rows) and formula_rows[i]:
+            formula_cell = str(formula_rows[i][0]).strip()
+        parsed = extract_url_from_hyperlink_formula(formula_cell)
+        out.append(normalize_scan_source_url(parsed or shown))
+    return out
+
+
+def filldown_scan_links_for_merged_rows(
+    links: list[str],
+    expected_texts: list[str] | None = None,
+    result_values: list[str] | None = None,
+) -> list[str]:
+    """
+    When a scan link cell is merged across multiple rows, Sheets only keeps the URL
+    on the first visible row. Carry that URL downward for subsequent rows that still
+    have row-level payload (expected text/result), so each row is checked separately.
+    """
+    expected_texts = list(expected_texts or [])
+    result_values = list(result_values or [])
+    size = max(len(links), len(expected_texts), len(result_values))
+    out: list[str] = []
+    last_link = ""
+    for i in range(size):
+        current_link = normalize_scan_source_url(links[i] if i < len(links) else "")
+        if current_link:
+            last_link = current_link
+            out.append(current_link)
+            continue
+        expected = str(expected_texts[i]).strip() if i < len(expected_texts) else ""
+        result = str(result_values[i]).strip() if i < len(result_values) else ""
+        has_row_payload = bool(expected or result)
+        out.append(last_link if (last_link and has_row_payload) else "")
     return out
 
 
@@ -355,6 +495,75 @@ def normalize_match_text(text: str) -> str:
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def _normalize_scan_terms_text(value: str) -> str:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[\r\n,;]+", str(value or "")):
+        term = normalize_match_text(part)
+        if not term or term in seen:
+            continue
+        seen.add(term)
+        lines.append(term)
+    return "\n".join(lines)
+
+
+def _parse_scan_terms(value: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        joined = "\n".join(str(item or "") for item in value)
+    else:
+        joined = str(value or "")
+    normalized = _normalize_scan_terms_text(joined)
+    return [line for line in normalized.splitlines() if line.strip()]
+
+
+def detect_scan_negative_term(*texts: str, keywords: list[str] | tuple[str, ...] | set[str] | None = None) -> str:
+    normalized_terms = _parse_scan_terms(list(keywords or []))
+    if not normalized_terms:
+        return ""
+    source_parts: list[str] = []
+    token_set: set[str] = set()
+    for raw_text in texts:
+        normalized_text = normalize_match_text(raw_text)
+        if not normalized_text:
+            continue
+        source_parts.append(normalized_text)
+        token_set.update(token for token in normalized_text.split() if token)
+    if not source_parts:
+        return ""
+    haystack = f" {' '.join(source_parts)} "
+    for term in normalized_terms:
+        if " " in term:
+            if f" {term} " in haystack:
+                return term
+        elif term in token_set:
+            return term
+    return ""
+
+
+def detect_scan_keyword_term(*texts: str, keywords: list[str] | tuple[str, ...] | set[str] | None = None) -> str:
+    normalized_terms = _parse_scan_terms(list(keywords or []))
+    if not normalized_terms:
+        return ""
+    source_parts: list[str] = []
+    token_set: set[str] = set()
+    for raw_text in texts:
+        normalized_text = normalize_match_text(raw_text)
+        if not normalized_text:
+            continue
+        source_parts.append(normalized_text)
+        token_set.update(token for token in normalized_text.split() if token)
+    if not source_parts:
+        return ""
+    haystack = f" {' '.join(source_parts)} "
+    for term in normalized_terms:
+        if " " in term:
+            if f" {term} " in haystack:
+                return term
+        elif term in token_set:
+            return term
+    return ""
 
 
 def extract_drive_file_id(url: str) -> str:
@@ -484,6 +693,20 @@ def ocr_text_from_image_bytes(image_bytes: bytes, expected_text: str = "") -> st
     try:
         from PIL import Image
         import pytesseract
+        try:
+            tcmd = getattr(pytesseract.pytesseract, "tesseract_cmd", "") or "tesseract"
+            if not shutil.which(str(tcmd)):
+                candidates = [
+                    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Tesseract-OCR", "tesseract.exe"),
+                    os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Tesseract-OCR", "tesseract.exe"),
+                    os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Tesseract-OCR", "tesseract.exe"),
+                ]
+                for p in candidates:
+                    if p and os.path.exists(p):
+                        pytesseract.pytesseract.tesseract_cmd = p
+                        break
+        except Exception:
+            pass
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         w, h = img.size
         gray = img.convert("L")
@@ -2245,6 +2468,43 @@ def detect_platform_label(url: str) -> str:
     return "Other"
 
 
+def _extract_tiktok_video_id(url: str) -> str:
+    text = str(url or "").strip().lower()
+    if not text:
+        return ""
+    m = re.search(r"/video/(\d+)", text)
+    return str(m.group(1)) if m else ""
+
+
+def _extract_tiktok_handle(url: str) -> str:
+    text = str(url or "").strip().lower()
+    if not text:
+        return ""
+    m = re.search(r"/@([^/?#]+)/video/\d+", text)
+    return str(m.group(1)).strip() if m else ""
+
+
+def _is_expected_tiktok_page(requested_url: str, current_url: str) -> bool:
+    req = str(requested_url or "").strip().lower()
+    cur = str(current_url or "").strip().lower()
+    if not req or not cur:
+        return False
+    req_video_id = _extract_tiktok_video_id(req)
+    cur_video_id = _extract_tiktok_video_id(cur)
+    # If request includes a concrete video id, current page must match exactly.
+    if req_video_id:
+        if not cur_video_id:
+            return False
+        if req_video_id != cur_video_id:
+            return False
+    req_handle = _extract_tiktok_handle(req)
+    cur_handle = _extract_tiktok_handle(cur)
+    # If request includes handle, enforce match as extra safety.
+    if req_handle and cur_handle and req_handle != cur_handle:
+        return False
+    return True
+
+
 def sanitize_filename_token(text: str, fallback: str = "Unknown", max_len: int = 64) -> str:
     t = (text or "").strip()
     if not t:
@@ -2272,6 +2532,10 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
         cur = (driver.current_url or "").lower()
     except Exception:
         cur = ""
+    try:
+        title = str(driver.title or "").lower()
+    except Exception:
+        title = ""
     url = (source_url or "").lower()
 
     markers_raw = [
@@ -2297,12 +2561,29 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
         "this video is unavailable",
         "no content available",
         "you cannot view this content",
+        "access to www.tiktok.com was denied",
+        "access to tiktok.com was denied",
+        "you don't have authorization to view this page",
+        "you do not have authorization to view this page",
+        "http error 403",
+        "err_blocked_by_client",
+        "error 403",
+        "access denied",
     ]
     markers_norm = [normalize_match_text(m) for m in markers_raw]
     if any((m in txt) or (normalize_match_text(m) in txt_norm) for m in markers_raw):
         return True
     if any(mn and mn in txt_norm for mn in markers_norm):
         return True
+    title_markers = [
+        "access denied",
+        "http error 403",
+        "error 403",
+        "forbidden",
+    ]
+    if any(tm in title for tm in title_markers):
+        if "tiktok.com" in (url + cur + txt):
+            return True
 
     # Common Facebook dead-end routes.
     if "facebook.com" in (url + cur):
@@ -2311,6 +2592,148 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
             return True
 
     return False
+
+
+def has_please_wait_overlay(driver) -> bool:
+    try:
+        txt_raw = (
+            driver.execute_script(
+                "return (document.body && document.body.innerText) ? document.body.innerText : ''"
+            )
+            or ""
+        )
+    except Exception:
+        txt_raw = ""
+    txt_norm = normalize_match_text(txt_raw or "")
+    markers = [
+        "please wait",
+        "please wait...",
+        "vui long cho",
+        "vui long cho...",
+        "vui lòng chờ",
+        "vui lòng chờ...",
+    ]
+    return any(normalize_match_text(marker) in txt_norm for marker in markers)
+
+
+def bring_current_tab_to_front(driver):
+    try:
+        driver.execute_cdp_cmd("Page.bringToFront", {})
+    except Exception:
+        pass
+
+
+def focus_browser_window_os(title_hint: str = "") -> bool:
+    if os.name != "nt":
+        return False
+    title_hint = str(title_hint or "").strip()
+    title_expr = title_hint.replace("'", "''")
+    script = """
+$ws = New-Object -ComObject WScript.Shell
+$targets = @()
+if ('__TITLE__'.Length -gt 0) {
+  $targets += '__TITLE__'
+}
+$targets += @('TikTok', 'Google Chrome', 'Chrome', 'Microsoft Edge', 'Edge')
+foreach ($t in $targets) {
+  try {
+    if ($ws.AppActivate($t)) { exit 0 }
+  } catch {}
+}
+exit 1
+"""
+    script = script.replace("__TITLE__", title_expr)
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def focus_chrome_for_tiktok_challenge(driver) -> bool:
+    if not bool(TIKTOK_CAPTCHA_FORCE_FOCUS):
+        return False
+    bring_current_tab_to_front(driver)
+    page_title = ""
+    try:
+        page_title = str(driver.title or "").strip()
+    except Exception:
+        page_title = ""
+    if focus_browser_window_os(page_title):
+        return True
+    return focus_browser_window_os("TikTok")
+
+
+def is_tiktok_slider_challenge_present(driver) -> bool:
+    text_raw = ""
+    try:
+        text_raw = (
+            driver.execute_script(
+                "return (document.body && document.body.innerText) ? document.body.innerText : ''"
+            )
+            or ""
+        )
+    except Exception:
+        text_raw = ""
+    text_l = str(text_raw or "").lower()
+    text_norm = normalize_match_text(text_raw or "")
+    markers_raw = [
+        "drag the slider",
+        "fit the puzzle",
+        "security verification",
+        "verify to continue",
+        "kéo thanh trượt",
+        "xác minh",
+        "vui lòng kéo",
+    ]
+    markers_norm = [normalize_match_text(m) for m in markers_raw]
+    if any(m in text_l for m in markers_raw):
+        return True
+    if any(mn and mn in text_norm for mn in markers_norm):
+        return True
+
+    selectors = [
+        "[data-e2e*='captcha']",
+        "[data-testid*='captcha']",
+        "iframe[src*='captcha']",
+        "div[class*='captcha']",
+        "div[id*='captcha']",
+    ]
+    try:
+        for sel in selectors:
+            if driver.find_elements(By.CSS_SELECTOR, sel):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def wait_for_tiktok_slider_clear(
+    driver,
+    max_wait_sec: float = TIKTOK_CAPTCHA_MAX_WAIT_SEC,
+    poll_sec: float = TIKTOK_CAPTCHA_POLL_SEC,
+) -> tuple[bool, float]:
+    start = time.time()
+    if not is_tiktok_slider_challenge_present(driver):
+        return True, 0.0
+    if bool(TIKTOK_CAPTCHA_FORCE_FOCUS):
+        focus_chrome_for_tiktok_challenge(driver)
+    last_bring = start
+    while (time.time() - start) < max(1.0, float(max_wait_sec or 0)):
+        time.sleep(max(0.2, float(poll_sec or 0.5)))
+        if not is_tiktok_slider_challenge_present(driver):
+            return True, time.time() - start
+        now = time.time()
+        if bool(TIKTOK_CAPTCHA_FORCE_FOCUS) and (now - last_bring) >= TIKTOK_BRING_TO_FRONT_INTERVAL_SEC:
+            focus_chrome_for_tiktok_challenge(driver)
+            last_bring = now
+    return False, time.time() - start
 
 
 def write_colored_xlsx_builtin(path: str, headers: list[str], rows_with_tags: list[tuple[list, list]]):
@@ -4375,6 +4798,28 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
     tracked_error_rows: set[int] = set()
     tracked_error_details: dict[int, str] = {}
     history_ready = False
+    requested_data_start_row = max(1, int(start_line or 4))
+    try:
+        for item in list(mappings or []):
+            if isinstance(item, dict):
+                requested_data_start_row = min(
+                    requested_data_start_row,
+                    max(1, int(str(item.get("start_line", requested_data_start_row)).strip() or requested_data_start_row)),
+                )
+    except Exception:
+        pass
+    try:
+        if target_rows:
+            requested_data_start_row = min(
+                requested_data_start_row,
+                max(1, int(min(int(r) for r in list(target_rows) if int(r) > 0))),
+            )
+    except Exception:
+        pass
+    try:
+        highlight_sheet_errors_enabled = bool(getattr(app, "highlight_sheet_errors", None).get())
+    except Exception:
+        highlight_sheet_errors_enabled = False
 
     try:
         write_log("=== START FINAL TOOL v2.2 ===")
@@ -4404,6 +4849,81 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         spreadsheet_id = spreadsheet.id
         worksheet = spreadsheet.worksheet(sheet_name)
         sheet_id = worksheet.id
+        data_start_row = requested_data_start_row
+        sheet_total_rows = max(0, int(getattr(worksheet, "row_count", 0) or 0) - data_start_row + 1)
+        _column_cache: dict[tuple[str, tuple[int, ...], int], dict[int, list[str]]] = {}
+
+        def _pad_column_values(values: list[str], total_rows: int) -> list[str]:
+            out = list(values or [])
+            if total_rows > 0 and len(out) < total_rows:
+                out.extend([""] * (total_rows - len(out)))
+            return out
+
+        def _flatten_range_rows(rows: list[Any], total_rows: int) -> list[str]:
+            out: list[str] = []
+            for r in list(rows or []):
+                if isinstance(r, list) and r:
+                    out.append(str(r[0]).strip())
+                else:
+                    out.append("")
+            return _pad_column_values(out, total_rows)
+
+        def _batch_fetch_columns(
+            col_indices: list[int] | tuple[int, ...] | set[int],
+            *,
+            value_render_option: str = "UNFORMATTED_VALUE",
+            start_row: int = data_start_row,
+            total_rows: int = sheet_total_rows,
+        ) -> dict[int, list[str]]:
+            unique_cols = tuple(sorted({int(col) for col in list(col_indices or []) if int(col) > 0}))
+            if not unique_cols:
+                return {}
+            cache_key = (str(value_render_option or "UNFORMATTED_VALUE").upper(), unique_cols, int(start_row))
+            cached = _column_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            ranges_by_col: dict[int, str] = {}
+            end_row = max(int(start_row), int(start_row + max(total_rows, 0) - 1))
+            for col_idx in unique_cols:
+                col_letter = col_index_to_letter(col_idx)
+                if not col_letter:
+                    continue
+                ranges_by_col[col_idx] = f"{col_letter}{start_row}:{col_letter}{end_row}"
+            if not ranges_by_col:
+                _column_cache[cache_key] = {}
+                return {}
+            fetched: dict[int, list[str]] = {}
+
+            def _get_aligned_rows(rng: str) -> list[Any]:
+                try:
+                    # Keep exact row alignment even when there are blanks/merged cells.
+                    return worksheet.get(
+                        rng,
+                        value_render_option=value_render_option,
+                        maintain_size=True,
+                        pad_values=True,
+                    ) or []
+                except TypeError:
+                    try:
+                        return worksheet.get(
+                            rng,
+                            value_render_option=value_render_option,
+                            pad_values=True,
+                        ) or []
+                    except Exception:
+                        return worksheet.get(rng, value_render_option=value_render_option) or []
+
+            for col_idx, rng in ranges_by_col.items():
+                try:
+                    rows = _get_aligned_rows(rng)
+                except Exception as single_exc:
+                    write_log(f"[WARN] get range failed {rng} ({value_render_option}): {single_exc}")
+                    rows = []
+                fetched[col_idx] = _flatten_range_rows(rows, total_rows)
+            for col_idx in unique_cols:
+                fetched.setdefault(col_idx, [""] * max(total_rows, 0))
+            _column_cache[cache_key] = fetched
+            return fetched
 
         def wait_page_ready(driver, timeout: int = PAGE_READY_TIMEOUT):
             try:
@@ -4457,7 +4977,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             options.add_argument("--disable-blink-features=AutomationControlled")
             options.page_load_strategy = "eager"
             if headless:
-                options.add_argument("--headless=new")
+                headless_mode = os.environ.get("EVIDENCE_CHROME_HEADLESS_MODE", "old").strip().lower()
+                options.add_argument("--headless=new" if headless_mode == "new" else "--headless")
             return options
 
         scan_only_request = bool(mappings) and all(
@@ -4563,7 +5084,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             return None
 
         if not scan_only_request:
-            service = resolve_chromedriver_service()
+            try:
+                service = resolve_chromedriver_service()
+            except Exception as e:
+                service = None
+                write_log(f"[WARN] Resolve chromedriver service failed, will fallback to Selenium Manager: {e}")
             started = False
             last_err = None
 
@@ -4571,7 +5096,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             try:
                 attach_opts = Options()
                 attach_opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{browser_port}")
-                app.driver = webdriver.Chrome(service=service, options=attach_opts)
+                app.driver = create_chrome_driver(attach_opts, service=service)
                 write_log(f"[INFO] Attached to existing Chrome debug session on port {browser_port}")
                 started = True
             except Exception as e:
@@ -4582,11 +5107,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             if not started:
                 for profile in profile_candidates:
                     seed_profile_if_needed(profile)
-                    for headless in (True, False):
+                    for headless in (False, True):
                         try:
-                            app.driver = webdriver.Chrome(
+                            app.driver = create_chrome_driver(
+                                build_chrome_options(user_data_dir=profile, headless=headless, debug_port=browser_port),
                                 service=service,
-                                options=build_chrome_options(user_data_dir=profile, headless=headless, debug_port=browser_port)
                             )
                             write_log(f"[INFO] Chrome started with profile='{profile}', headless={headless}")
                             started = True
@@ -4733,10 +5258,18 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 normalized_mappings = filtered_mappings
         if not normalized_mappings:
             raise Exception("KHONG_CO_BLOCK_HOP_LE")
+        if any(str(m.get("mode", "")).strip().lower() == "scan" for m in normalized_mappings):
+            ocr_ok, ocr_msg = check_ocr_dependencies()
+            if not ocr_ok:
+                ui_call(ui_set_status, "THIẾU OCR", "#ef4444")
+                ui_call(ui_set_detail, ocr_msg)
+                raise Exception(f"OCR_UNAVAILABLE: {ocr_msg}")
 
         prepared_blocks = []
         need_upload = False
         max_rows = 0
+        scan_url_cols: set[int] = set()
+        unformatted_cols: set[int] = set()
         for m in normalized_mappings:
             idx_url = col_letter_to_index(m["col_url"])
             idx_profile = col_letter_to_index(m["col_profile"]) if m["col_profile"] else None
@@ -4745,22 +5278,74 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             idx_screenshot = col_letter_to_index(m["col_screenshot"]) if m["col_screenshot"] else None
             idx_air_date = col_letter_to_index(m["col_air_date"]) if m["col_air_date"] else None
             mode_name = str(m.get("mode", "seeding")).strip().lower()
+            if idx_url:
+                unformatted_cols.add(idx_url)
+            if idx_profile:
+                unformatted_cols.add(idx_profile)
+            if idx_content:
+                unformatted_cols.add(idx_content)
+            if idx_drive:
+                unformatted_cols.add(idx_drive)
+            if idx_screenshot:
+                unformatted_cols.add(idx_screenshot)
+            if idx_air_date:
+                unformatted_cols.add(idx_air_date)
+            if mode_name == "scan" and idx_url:
+                scan_url_cols.add(idx_url)
+
+        unformatted_column_cache = _batch_fetch_columns(unformatted_cols, value_render_option="UNFORMATTED_VALUE")
+        formula_column_cache = _batch_fetch_columns(scan_url_cols, value_render_option="FORMULA") if scan_url_cols else {}
+        for m in normalized_mappings:
+            idx_url = col_letter_to_index(m["col_url"])
+            idx_profile = col_letter_to_index(m["col_profile"]) if m["col_profile"] else None
+            idx_content = col_letter_to_index(m["col_content"]) if m["col_content"] else None
+            idx_drive = col_letter_to_index(m["col_drive"]) if m["col_drive"] else None
+            idx_screenshot = col_letter_to_index(m["col_screenshot"]) if m["col_screenshot"] else None
+            idx_air_date = col_letter_to_index(m["col_air_date"]) if m["col_air_date"] else None
+            mode_name = str(m.get("mode", "seeding")).strip().lower()
+            try:
+                block_start_line = max(1, int(str(m.get("start_line", 4)).strip() or 4))
+            except Exception:
+                block_start_line = 4
+            start_offset = max(0, block_start_line - data_start_row)
             if mode_name == "scan":
-                links = resolve_links_for_scan(worksheet, idx_url, start_row=4)
-                row_numbers = list(range(4, 4 + len(links)))
-                scan_expected_texts = resolve_column_values_aligned(
-                    worksheet,
-                    idx_content,
-                    start_row=4,
-                    total_rows=len(links),
-                ) if idx_content else []
+                scan_expected_texts = (
+                    list(unformatted_column_cache.get(idx_content, []))[start_offset:] if idx_content else []
+                )
+                scan_result_values = (
+                    list(unformatted_column_cache.get(idx_drive, []))[start_offset:] if idx_drive else []
+                )
+                total_scan_rows = max(
+                    len(scan_expected_texts),
+                    len(scan_result_values),
+                    (len(unformatted_column_cache.get(idx_url, [])) - start_offset) if idx_url else 0,
+                    1,
+                )
+                links = resolve_links_for_scan_values(
+                    list(unformatted_column_cache.get(idx_url, []))[start_offset : start_offset + total_scan_rows] if idx_url else [],
+                    list(formula_column_cache.get(idx_url, []))[start_offset : start_offset + total_scan_rows] if idx_url else [],
+                )
+                links = filldown_scan_links_for_merged_rows(
+                    links,
+                    expected_texts=scan_expected_texts,
+                    result_values=scan_result_values,
+                )
+                total_scan_rows = max(len(links), len(scan_expected_texts), len(scan_result_values))
+                if len(scan_expected_texts) < total_scan_rows:
+                    scan_expected_texts.extend([""] * (total_scan_rows - len(scan_expected_texts)))
+                if len(scan_result_values) < total_scan_rows:
+                    scan_result_values.extend([""] * (total_scan_rows - len(scan_result_values)))
+                row_numbers = list(range(block_start_line, block_start_line + total_scan_rows))
             else:
-                links = worksheet.col_values(idx_url)[3:] if idx_url else []
-                row_numbers = list(range(4, 4 + len(links)))
+                links = list(unformatted_column_cache.get(idx_url, []))[start_offset:] if idx_url else []
+                row_numbers = list(range(block_start_line, block_start_line + len(links)))
                 scan_expected_texts = []
-            results = worksheet.col_values(idx_drive)[3:] if idx_drive else []
-            captions_existing = worksheet.col_values(idx_content)[3:] if idx_content else []
-            air_dates = worksheet.col_values(idx_air_date)[3:] if idx_air_date else []
+            if mode_name == "scan":
+                results = scan_result_values
+            else:
+                results = list(unformatted_column_cache.get(idx_drive, []))[start_offset:] if idx_drive else []
+            captions_existing = list(unformatted_column_cache.get(idx_content, []))[start_offset:] if idx_content else []
+            air_dates = list(unformatted_column_cache.get(idx_air_date, []))[start_offset:] if idx_air_date else []
             prepared_blocks.append(
                 {
                     "block_index": int(m.get("block_index", 0)),
@@ -4880,6 +5465,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         drive_cache_lock = threading.Lock()
         sheet_write_lock = threading.Lock()
         last_sheet_write_ts = [0.0]
+        # Keep per-row failing blocks to avoid clearing errors when another block on same row succeeds.
+        row_issue_blocks: dict[int, set[str]] = {}
 
         def _is_quota_error(exc: Exception) -> bool:
             s = str(exc).lower()
@@ -4890,7 +5477,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             Serialize + throttle writes to avoid Google Sheets write quota bursts
             when multiple blocks/workers run in parallel.
             """
-            base_wait = 1.1  # ~54 writes/minute global
+            base_wait = 0.55 if scan_only_request else 0.85
             last_err = None
             for attempt in range(max_retry):
                 try:
@@ -4945,15 +5532,25 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             eta: str,
             msg: str | None = None,
             log_tag: str = "ok",
+            issue_columns: list[str] | None = None,
         ):
             nonlocal processed_count, success_count, fail_count, unavailable_count
+            clear_row_error = False
             with error_lock:
-                tracked_error_rows.discard(row)
-                tracked_error_details.pop(row, None)
+                row_blocks = set(row_issue_blocks.get(row) or set())
+                if block_name in row_blocks:
+                    row_blocks.discard(block_name)
+                    if row_blocks:
+                        row_issue_blocks[row] = row_blocks
+                    else:
+                        row_issue_blocks.pop(row, None)
+                if not row_blocks:
+                    tracked_error_rows.discard(row)
+                    tracked_error_details.pop(row, None)
+                    clear_row_error = True
             with counter_lock:
                 processed_count += 1
                 success_count += 1
-                fail_count = len(tracked_error_rows)
                 done = processed_count
                 okv = success_count
                 failv = fail_count
@@ -4962,14 +5559,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 eta = _calc_eta(done)
             text = msg if msg else f"{block_name}: {url[:110]}"
             ui_call(ui_add_log, row, "OK", "OK", text, log_tag)
-            if hasattr(app, "update_error_row_live"):
+            if clear_row_error and hasattr(app, "update_error_row_live"):
                 ui_call(app.update_error_row_live, row, "", False)
+            if hasattr(app, "update_issue_cells_live"):
+                ui_call(app.update_issue_cells_live, row, block_name, issue_columns or [], "", "", True)
             ui_call(ui_set_progress, percent)
             ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
 
-        def _finish_row_fail(block_name: str, row: int, err: str, eta: str):
+        def _finish_row_fail(block_name: str, row: int, err: str, eta: str, issue_columns: list[str] | None = None):
             nonlocal processed_count, fail_count, unavailable_count
             with error_lock:
+                row_issue_blocks.setdefault(row, set()).add(block_name)
                 tracked_error_rows.add(row)
                 err_text = str(err).strip()
                 if not err_text:
@@ -4981,7 +5581,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 tracked_error_details[row] = msg_store[:220]
             with counter_lock:
                 processed_count += 1
-                fail_count = len(tracked_error_rows)
+                fail_count += 1
                 done = processed_count
                 okv = success_count
                 failv = fail_count
@@ -4991,16 +5591,22 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             ui_call(ui_add_log, row, "FAIL", "FAIL", f"{block_name}: {err}", "fail")
             if hasattr(app, "update_error_row_live"):
                 ui_call(app.update_error_row_live, row, msg_store, True)
+            if hasattr(app, "update_issue_cells_live"):
+                ui_call(app.update_issue_cells_live, row, block_name, issue_columns or [], msg_store, "failed", False)
             ui_call(ui_set_progress, percent)
             ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
 
-        def _finish_row_unavailable(block_name: str, row: int, message: str, eta: str):
+        def _finish_row_unavailable(block_name: str, row: int, message: str, eta: str, issue_columns: list[str] | None = None):
             nonlocal processed_count, fail_count, unavailable_count
             text = str(message or "").strip() or "Nội dung không khả dụng"
+            with error_lock:
+                row_issue_blocks.setdefault(row, set()).add(block_name)
+                tracked_error_rows.add(row)
+                msg_store = f"{block_name}: {text}"
+                tracked_error_details[row] = msg_store[:220]
             with counter_lock:
                 processed_count += 1
                 unavailable_count += 1
-                fail_count = len(tracked_error_rows)
                 done = processed_count
                 okv = success_count
                 failv = fail_count
@@ -5008,6 +5614,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 percent = int((done / max(1, target_total)) * 100)
                 eta = _calc_eta(done)
             ui_call(ui_add_log, row, "WARN", "UNAVAILABLE", f"{block_name}: {text}", "unavailable")
+            if hasattr(app, "update_error_row_live"):
+                ui_call(app.update_error_row_live, row, msg_store, True)
+            if hasattr(app, "update_issue_cells_live"):
+                ui_call(app.update_issue_cells_live, row, block_name, issue_columns or [], msg_store, "unavailable", False)
             ui_call(ui_set_progress, percent)
             ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
 
@@ -5024,7 +5634,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             try:
                 attach_opts = Options()
                 attach_opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{worker_port}")
-                attached = webdriver.Chrome(service=service, options=attach_opts)
+                attached = create_chrome_driver(attach_opts, service=service)
                 write_log(f"[INFO] Attached worker block {block_index} to existing Chrome debug session on port {worker_port}")
                 return attached
             except Exception as e:
@@ -5059,9 +5669,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             last = None
             for headless in (True, False):
                 try:
-                    return webdriver.Chrome(
+                    return create_chrome_driver(
+                        build_chrome_options(user_data_dir=worker_profile, headless=headless, debug_port=worker_port),
                         service=service,
-                        options=build_chrome_options(user_data_dir=worker_profile, headless=headless, debug_port=worker_port),
                     )
                 except Exception as e:
                     last = e
@@ -5094,6 +5704,36 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 fixed_air_date = str(block.get("fixed_air_date", "")).strip()
                 block_mode = str(block.get("mode", "seeding")).strip().lower()
                 is_scan_mode = block_mode == "scan"
+                try:
+                    scan_negative_filter_enabled = is_scan_mode and bool(getattr(app, "scan_negative_filter", None).get())
+                    scan_keyword_filter_enabled = is_scan_mode and bool(getattr(app, "scan_keyword_filter", None).get())
+                except Exception:
+                    scan_negative_filter_enabled = False
+                    scan_keyword_filter_enabled = False
+                col_profile_letter = str(block.get("col_profile", "")).strip().upper()
+                col_content_letter = str(block.get("col_content", "")).strip().upper()
+                col_screenshot_letter = str(block.get("col_screenshot", "")).strip().upper()
+                col_drive_letter = str(block.get("col_drive", "")).strip().upper()
+                highlight_columns: list[int] = []
+                issue_columns: list[str] = []
+                if is_scan_mode:
+                    if idx_drive:
+                        highlight_columns.append(idx_drive)
+                        if col_drive_letter:
+                            issue_columns.append(col_drive_letter)
+                else:
+                    for col_idx, col_letter in (
+                        (idx_profile, col_profile_letter),
+                        (idx_content, col_content_letter),
+                        (idx_drive, col_drive_letter),
+                        (idx_screenshot, col_screenshot_letter),
+                    ):
+                        if col_idx and col_idx not in highlight_columns:
+                            highlight_columns.append(col_idx)
+                        if col_idx and col_letter:
+                            normalized_letter = str(col_letter).strip().upper()
+                            if normalized_letter and normalized_letter not in issue_columns:
+                                issue_columns.append(normalized_letter)
                 log_block_name = block_name
                 links = block["links"]
                 row_numbers = block.get("row_numbers") or []
@@ -5102,10 +5742,59 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 captions_existing = block["captions_existing"]
                 air_dates = block["air_dates"]
                 start_at = block["start_line"]
-                col_profile_letter = block["col_profile"]
-                col_content_letter = block["col_content"]
-                col_screenshot_letter = block["col_screenshot"]
-                col_drive_letter = block["col_drive"]
+
+                def _highlight_row_cells(row: int, fill_rgb: dict[str, float], color_name: str):
+                    if not highlight_sheet_errors_enabled or not highlight_columns or row < 1:
+                        return
+                    requests = []
+                    for col_idx in highlight_columns:
+                        requests.append(
+                            {
+                                "repeatCell": {
+                                    "range": {
+                                        "sheetId": int(local_worksheet.id),
+                                        "startRowIndex": int(row - 1),
+                                        "endRowIndex": int(row),
+                                        "startColumnIndex": int(col_idx - 1),
+                                        "endColumnIndex": int(col_idx),
+                                    },
+                                    "cell": {
+                                        "userEnteredFormat": {
+                                            "backgroundColor": dict(fill_rgb),
+                                        }
+                                    },
+                                    "fields": "userEnteredFormat.backgroundColor",
+                                }
+                            }
+                        )
+                    if not requests:
+                        return
+                    safe_sheet_write(
+                        lambda: local_spreadsheet.batch_update({"requests": requests}),
+                        op_desc=f"highlight_{color_name}_row_{row}",
+                    )
+
+                def _mark_row_unavailable(row: int):
+                    _highlight_row_cells(
+                        row,
+                        {"red": 1.0, "green": 0.95, "blue": 0.68},
+                        "unavailable",
+                    )
+
+                def _mark_row_failed(row: int):
+                    _highlight_row_cells(
+                        row,
+                        {"red": 0.98, "green": 0.82, "blue": 0.82},
+                        "failed",
+                    )
+
+                def _mark_row_success(row: int):
+                    _highlight_row_cells(
+                        row,
+                        {"red": 1.0, "green": 1.0, "blue": 1.0},
+                        "success",
+                    )
+
                 try:
                     multi_capture_enabled = bool(getattr(app, "capture_five_per_link", None).get())
                 except Exception:
@@ -5149,6 +5838,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                     try:
                         unavailable = False
+                        is_tiktok = False
                         profile_name = ""
                         caption = ""
                         _post_time = ""
@@ -5176,6 +5866,39 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     time.sleep(TIKTOK_SCROLL_WAIT_2)
                                 except Exception:
                                     pass
+                                if is_tiktok_slider_challenge_present(worker_driver):
+                                    focused_now = focus_chrome_for_tiktok_challenge(worker_driver)
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "CAPTCHA",
+                                        (
+                                            f"{block_name}: TikTok yêu cầu kéo xác minh. "
+                                            f"Đã đẩy cửa sổ lên trước ({'OK' if focused_now else 'limited'}), chờ bạn xử lý..."
+                                        ),
+                                        "start",
+                                    )
+                                    solved, waited_sec = wait_for_tiktok_slider_clear(worker_driver)
+                                    if not solved:
+                                        raise Exception(f"TIKTOK_CAPTCHA_TIMEOUT_{int(waited_sec)}s")
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "OK",
+                                        "CAPTCHA",
+                                        f"{block_name}: Xác minh TikTok thành công, tiếp tục chụp.",
+                                        "ok",
+                                    )
+                                    time.sleep(TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC)
+                                try:
+                                    current_tiktok_url = str(worker_driver.current_url or "").strip()
+                                except Exception:
+                                    current_tiktok_url = ""
+                                if current_tiktok_url and (not _is_expected_tiktok_page(url, current_tiktok_url)):
+                                    raise Exception(
+                                        f"TIKTOK_URL_MISMATCH expected={url[:120]} current={current_tiktok_url[:120]}"
+                                    )
                             time.sleep(PER_LINK_BASE_WAIT)
 
                             unavailable = is_unavailable_content_page(worker_driver, url)
@@ -5263,7 +5986,20 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                             for shot_idx in range(1, effective_captures + 1):
                                 if shot_idx == 1:
-                                    time.sleep(SCREENSHOT_CAPTURE_DELAY)
+                                    if has_please_wait_overlay(worker_driver):
+                                        ui_call(
+                                            ui_add_log,
+                                            row,
+                                            "INFO",
+                                            "WAIT",
+                                            f"{block_name}: Phát hiện 'Please wait', đợi thêm {int(PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC)}s trước khi chụp",
+                                            "start",
+                                        )
+                                        time.sleep(PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC)
+                                    first_capture_delay = SCREENSHOT_CAPTURE_DELAY + (
+                                        TIKTOK_FIRST_CAPTURE_EXTRA_SEC if is_tiktok else 0.0
+                                    )
+                                    time.sleep(first_capture_delay)
                                 else:
                                     time.sleep(MULTI_CAPTURE_INTERVAL_SEC)
                                 png_bytes = worker_driver.get_screenshot_as_png()
@@ -5318,7 +6054,13 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                         updates = []
                         scan_ok = False
+                        negative_term_hit = ""
+                        keyword_term_hit = ""
                         if is_scan_mode:
+                            if scan_negative_filter_enabled:
+                                negative_term_hit = detect_scan_negative_term(expected_scan_text, ocr_text)
+                            if scan_keyword_filter_enabled:
+                                keyword_term_hit = detect_scan_keyword_term(expected_scan_text, ocr_text)
                             scan_ok = is_scan_match(expected_scan_text, ocr_text)
                             e_norm = normalize_match_text(expected_scan_text)
                             o_norm = normalize_match_text(ocr_text)
@@ -5328,7 +6070,12 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 f"exp='{e_norm[:90]}' ocr='{o_norm[:90]}'"
                             )
                             if idx_drive:
-                                updates.append({"range": f"{col_drive_letter}{row}", "values": [["1" if scan_ok else "0"]]})
+                                updates.append(
+                                    {
+                                        "range": f"{col_drive_letter}{row}",
+                                        "values": [["1" if (scan_ok and not negative_term_hit) else "0"]],
+                                    }
+                                )
                         else:
                             if idx_profile and profile_name:
                                 updates.append({"range": f"{col_profile_letter}{row}", "values": [[profile_name]]})
@@ -5345,7 +6092,26 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 op_desc=f"batch_update_row_{row}",
                             )
                         if is_scan_mode:
-                            if scan_ok:
+                            if negative_term_hit:
+                                _mark_row_failed(row)
+                                _finish_row_fail(
+                                    log_block_name,
+                                    row,
+                                    f"Từ tiêu cực: {negative_term_hit}",
+                                    eta_text,
+                                    issue_columns=issue_columns,
+                                )
+                            elif keyword_term_hit:
+                                _mark_row_failed(row)
+                                _finish_row_fail(
+                                    log_block_name,
+                                    row,
+                                    f"Từ khóa: {keyword_term_hit}",
+                                    eta_text,
+                                    issue_columns=issue_columns,
+                                )
+                            elif scan_ok:
+                                _mark_row_success(row)
                                 _finish_row_ok(
                                     log_block_name,
                                     row,
@@ -5353,16 +6119,21 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     eta_text,
                                     msg=f"{log_block_name}: MATCH",
                                     log_tag="ok",
+                                    issue_columns=issue_columns,
                                 )
                             else:
-                                _finish_row_fail(log_block_name, row, "NO_MATCH", eta_text)
+                                _mark_row_failed(row)
+                                _finish_row_fail(log_block_name, row, "NO_MATCH", eta_text, issue_columns=issue_columns)
                         elif unavailable:
-                            _finish_row_unavailable(log_block_name, row, "Nội dung không khả dụng", eta_text)
+                            _mark_row_unavailable(row)
+                            _finish_row_unavailable(log_block_name, row, "Nội dung không khả dụng", eta_text, issue_columns=issue_columns)
                         else:
-                            _finish_row_ok(log_block_name, row, url, eta_text)
+                            _mark_row_success(row)
+                            _finish_row_ok(log_block_name, row, url, eta_text, issue_columns=issue_columns)
                     except Exception as e:
                         write_log(f"{log_block_name} row {row} ERROR: {e}")
-                        _finish_row_fail(log_block_name, row, str(e), eta_text)
+                        _mark_row_failed(row)
+                        _finish_row_fail(log_block_name, row, str(e), eta_text, issue_columns=issue_columns)
                         if is_scan_mode and idx_drive:
                             try:
                                 safe_sheet_write(
@@ -5425,7 +6196,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         except Exception:
             pass
 
-        final_fail_count = len(tracked_error_details)
+        final_fail_count = fail_count
         fail_count = final_fail_count
         ui_call(ui_update_summary, processed_count, target_total, success_count, final_fail_count, "---", unavailable_count)
         ui_call(ui_set_done)

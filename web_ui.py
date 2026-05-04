@@ -55,6 +55,49 @@ def _utc_now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
+def _normalize_hostname(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    raw = re.sub(r"^[a-z][a-z0-9+.-]*://", "", raw)
+    raw = raw.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    raw = raw.rsplit("@", 1)[-1]
+    if raw.startswith("[") and "]" in raw:
+        raw = raw[1:raw.index("]")]
+    elif raw.count(":") == 1:
+        raw = raw.rsplit(":", 1)[0]
+    return raw.strip().strip(".")
+
+
+def _parse_hostname_list(value: Any) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in re.split(r"[\s,;]+", str(value or "")):
+        host = _normalize_hostname(part)
+        if not host or host in seen:
+            continue
+        seen.add(host)
+        out.append(host)
+    return out
+
+
+def _local_browser_hostnames() -> list[str]:
+    defaults = ["127.0.0.1", "localhost"]
+    configured = [
+        *_parse_hostname_list(os.getenv("WEB_LOCAL_HOSTNAMES", "")),
+        *_parse_hostname_list(os.getenv("CLOUDFLARE_PUBLIC_HOSTNAME", "")),
+    ]
+    seen: set[str] = set()
+    out: list[str] = []
+    for host in [*defaults, *configured]:
+        normalized = _normalize_hostname(host)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
 class _Flag:
     def __init__(self, value: bool = False):
         self._value = bool(value)
@@ -81,9 +124,12 @@ class WebAppAdapter:
         force_run_all: bool,
         only_run_error_rows: bool,
         capture_five_per_link: bool,
+        highlight_sheet_errors: bool,
+        scan_negative_filter: bool,
+        scan_keyword_filter: bool,
         job_store: dict[str, Any],
         persist_callback=None,
-        log_limit: int = 2000,
+        log_limit: int = 0,
     ):
         self.is_running = True
         self.is_paused = False
@@ -92,10 +138,13 @@ class WebAppAdapter:
         self.force_run_all = _Flag(force_run_all)
         self.only_run_error_rows = _Flag(only_run_error_rows)
         self.capture_five_per_link = _Flag(capture_five_per_link)
+        self.highlight_sheet_errors = _Flag(highlight_sheet_errors)
+        self.scan_negative_filter = _Flag(scan_negative_filter)
+        self.scan_keyword_filter = _Flag(scan_keyword_filter)
 
         self.progress = {"value": 0}
         self._job_store = job_store
-        self._log_limit = int(log_limit)
+        self._log_limit = max(int(log_limit or 0), 0)
         self._persist_callback = persist_callback or (lambda force=False: None)
 
         self.label_detail = _LabelProxy(self._on_detail)
@@ -158,9 +207,59 @@ class WebAppAdapter:
                 "tag": str(tag or ""),
             }
         )
-        overflow = len(logs) - self._log_limit
-        if overflow > 0:
-            del logs[:overflow]
+        if self._log_limit > 0:
+            overflow = len(logs) - self._log_limit
+            if overflow > 0:
+                del logs[:overflow]
+        self._persist()
+
+    def update_issue_cells_live(
+        self,
+        row: int,
+        post_name: str,
+        columns: list[str] | tuple[str, ...] | set[str] | None,
+        message: str,
+        kind: str = "",
+        clear: bool = False,
+    ):
+        row_num = int(row)
+        post = str(post_name or "").strip()
+        issue_kind = str(kind or "").strip().lower()
+        cells = list(self._job_store.setdefault("issue_cells", []))
+
+        def _same_row(item: dict[str, Any]) -> bool:
+            try:
+                return int(item.get("row") or 0) == row_num and str(item.get("post") or "").strip() == post
+            except Exception:
+                return False
+
+        if clear:
+            cells = [item for item in cells if not _same_row(item)]
+            self._job_store["issue_cells"] = cells
+            self._persist()
+            return
+
+        normalized_columns: list[str] = []
+        for value in list(columns or []):
+            col = str(value or "").strip().upper()
+            if col and col not in normalized_columns:
+                normalized_columns.append(col)
+        if not normalized_columns:
+            normalized_columns.append("-")
+
+        message_text = str(message or "").strip()
+        cells = [item for item in cells if not (_same_row(item) and str(item.get("kind") or "").strip().lower() == issue_kind)]
+        for col in normalized_columns:
+            cells.append(
+                {
+                    "row": row_num,
+                    "post": post,
+                    "column": col,
+                    "kind": issue_kind,
+                    "message": message_text,
+                }
+            )
+        self._job_store["issue_cells"] = cells
         self._persist()
 
     def update_error_row_live(self, row: int, message: str, is_error: bool):
@@ -217,6 +316,11 @@ class JobStartRequest(BaseModel):
     force_run_all: bool = False
     only_run_error_rows: bool = False
     capture_five_per_link: bool = False
+    highlight_sheet_errors: bool = False
+    scan_negative_filter: bool = False
+    scan_keyword_filter: bool = False
+    scan_negative_terms: str = ""
+    scan_keyword_terms: str = ""
     credentials_input: str = ""
     auto_launch_chrome: bool = False
     mappings: list[MappingBlock] = Field(default_factory=list)
@@ -248,12 +352,25 @@ class SettingsUpdateRequest(BaseModel):
     sheet_url: str = ""
     sheet_name: str = ""
     drive_id: str = ""
+    scan_negative_terms: str = ""
+    scan_keyword_terms: str = ""
     viewport_width: int = 1920
     viewport_height: int = 1400
     page_timeout_ms: int = 3000
+    tiktok_captcha_wait_sec: int = 15
+    please_wait_delay_sec: float = 2.0
+    tiktok_force_focus: bool = True
     ready_state: str = "interactive"
     full_page_capture: bool = False
     mappings_by_mode: dict[str, list[MappingBlock]] = Field(default_factory=dict)
+    run_flags_by_mode: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class QuickScanColumnsRequest(BaseModel):
+    sheet_url: str
+    sheet_name: str
+    mode: str = "seeding"
+    columns: list[str] = Field(default_factory=list)
 
 
 class AccessPolicyUpdateRequest(BaseModel):
@@ -303,6 +420,12 @@ OTP_STORE: dict[str, dict[str, Any]] = {}
 OTP_TTL_SEC = max(60, int(os.getenv("WEB_AUTH_OTP_TTL_SEC", "600") or 600))
 OTP_RESEND_COOLDOWN_SEC = max(10, int(os.getenv("WEB_AUTH_RESEND_COOLDOWN_SEC", "45") or 45))
 OTP_MAX_ATTEMPTS = max(1, int(os.getenv("WEB_AUTH_MAX_ATTEMPTS", "6") or 6))
+SHEET_NAMES_CACHE_LOCK = threading.Lock()
+SHEET_NAMES_CACHE: dict[str, dict[str, Any]] = {}
+SHEET_NAMES_CACHE_TTL_SEC = max(30, int(os.getenv("WEB_SHEET_NAMES_CACHE_TTL_SEC", "300") or 300))
+SHEET_LINK_COLUMNS_CACHE_LOCK = threading.Lock()
+SHEET_LINK_COLUMNS_CACHE: dict[str, dict[str, Any]] = {}
+SHEET_LINK_COLUMNS_CACHE_TTL_SEC = max(30, int(os.getenv("WEB_SHEET_LINK_COLUMNS_CACHE_TTL_SEC", "300") or 300))
 PUBLIC_PATHS = {
     "/login",
     "/health",
@@ -316,6 +439,13 @@ MODE_BROWSER_PORTS = {
     "scan": 9623,
 }
 
+_SCREENSHOT_HOOK_LOCK = threading.Lock()
+_SCREENSHOT_HOOK_REFCOUNT = 0
+_SCREENSHOT_HOOK_ORIGINAL = None
+_FOCUS_HOOK_LOCK = threading.Lock()
+_FOCUS_HOOK_REFCOUNT = 0
+_FOCUS_HOOK_ORIGINAL = None
+
 print(
     f"[startup-config] base_dir={evidence.BASE_DIR} settings={evidence.SETTINGS_PATH} "
     f"port_env={os.getenv('PORT', '') or 'unset'}"
@@ -327,12 +457,18 @@ SETTINGS_USER_KEYS = {
     "sheet_url",
     "sheet_name",
     "drive_id",
+    "scan_negative_terms",
+    "scan_keyword_terms",
     "viewport_width",
     "viewport_height",
     "page_timeout_ms",
+    "tiktok_captcha_wait_sec",
+    "please_wait_delay_sec",
+    "tiktok_force_focus",
     "ready_state",
     "full_page_capture",
     "mappings_by_mode",
+    "run_flags_by_mode",
 }
 
 
@@ -347,18 +483,193 @@ def _read_saved_settings_root() -> dict[str, Any]:
         return {}
 
 
+def _normalize_match_text(value: str) -> str:
+    s = str(value or "").lower()
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _is_tiktok_url(value: str) -> bool:
+    u = str(value or "").lower()
+    return ("tiktok.com" in u) or ("vt.tiktok.com" in u)
+
+
+def _install_screenshot_wait_hook(delay_sec: float):
+    global _SCREENSHOT_HOOK_REFCOUNT, _SCREENSHOT_HOOK_ORIGINAL
+    wait_sec = max(0.0, float(delay_sec or 0.0))
+    if wait_sec <= 0:
+        return None
+    try:
+        from selenium.webdriver.remote.webdriver import WebDriver as _RemoteWebDriver
+    except Exception:
+        return None
+    markers = (
+        "please wait",
+        "please wait...",
+        "vui long cho",
+        "vui long cho...",
+        "vui lòng chờ",
+        "vui lòng chờ...",
+    )
+
+    def _hook(driver_self, *args, **kwargs):
+        try:
+            current_url = str(getattr(driver_self, "current_url", "") or "")
+            if _is_tiktok_url(current_url):
+                txt_raw = (
+                    driver_self.execute_script(
+                        "return (document.body && document.body.innerText) ? document.body.innerText : ''"
+                    )
+                    or ""
+                )
+                txt_norm = _normalize_match_text(txt_raw)
+                if any(_normalize_match_text(marker) in txt_norm for marker in markers):
+                    time.sleep(wait_sec)
+        except Exception:
+            pass
+        return _SCREENSHOT_HOOK_ORIGINAL(driver_self, *args, **kwargs)
+
+    with _SCREENSHOT_HOOK_LOCK:
+        if _SCREENSHOT_HOOK_REFCOUNT == 0:
+            _SCREENSHOT_HOOK_ORIGINAL = _RemoteWebDriver.get_screenshot_as_png
+            _RemoteWebDriver.get_screenshot_as_png = _hook
+        _SCREENSHOT_HOOK_REFCOUNT += 1
+
+    def _restore():
+        global _SCREENSHOT_HOOK_REFCOUNT, _SCREENSHOT_HOOK_ORIGINAL
+        try:
+            from selenium.webdriver.remote.webdriver import WebDriver as _RemoteWebDriver
+        except Exception:
+            return
+        with _SCREENSHOT_HOOK_LOCK:
+            if _SCREENSHOT_HOOK_REFCOUNT > 0:
+                _SCREENSHOT_HOOK_REFCOUNT -= 1
+            if _SCREENSHOT_HOOK_REFCOUNT == 0 and _SCREENSHOT_HOOK_ORIGINAL is not None:
+                _RemoteWebDriver.get_screenshot_as_png = _SCREENSHOT_HOOK_ORIGINAL
+                _SCREENSHOT_HOOK_ORIGINAL = None
+
+    return _restore
+
+
+def _force_browser_window_foreground() -> bool:
+    if os.name != "nt":
+        return False
+    script = r"""
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinApi {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+}
+"@
+$HWND_TOPMOST = [intptr](-1)
+$HWND_NOTOPMOST = [intptr](-2)
+$SW_RESTORE = 9
+$SWP_NOMOVE = 0x0002
+$SWP_NOSIZE = 0x0001
+$SWP_NOACTIVATE = 0x0010
+$targets = @('chrome','msedge')
+$ok = $false
+foreach ($name in $targets) {
+  $p = Get-Process -Name $name -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object StartTime -Descending | Select-Object -First 1
+  if ($null -ne $p) {
+    $h = [intptr]$p.MainWindowHandle
+    [WinApi]::ShowWindowAsync($h, $SW_RESTORE) | Out-Null
+    [WinApi]::SetWindowPos($h, $HWND_TOPMOST, 0,0,0,0, ($SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_NOACTIVATE)) | Out-Null
+    Start-Sleep -Milliseconds 80
+    [WinApi]::SetWindowPos($h, $HWND_NOTOPMOST, 0,0,0,0, ($SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_NOACTIVATE)) | Out-Null
+    [WinApi]::SetForegroundWindow($h) | Out-Null
+    $ok = $true
+    break
+  }
+}
+if ($ok) { exit 0 } else { exit 1 }
+"""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _install_tiktok_focus_boost_hook(enabled: bool):
+    global _FOCUS_HOOK_REFCOUNT, _FOCUS_HOOK_ORIGINAL
+    if not enabled:
+        return None
+    if not hasattr(evidence, "focus_chrome_for_tiktok_challenge"):
+        return None
+
+    def _hook(driver_self, *args, **kwargs):
+        base_ok = False
+        try:
+            base_ok = bool(_FOCUS_HOOK_ORIGINAL(driver_self, *args, **kwargs))
+        except Exception:
+            base_ok = False
+        boosted_ok = _force_browser_window_foreground()
+        return bool(base_ok or boosted_ok)
+
+    with _FOCUS_HOOK_LOCK:
+        if _FOCUS_HOOK_REFCOUNT == 0:
+            _FOCUS_HOOK_ORIGINAL = evidence.focus_chrome_for_tiktok_challenge
+            evidence.focus_chrome_for_tiktok_challenge = _hook
+        _FOCUS_HOOK_REFCOUNT += 1
+
+    def _restore():
+        global _FOCUS_HOOK_REFCOUNT, _FOCUS_HOOK_ORIGINAL
+        with _FOCUS_HOOK_LOCK:
+            if _FOCUS_HOOK_REFCOUNT > 0:
+                _FOCUS_HOOK_REFCOUNT -= 1
+            if _FOCUS_HOOK_REFCOUNT == 0 and _FOCUS_HOOK_ORIGINAL is not None:
+                evidence.focus_chrome_for_tiktok_challenge = _FOCUS_HOOK_ORIGINAL
+                _FOCUS_HOOK_ORIGINAL = None
+
+    return _restore
+
+
 def _filter_settings_payload(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     filtered = {key: data.get(key) for key in SETTINGS_USER_KEYS if key in data}
+    if "scan_negative_terms" in filtered:
+        filtered["scan_negative_terms"] = str(filtered.get("scan_negative_terms") or "")
+    if "scan_keyword_terms" in filtered:
+        filtered["scan_keyword_terms"] = str(filtered.get("scan_keyword_terms") or "")
+    if "tiktok_captcha_wait_sec" in filtered:
+        try:
+            filtered["tiktok_captcha_wait_sec"] = max(5, int(filtered.get("tiktok_captcha_wait_sec") or 15))
+        except Exception:
+            filtered["tiktok_captcha_wait_sec"] = 15
+    if "please_wait_delay_sec" in filtered:
+        try:
+            filtered["please_wait_delay_sec"] = max(0.0, float(filtered.get("please_wait_delay_sec") or 2.0))
+        except Exception:
+            filtered["please_wait_delay_sec"] = 2.0
+    if "tiktok_force_focus" in filtered:
+        filtered["tiktok_force_focus"] = bool(filtered.get("tiktok_force_focus"))
     if "mappings_by_mode" in filtered:
         filtered["mappings_by_mode"] = _normalize_mappings_by_mode(filtered.get("mappings_by_mode"))
+    if "run_flags_by_mode" in filtered:
+        filtered["run_flags_by_mode"] = _normalize_run_flags_by_mode(filtered.get("run_flags_by_mode"))
     return filtered
 
 
 def _normalize_saved_mapping_block(raw: Any, mode: str, index: int) -> dict[str, Any]:
     mode_key = _normalize_run_mode(mode)
-    base = dict(_default_mapping(4, mode_key))
+    default_start_line = 4
+    if isinstance(raw, dict):
+        try:
+            default_start_line = max(1, int(str(raw.get("start_line", 4)).strip() or 4))
+        except Exception:
+            default_start_line = 4
+    base = dict(_default_mapping(default_start_line, mode_key))
     if isinstance(raw, dict):
         base.update(raw)
     base["mode"] = mode_key
@@ -366,6 +677,7 @@ def _normalize_saved_mapping_block(raw: Any, mode: str, index: int) -> dict[str,
         base["start_line"] = max(1, int(str(base.get("start_line", 4)).strip() or 4))
     except Exception:
         base["start_line"] = 4
+    evidence.write_log(f"[DEBUG] _normalize_saved_mapping_block(mode={mode_key}, index={index}): raw['start_line']={raw.get('start_line') if isinstance(raw, dict) else None}, result['start_line']={base['start_line']}")
     text_keys = (
         "name",
         "col_url",
@@ -398,6 +710,48 @@ def _normalize_mappings_by_mode(data: Any) -> dict[str, list[dict[str, Any]]]:
             _normalize_saved_mapping_block(item, mode_key, idx + 1)
             for idx, item in enumerate(items)
         ]
+    return normalized
+
+
+def _default_run_flags(mode: str) -> dict[str, Any]:
+    mode_key = _normalize_run_mode(mode)
+    return {
+        "force_run_all": True,
+        "highlight_sheet_errors": True,
+        "capture_five_per_link": bool(mode_key == "booking" and False),
+        "scan_negative_filter": False,
+        "scan_keyword_filter": False,
+    }
+
+
+def _normalize_run_flags_for_mode(mode: str, raw: Any) -> dict[str, Any]:
+    base = _default_run_flags(mode)
+    if isinstance(raw, dict):
+        base["force_run_all"] = bool(raw.get("force_run_all", base["force_run_all"]))
+        base["highlight_sheet_errors"] = bool(raw.get("highlight_sheet_errors", base["highlight_sheet_errors"]))
+        base["capture_five_per_link"] = bool(raw.get("capture_five_per_link", base["capture_five_per_link"]))
+        base["scan_negative_filter"] = bool(raw.get("scan_negative_filter", base["scan_negative_filter"]))
+        base["scan_keyword_filter"] = bool(raw.get("scan_keyword_filter", base["scan_keyword_filter"]))
+    if _normalize_run_mode(mode) != "booking":
+        base["capture_five_per_link"] = False
+    if _normalize_run_mode(mode) != "scan":
+        base["scan_negative_filter"] = False
+        base["scan_keyword_filter"] = False
+    return base
+
+
+def _normalize_run_flags_by_mode(data: Any) -> dict[str, dict[str, Any]]:
+    normalized = {
+        mode: _default_run_flags(mode)
+        for mode in RUN_MODES
+    }
+    if not isinstance(data, dict):
+        return normalized
+    for raw_mode, value in data.items():
+        mode_key = _normalize_run_mode(raw_mode)
+        if mode_key not in RUN_MODES:
+            continue
+        normalized[mode_key] = _normalize_run_flags_for_mode(mode_key, value)
     return normalized
 
 
@@ -1204,6 +1558,10 @@ def _get_user_role(email: str) -> str:
     return "admin" if normalized in admins else "user"
 
 
+def _is_admin_email(email: str) -> bool:
+    return _get_user_role(email) == "admin"
+
+
 def _auth_role_from_request(request: Request) -> str:
     return _get_user_role(_auth_email_from_request(request))
 
@@ -1442,12 +1800,18 @@ def _settings_defaults() -> dict[str, Any]:
         "sheet_url": str(getattr(evidence, "DEFAULT_SHEET_URL", "")),
         "sheet_name": str(getattr(evidence, "DEFAULT_SHEET_NAME_TARGET", "")),
         "drive_id": str(getattr(evidence, "DEFAULT_DRIVE_FOLDER_ID", "")),
+        "scan_negative_terms": "",
+        "scan_keyword_terms": "",
         "viewport_width": width,
         "viewport_height": height,
         "page_timeout_ms": int(float(getattr(evidence, "PAGE_READY_TIMEOUT", 3)) * 1000),
+        "tiktok_captcha_wait_sec": int(float(getattr(evidence, "TIKTOK_CAPTCHA_MAX_WAIT_SEC", 15)) or 15),
+        "please_wait_delay_sec": float(getattr(evidence, "PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC", 2.0) or 2.0),
+        "tiktok_force_focus": bool(getattr(evidence, "TIKTOK_CAPTCHA_FORCE_FOCUS", True)),
         "ready_state": "interactive",
         "full_page_capture": False,
         "mappings_by_mode": {},
+        "run_flags_by_mode": _normalize_run_flags_by_mode({}),
     }
 
 
@@ -1455,8 +1819,14 @@ def _apply_runtime_settings(data: dict[str, Any]) -> None:
     width = max(320, int(data.get("viewport_width", 1920) or 1920))
     height = max(320, int(data.get("viewport_height", 1400) or 1400))
     timeout_ms = max(500, int(data.get("page_timeout_ms", 3000) or 3000))
+    tiktok_captcha_wait_sec = max(5, int(data.get("tiktok_captcha_wait_sec", 15) or 15))
+    please_wait_delay_sec = max(0.0, float(data.get("please_wait_delay_sec", 2.0) or 2.0))
+    tiktok_force_focus = bool(data.get("tiktok_force_focus", True))
     evidence.CAPTURE_WINDOW_SIZE = f"{width},{height}"
     evidence.PAGE_READY_TIMEOUT = max(1, int(round(timeout_ms / 1000)))
+    evidence.TIKTOK_CAPTCHA_MAX_WAIT_SEC = float(tiktok_captcha_wait_sec)
+    evidence.PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = float(please_wait_delay_sec)
+    evidence.TIKTOK_CAPTCHA_FORCE_FOCUS = tiktok_force_focus
     cred_path = str(data.get("credentials_path", "")).strip()
     evidence.JSON_PATH = cred_path
 
@@ -1465,9 +1835,14 @@ def _capture_runtime_settings() -> dict[str, Any]:
     width, height = _window_size_parts(getattr(evidence, "CAPTURE_WINDOW_SIZE", "1920,1400"))
     return {
         "credentials_path": str(getattr(evidence, "JSON_PATH", "")),
+        "scan_negative_terms": "",
+        "scan_keyword_terms": "",
         "viewport_width": width,
         "viewport_height": height,
         "page_timeout_ms": int(float(getattr(evidence, "PAGE_READY_TIMEOUT", 3)) * 1000),
+        "tiktok_captcha_wait_sec": int(float(getattr(evidence, "TIKTOK_CAPTCHA_MAX_WAIT_SEC", 15)) or 15),
+        "please_wait_delay_sec": float(getattr(evidence, "PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC", 2.0) or 2.0),
+        "tiktok_force_focus": bool(getattr(evidence, "TIKTOK_CAPTCHA_FORCE_FOCUS", True)),
     }
 
 
@@ -1476,7 +1851,19 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     merged.update(data or {})
     cred_path = str(merged.get("credentials_path", "")).strip()
     merged["credentials_path"] = cred_path
+    merged["scan_negative_terms"] = str(merged.get("scan_negative_terms", "") or "")
+    merged["scan_keyword_terms"] = str(merged.get("scan_keyword_terms", "") or "")
+    try:
+        merged["tiktok_captcha_wait_sec"] = max(5, int(merged.get("tiktok_captcha_wait_sec", 15) or 15))
+    except Exception:
+        merged["tiktok_captcha_wait_sec"] = 15
+    try:
+        merged["please_wait_delay_sec"] = max(0.0, float(merged.get("please_wait_delay_sec", 2.0) or 2.0))
+    except Exception:
+        merged["please_wait_delay_sec"] = 2.0
+    merged["tiktok_force_focus"] = bool(merged.get("tiktok_force_focus", True))
     merged["mappings_by_mode"] = _normalize_mappings_by_mode(merged.get("mappings_by_mode"))
+    merged["run_flags_by_mode"] = _normalize_run_flags_by_mode(merged.get("run_flags_by_mode"))
     merged["service_account_email"] = evidence.get_service_account_email(cred_path) if cred_path else ""
     merged["service_account_saved"] = bool(cred_path and os.path.exists(cred_path))
     merged["service_account_fixed"] = bool(
@@ -1531,6 +1918,183 @@ def _open_spreadsheet(sheet_url: str, credentials_path: str):
         raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Không đọc được Google Sheets: {exc}") from exc
+
+
+def _resolve_worksheet(spreadsheet: Any, sheet_url: str, sheet_name: str):
+    try:
+        return evidence.resolve_worksheet(spreadsheet, sheet_name=sheet_name, sheet_url=sheet_url)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Không tìm thấy sheet: {sheet_name}") from exc
+
+
+def _worksheet_sheet_id(worksheet: Any) -> int:
+    for value in (
+        getattr(worksheet, "id", None),
+        getattr(worksheet, "sheet_id", None),
+        getattr(worksheet, "_properties", {}).get("sheetId")
+        if isinstance(getattr(worksheet, "_properties", None), dict)
+        else None,
+        getattr(worksheet, "_properties", {}).get("id")
+        if isinstance(getattr(worksheet, "_properties", None), dict)
+        else None,
+    ):
+        try:
+            sheet_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if sheet_id >= 0:
+            return sheet_id
+    return -1
+
+
+def _sheet_names_cache_key(user_email: str, sheet_url: str, credentials_path: str) -> str:
+    return "|".join(
+        [
+            str(user_email or "").strip().lower(),
+            evidence.normalize_sheet_input(sheet_url),
+            os.path.normpath(str(credentials_path or "").strip()).lower(),
+        ]
+    )
+
+
+def _get_cached_sheet_titles(cache_key: str) -> list[str] | None:
+    now = time.time()
+    with SHEET_NAMES_CACHE_LOCK:
+        cached = SHEET_NAMES_CACHE.get(cache_key)
+        if not cached:
+            return None
+        if (now - float(cached.get("ts", 0.0) or 0.0)) > SHEET_NAMES_CACHE_TTL_SEC:
+            SHEET_NAMES_CACHE.pop(cache_key, None)
+            return None
+        titles = cached.get("titles")
+        return list(titles) if isinstance(titles, list) else None
+
+
+def _store_cached_sheet_titles(cache_key: str, titles: list[str]) -> None:
+    with SHEET_NAMES_CACHE_LOCK:
+        SHEET_NAMES_CACHE[cache_key] = {"ts": time.time(), "titles": list(titles or [])}
+
+
+def _sheet_link_columns_cache_key(user_email: str, sheet_url: str, sheet_name: str, credentials_path: str, start_row: int) -> str:
+    return "|".join(
+        [
+            str(user_email or "").strip().lower(),
+            evidence.normalize_sheet_input(sheet_url),
+            str(sheet_name or "").strip(),
+            os.path.normpath(str(credentials_path or "").strip()).lower(),
+            str(max(1, int(start_row or 1))),
+        ]
+    )
+
+
+def _get_cached_sheet_link_columns(cache_key: str) -> dict[str, Any] | None:
+    now = time.time()
+    with SHEET_LINK_COLUMNS_CACHE_LOCK:
+        cached = SHEET_LINK_COLUMNS_CACHE.get(cache_key)
+        if not cached:
+            return None
+        if (now - float(cached.get("ts", 0.0) or 0.0)) > SHEET_LINK_COLUMNS_CACHE_TTL_SEC:
+            SHEET_LINK_COLUMNS_CACHE.pop(cache_key, None)
+            return None
+        payload = cached.get("payload")
+        return dict(payload) if isinstance(payload, dict) else None
+
+
+def _store_cached_sheet_link_columns(cache_key: str, payload: dict[str, Any]) -> None:
+    with SHEET_LINK_COLUMNS_CACHE_LOCK:
+        SHEET_LINK_COLUMNS_CACHE[cache_key] = {"ts": time.time(), "payload": dict(payload or {})}
+
+
+def _clear_sheet_link_columns_cache(user_email: str, sheet_url: str, sheet_name: str, credentials_path: str) -> None:
+    prefix = "|".join(
+        [
+            str(user_email or "").strip().lower(),
+            evidence.normalize_sheet_input(sheet_url),
+            str(sheet_name or "").strip(),
+            os.path.normpath(str(credentials_path or "").strip()).lower(),
+        ]
+    )
+    with SHEET_LINK_COLUMNS_CACHE_LOCK:
+        stale_keys = [key for key in SHEET_LINK_COLUMNS_CACHE.keys() if str(key).startswith(prefix + "|")]
+        for key in stale_keys:
+            SHEET_LINK_COLUMNS_CACHE.pop(key, None)
+
+
+def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows: int = 120, max_columns: int = 100) -> dict[str, Any]:
+    first_row = max(1, int(start_row or 1))
+    rows_to_scan = max(10, min(int(sample_rows or 120), 400))
+    cols_to_scan = max(8, min(int(max_columns or 100), 182))
+    last_col_letter = evidence.col_index_to_letter(cols_to_scan)
+    last_row = first_row + rows_to_scan - 1
+    cell_range = f"A{first_row}:{last_col_letter}{last_row}"
+
+    try:
+        display_rows = worksheet.get(cell_range, value_render_option="UNFORMATTED_VALUE") or []
+    except Exception:
+        display_rows = worksheet.get(cell_range) or []
+    try:
+        formula_rows = worksheet.get(cell_range, value_render_option="FORMULA") or []
+    except Exception:
+        formula_rows = []
+
+    counts: dict[str, int] = {}
+    drive_counts: dict[str, int] = {}
+    samples: dict[str, str] = {}
+
+    total_rows = max(len(display_rows), len(formula_rows))
+    for row_idx in range(total_rows):
+        display_row = display_rows[row_idx] if row_idx < len(display_rows) and isinstance(display_rows[row_idx], list) else []
+        formula_row = formula_rows[row_idx] if row_idx < len(formula_rows) and isinstance(formula_rows[row_idx], list) else []
+        total_cols = min(cols_to_scan, max(len(display_row), len(formula_row)))
+        for col_idx in range(total_cols):
+            display_cell = str(display_row[col_idx] if col_idx < len(display_row) else "").strip()
+            formula_cell = str(formula_row[col_idx] if col_idx < len(formula_row) else "").strip()
+            url = ""
+            if formula_cell:
+                url = evidence.extract_url_from_hyperlink_formula(formula_cell) or ""
+            if not url and display_cell:
+                url = (
+                    evidence.normalize_web_source_url(display_cell)
+                    or evidence.normalize_scan_source_url(display_cell)
+                    or ""
+                )
+            if not url:
+                continue
+            col_letter = evidence.col_index_to_letter(col_idx + 1)
+            counts[col_letter] = counts.get(col_letter, 0) + 1
+            if "drive.google.com" in url.lower() or "docs.google.com" in url.lower():
+                drive_counts[col_letter] = drive_counts.get(col_letter, 0) + 1
+            if col_letter not in samples:
+                samples[col_letter] = url
+
+    ordered_columns = sorted(counts.keys(), key=lambda col: (-counts[col], evidence.col_letter_to_index(col) or 9999))
+    drive_columns = sorted(drive_counts.keys(), key=lambda col: (-drive_counts[col], evidence.col_letter_to_index(col) or 9999))
+    return {
+        "columns": ordered_columns,
+        "drive_columns": drive_columns,
+        "counts": counts,
+        "samples": samples,
+        "start_row": first_row,
+        "range": cell_range,
+    }
+
+
+def _normalize_selected_columns(columns: Any) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    raw_values = list(columns or []) if isinstance(columns, (list, tuple, set)) else []
+    indexed: list[tuple[int, str]] = []
+    for value in raw_values:
+        column = str(value or "").strip().upper()
+        if not column:
+            continue
+        idx = evidence.col_letter_to_index(column) or 0
+        if idx <= 0 or column in seen:
+            continue
+        seen.add(column)
+        indexed.append((idx, column))
+    indexed.sort(key=lambda item: item[0])
+    return [column for _, column in indexed]
 
 
 def _any_running_job() -> str | None:
@@ -1609,6 +2173,13 @@ def _job_owner_email(job: dict[str, Any] | None) -> str:
     return _normalize_email(data.get("owner_email") or request_data.get("owner_email") or "")
 
 
+def _can_view_job(job: dict[str, Any] | None, viewer_email: str) -> bool:
+    normalized_viewer = _normalize_email(viewer_email)
+    if not normalized_viewer or not job:
+        return False
+    return _job_owner_email(job) == normalized_viewer or _is_admin_email(normalized_viewer)
+
+
 def _get_owned_job(job_id: str, owner_email: str) -> dict[str, Any]:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -1625,6 +2196,52 @@ def _extract_log_block_name_py(log: dict[str, Any] | None) -> str:
         return ""
     head = text.split(":", 1)[0].strip()
     return head[:80]
+
+
+def _derive_continue_request_snapshot(source_job: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+    source_request = json.loads(json.dumps(source_job.get("request") or {}))
+    mappings = list(source_request.get("mappings") or [])
+    if not mappings:
+        raise HTTPException(status_code=400, detail="Không tìm thấy mapping để chạy tiếp")
+
+    block_last_rows: dict[str, int] = {}
+    unnamed_last_row = 0
+    for log in list(source_job.get("logs") or []):
+        try:
+            row = int(log.get("row") or 0)
+        except Exception:
+            row = 0
+        if row <= 0:
+            continue
+        block_name = _extract_log_block_name_py(log)
+        if block_name:
+            block_last_rows[block_name] = max(block_last_rows.get(block_name, 0), row)
+        else:
+            unnamed_last_row = max(unnamed_last_row, row)
+
+    next_lines: dict[str, int] = {}
+    next_starts: list[int] = []
+    request_start_line = max(1, int(source_request.get("start_line") or 4))
+    for item in mappings:
+        block_name = str((item or {}).get("name", "") or "").strip()
+        try:
+            item_start_line = max(1, int(str(item.get("start_line", request_start_line)).strip() or request_start_line))
+        except Exception:
+            item_start_line = request_start_line
+        last_row = block_last_rows.get(block_name, 0)
+        if last_row <= 0 and len(mappings) == 1:
+            last_row = unnamed_last_row
+        next_start_line = max(item_start_line, last_row + 1) if last_row > 0 else item_start_line
+        item["start_line"] = next_start_line
+        if block_name:
+            next_lines[block_name] = next_start_line
+        next_starts.append(next_start_line)
+
+    source_request["mappings"] = mappings
+    source_request["start_line"] = min(next_starts) if next_starts else request_start_line
+    source_request["target_rows"] = []
+    source_request["target_block_name"] = ""
+    return source_request, next_lines
 
 
 def _build_export_log_rows(job: dict[str, Any]) -> list[tuple[list[Any], list[str]]]:
@@ -1670,7 +2287,7 @@ def _read_activity_events() -> list[dict[str, Any]]:
 def _write_activity_events(events: list[dict[str, Any]]) -> None:
     temp_path = ACTIVITY_HISTORY_PATH + ".tmp"
     with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(events[-500:], f, ensure_ascii=False, indent=2)
+        json.dump(events, f, ensure_ascii=False, indent=2)
     os.replace(temp_path, ACTIVITY_HISTORY_PATH)
 
 
@@ -1705,11 +2322,15 @@ def _append_activity_event(
     return entry
 
 
-def _list_activity_events(owner_email: str, limit: int = 50) -> list[dict[str, Any]]:
+def _list_activity_events(owner_email: str, limit: int = 0, include_all: bool = False) -> list[dict[str, Any]]:
     normalized = _normalize_email(owner_email)
-    rows = [item for item in _read_activity_events() if _normalize_email(item.get("owner_email")) == normalized]
+    if include_all and _is_admin_email(normalized):
+        rows = list(_read_activity_events())
+    else:
+        rows = [item for item in _read_activity_events() if _normalize_email(item.get("owner_email")) == normalized]
     rows.sort(key=lambda item: str(item.get("ts") or ""), reverse=True)
-    return rows[: max(1, min(int(limit), 200))]
+    limit_value = int(limit or 0)
+    return rows if limit_value <= 0 else rows[: max(1, min(limit_value, 5000))]
 
 
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -1729,6 +2350,7 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
         "inputs_enabled": bool(job.get("inputs_enabled", True)),
         "logs": list(job.get("logs") or []),
         "error_rows": dict(job.get("error_rows") or {}),
+        "issue_cells": list(job.get("issue_cells") or []),
         "completion": dict(job.get("completion") or {}) if job.get("completion") else None,
         "error": job.get("error"),
     }
@@ -1790,6 +2412,7 @@ def _load_persisted_jobs() -> None:
             "inputs_enabled": bool(item.get("inputs_enabled", True)),
             "logs": list(item.get("logs") or []),
             "error_rows": dict(item.get("error_rows") or {}),
+            "issue_cells": list(item.get("issue_cells") or []),
             "completion": dict(item.get("completion") or {}) if item.get("completion") else None,
             "error": item.get("error"),
         }
@@ -1852,6 +2475,9 @@ def _enqueue_job(
     force_run_all: bool,
     only_run_error_rows: bool,
     capture_five_per_link: bool,
+    highlight_sheet_errors: bool,
+    scan_negative_filter: bool,
+    scan_keyword_filter: bool,
     detail: str = "Chờ chạy",
 ) -> dict[str, Any]:
     job_id = str(uuid.uuid4())
@@ -1860,6 +2486,9 @@ def _enqueue_job(
         force_run_all=force_run_all,
         only_run_error_rows=only_run_error_rows,
         capture_five_per_link=capture_five_per_link,
+        highlight_sheet_errors=highlight_sheet_errors,
+        scan_negative_filter=scan_negative_filter,
+        scan_keyword_filter=scan_keyword_filter,
         job_store={},
         persist_callback=_persist_jobs,
     )
@@ -1881,6 +2510,7 @@ def _enqueue_job(
         "inputs_enabled": True,
         "logs": [],
         "error_rows": {},
+        "issue_cells": [],
         "completion": None,
         "error": None,
     }
@@ -1909,10 +2539,18 @@ def _run_job(job_id: str):
     _persist_jobs(force=True)
 
     previous_runtime = _capture_runtime_settings()
+    restore_screenshot_hook = None
+    restore_focus_hook = None
     try:
         runtime_settings = dict(req.get("runtime_settings") or {})
         if runtime_settings:
             _apply_runtime_settings(runtime_settings)
+            restore_screenshot_hook = _install_screenshot_wait_hook(
+                float(runtime_settings.get("please_wait_delay_sec", 2.0) or 2.0)
+            )
+            restore_focus_hook = _install_tiktok_focus_boost_hook(
+                bool(runtime_settings.get("tiktok_force_focus", True))
+            )
         evidence.main_logic(
             app_adapter,
             req["drive_id"],
@@ -1989,6 +2627,16 @@ def _run_job(job_id: str):
                 job["finished_at"] = _utc_now_iso()
         _persist_jobs(force=True)
     finally:
+        if restore_focus_hook:
+            try:
+                restore_focus_hook()
+            except Exception:
+                pass
+        if restore_screenshot_hook:
+            try:
+                restore_screenshot_hook()
+            except Exception:
+                pass
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if job:
@@ -2002,11 +2650,19 @@ async def _auth_guard(request: Request, call_next):
     return await call_next(request)
 
 
+def _html_no_cache_response(content: str, status_code: int = 200) -> HTMLResponse:
+    response = HTMLResponse(content, status_code=status_code)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if _auth_email_from_request(request):
         return RedirectResponse(url="/", status_code=302)
-    return HTMLResponse(LOGIN_PAGE_HTML)
+    return _html_no_cache_response(LOGIN_PAGE_HTML)
 
 
 @app.post("/api/auth/request-code")
@@ -2054,7 +2710,7 @@ def brand_mascot():
 @app.get("/", response_class=HTMLResponse)
 def home_page(request: Request):
     if _is_railway_healthcheck(request):
-        return HTMLResponse("ok", status_code=200)
+        return _html_no_cache_response("ok", status_code=200)
     auth_email_raw = _auth_email_from_request(request)
     if not auth_email_raw:
         return RedirectResponse(url="/login", status_code=302)
@@ -2064,7 +2720,7 @@ def home_page(request: Request):
     auth_email = html.escape(auth_email_raw, quote=True)
     auth_role = html.escape(auth_role_raw, quote=True)
     auth_role_display = "Admin" if auth_role_raw == "admin" else "User"
-    return HTMLResponse(
+    return _html_no_cache_response(
         """<!doctype html>
 <html lang="en">
 <head>
@@ -2075,9 +2731,9 @@ def home_page(request: Request):
 :root{--bg:#f3f4f6;--bg-grad-1:#f3f4f6;--bg-grad-2:#f8fafc;--panel:#ffffff;--panel-soft:#fbfcff;--line:#e4e7ec;--text:#101828;--muted:#667085;--soft:#f8fafc;--blue:#2f80ed;--blue-soft:#e8f1ff;--green:#16a34a;--red:#dc2626;--shadow:0 12px 36px rgba(16,24,40,.06);--input-bg:#ffffff;--input-fg:#102033;--danger-bg:#fff7f7;--danger-line:#fecaca;--danger-text:#be123c;--log-bg:#0b1322}
 [data-theme="dark"]{--bg:#0e1525;--bg-grad-1:#0e1525;--bg-grad-2:#121b2f;--panel:#121b2b;--panel-soft:#162033;--line:#263247;--text:#dbe6f5;--muted:#91a0b8;--soft:#182338;--blue:#5b93d3;--blue-soft:#1a2940;--green:#34c38f;--red:#f08aa0;--shadow:0 18px 40px rgba(0,0,0,.28);--input-bg:#0b1322;--input-fg:#dbe6f5;--danger-bg:#2a1920;--danger-line:#5f2e3a;--danger-text:#f1b3c1;--log-bg:#0c1424}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));font-family:Segoe UI,Arial,sans-serif;color:var(--text)}
-.shell{width:100%;min-height:100vh;padding:10px}
-.board{width:100%;min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:236px 1fr;overflow:hidden}
+body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));font-family:Segoe UI,Arial,sans-serif;color:var(--text);overflow-x:hidden}
+.shell{width:100%;max-width:100vw;min-height:100vh;padding:10px;overflow-x:hidden}
+.board{width:100%;max-width:calc(100vw - 20px);min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:236px minmax(0,1fr);overflow:hidden}
 .sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
 .dot{position:relative;width:56px;height:56px;border-radius:18px;background:#ffffff url('/assets/brand-mascot') center/88% no-repeat;box-shadow:0 14px 30px rgba(59,130,246,.2);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
 .dot::before,.dot::after{display:none}
@@ -2206,14 +2862,14 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .access-row-btn.remove{background:#fff1f2;border-color:#fecdd3;color:#be123c}
 [data-theme="dark"] .access-row-btn.remove{background:#2a1620;border-color:#5b2435;color:#fda4af}
 .access-empty{padding:26px 18px;text-align:center;color:var(--muted);font-size:13px}
-.access-directory-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px}
+.access-directory-foot{display:flex;align-items:center;justify-content:flex-start;gap:12px;flex-wrap:wrap;margin-top:14px}
 .access-directory-foot .settings-note{margin:0;min-height:auto;flex:1}
 .access-layout{margin-top:12px}
-.main{padding:14px 18px 18px}
-.jobs-wrap::-webkit-scrollbar,.monitor-table-wrap::-webkit-scrollbar{width:10px;height:10px}
-.jobs-wrap::-webkit-scrollbar-thumb,.monitor-table-wrap::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
-.jobs-wrap::-webkit-scrollbar-track,.monitor-table-wrap::-webkit-scrollbar-track{background:transparent}
-[data-theme="dark"] .jobs-wrap::-webkit-scrollbar-thumb,[data-theme="dark"] .monitor-table-wrap::-webkit-scrollbar-thumb{background:#41516d;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+.main{padding:14px 18px 18px;min-width:0;overflow-x:hidden}
+.jobs-wrap::-webkit-scrollbar,.monitor-table-wrap::-webkit-scrollbar,#projectsList::-webkit-scrollbar,#activitiesTimeline::-webkit-scrollbar{width:10px;height:10px}
+.jobs-wrap::-webkit-scrollbar-thumb,.monitor-table-wrap::-webkit-scrollbar-thumb,#projectsList::-webkit-scrollbar-thumb,#activitiesTimeline::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+.jobs-wrap::-webkit-scrollbar-track,.monitor-table-wrap::-webkit-scrollbar-track,#projectsList::-webkit-scrollbar-track,#activitiesTimeline::-webkit-scrollbar-track{background:transparent}
+[data-theme="dark"] .jobs-wrap::-webkit-scrollbar-thumb,[data-theme="dark"] .monitor-table-wrap::-webkit-scrollbar-thumb,[data-theme="dark"] #projectsList::-webkit-scrollbar-thumb,[data-theme="dark"] #activitiesTimeline::-webkit-scrollbar-thumb{background:#41516d;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
 .topbar{display:flex;justify-content:flex-end;align-items:center;border-bottom:1px solid var(--line);padding-bottom:10px}
 .actions{display:flex;gap:8px;align-items:center}
 .auth-box{display:inline-flex;align-items:center;gap:8px;padding:4px 6px 4px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel-soft);max-width:380px}
@@ -2293,20 +2949,49 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .logs{height:250px;overflow:auto;background:var(--log-bg);color:#dbe6f5;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:12px;white-space:pre-wrap}
 .errors{max-height:250px;overflow:auto;background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-text);border-radius:12px;padding:10px;font-size:12px}
 .meta{font-size:11px;color:var(--muted);margin-top:6px}
-.view{display:none}
+.view{display:none;min-width:0}
 .view.active{display:block}
 .runs-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
 .runs-head .headline{flex:1;justify-content:flex-start;padding:14px 0 0}
 .run-config-head{font-size:18px;font-weight:700}
-.run-layout{display:grid;grid-template-columns:minmax(420px,.9fr) minmax(760px,1.1fr);gap:12px;align-items:start}
-.run-form{padding:12px 14px}
+.run-layout{display:grid;grid-template-columns:minmax(360px,.9fr) minmax(0,1.1fr);gap:12px;align-items:stretch}
+.run-form{padding:12px 14px;height:100%}
 .run-grid{display:grid;grid-template-columns:1fr;gap:10px}
 .run-share-note{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center;gap:12px}
-.run-share-top{margin:0 0 0 auto;max-width:720px;min-width:520px}
+.run-share-top{margin:0 0 0 auto;max-width:720px;min-width:0}
 .run-share-title{font-size:12px;font-weight:700;color:#2d6df6;letter-spacing:.02em;white-space:nowrap}
 .run-share-email{margin-top:0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);font-size:13px;color:var(--input-fg);word-break:break-all}
-.run-form .run-actions{justify-content:space-between;align-items:center}
-.mapping-panel{border:1px solid var(--line);border-radius:16px;background:var(--panel-soft);overflow:hidden}
+.sheet-link-suggest{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:10px 12px;border:1px dashed rgba(91,147,211,.24);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015)),var(--panel-soft);width:min(100%,460px);align-self:flex-start}
+.sheet-link-suggest.open{display:flex;width:100%;max-width:none}
+.sheet-link-suggest.idle{min-height:68px;justify-content:flex-start;padding:10px 12px}
+.sheet-link-suggest.mode-booking.idle{min-height:148px;padding:14px 16px}
+.sheet-link-suggest.idle .sheet-link-suggest-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.sheet-link-suggest.idle .sheet-link-suggest-meta{display:none}
+.sheet-link-suggest.idle .sheet-link-suggest-actions{width:auto;justify-content:flex-end;margin-left:auto}
+.sheet-link-suggest.idle .sheet-link-suggest-action-btn{min-width:120px;min-height:0;padding:8px 12px;border-style:solid;border-radius:8px;display:inline-flex;align-items:center;justify-content:center}
+.sheet-link-suggest-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:nowrap}
+.sheet-link-suggest-title{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8ea0bf}
+.sheet-link-suggest-meta{font-size:11px;color:var(--muted);min-height:16px}
+.sheet-link-suggest-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-left:auto}
+.sheet-link-suggest-action-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sheet-link-suggest-action-group.buttons{justify-content:flex-end}
+.sheet-link-suggest-action-btn{min-height:30px;padding:0 12px;border-radius:999px}
+.sheet-link-suggest-action-btn.icon-only{min-width:34px;width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.sheet-link-suggest-action-btn.icon-only svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.sheet-link-suggest-action-btn.active{border-color:rgba(52,195,143,.32);background:rgba(52,195,143,.14);color:var(--green)}
+.sheet-link-suggest-action-meta{font-size:11px;color:var(--muted)}
+.sheet-link-suggest-rows{display:flex;flex-wrap:wrap;gap:8px}
+.sheet-link-suggest-chip{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:30px;padding:0 12px;border-radius:999px;border:1px solid rgba(91,147,211,.22);background:var(--blue-soft);color:var(--blue);font-size:12px;font-weight:700;cursor:pointer}
+.sheet-link-suggest-chip:hover{border-color:rgba(47,128,237,.4)}
+.sheet-link-suggest-chip.active{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.26);color:var(--green)}
+.sheet-link-suggest-chip.selected{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.32);color:#b45309}
+.sheet-link-suggest-empty{font-size:12px;color:var(--muted)}
+[data-theme="dark"] .sheet-link-suggest{border-color:rgba(91,147,211,.28)}
+[data-theme="dark"] .sheet-link-suggest-chip{background:#1a2940;color:#dbe6f5;border-color:#355072}
+[data-theme="dark"] .sheet-link-suggest-chip.active{background:#153527;color:#9be6be;border-color:#25573d}
+[data-theme="dark"] .sheet-link-suggest-chip.selected{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
+.run-form .run-actions{justify-content:flex-start;align-items:center}
+.mapping-panel{border:1px solid var(--line);border-radius:16px;background:var(--panel-soft);overflow:hidden;min-width:0;height:100%}
 .mapping-panel-body{padding:16px 18px}
 .mapping-blocks{display:flex;flex-direction:column;gap:12px}
 .mapping-block{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:12px}
@@ -2333,8 +3018,24 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .mapping-chrome-btn{justify-self:start}
 .mapping-add-row{display:flex;justify-content:flex-start;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
 .mapping-add-row.booking{justify-content:space-between;align-items:flex-start}
+.mapping-add-row.booking .mapping-toggle-card{margin-left:auto}
 .mapping-check{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text)}
 .mapping-check input{width:16px;height:16px}
+.scan-filter-editor{margin-top:12px;padding:0;border:0;border-radius:0;background:transparent;display:flex;flex-direction:column;gap:12px;width:100%;max-width:none;align-self:stretch}
+.scan-filter-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.scan-filter-title{font-size:13px;font-weight:700;color:var(--text)}
+.scan-filter-note{font-size:11px;color:var(--muted)}
+.scan-filter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.scan-filter-block{border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.scan-filter-block-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.scan-filter-block-title{font-size:13px;font-weight:700;color:var(--text);line-height:1.3}
+.scan-filter-switch{display:inline-flex;align-items:center;justify-content:center;padding:0;background:transparent;border:0;flex:0 0 auto}
+.scan-filter-switch .mapping-toggle-switch{width:44px;height:26px}
+.scan-filter-switch .mapping-toggle-slider{width:44px;height:26px}
+.scan-filter-switch .mapping-toggle-slider::after{top:3px;left:3px;width:18px;height:18px}
+.scan-filter-switch .mapping-toggle-switch input:checked + .mapping-toggle-slider::after{left:23px}
+.scan-filter-block textarea{width:100%;min-height:108px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--input-bg);color:var(--input-fg);font-size:12px;line-height:1.45;resize:vertical}
+.scan-filter-block textarea:focus{outline:none;border-color:#60a5fa;box-shadow:0 0 0 3px rgba(96,165,250,.14)}
 .mapping-toggle-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;min-width:280px;max-width:360px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer;flex:0 0 auto}
 .mapping-toggle-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
 .mapping-toggle-title{font-size:13px;font-weight:700;color:var(--text)}
@@ -2348,7 +3049,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 [data-theme="dark"] .mapping-toggle-card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.01)),var(--panel-soft)}
 [data-theme="dark"] .mapping-toggle-slider{background:#334155;border-color:#475569}
 [data-theme="dark"] .mapping-toggle-slider::after{background:#f8fafc}
-.run-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.run-actions{display:flex;gap:10px 12px;flex-wrap:wrap;margin-top:12px}
 .action-btn{min-height:44px;padding:0 16px;border-radius:14px;display:inline-flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;box-shadow:0 10px 24px rgba(15,23,42,.08);transition:transform .15s ease,box-shadow .15s ease,filter .15s ease}
 .action-btn:hover{transform:translateY(-1px);box-shadow:0 14px 30px rgba(15,23,42,.12);filter:saturate(1.03)}
 .action-btn .action-icon{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;flex:0 0 auto}
@@ -2356,19 +3057,31 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .action-btn .action-label{white-space:nowrap}
 .action-btn.start{background:linear-gradient(135deg,#3b82f6,#2563eb);border-color:#2563eb;color:#fff}
 .action-btn.start .action-icon{background:rgba(255,255,255,.18);color:#fff}
+.action-btn.pause{background:linear-gradient(135deg,#ef4444,#dc2626);border-color:#b91c1c;color:#fff}
+.action-btn.pause .action-icon{background:rgba(255,255,255,.18);color:#fff}
 .action-btn.resume{background:linear-gradient(135deg,#22c55e,#16a34a);border-color:#1f9a4a;color:#fff}
 .action-btn.resume .action-icon{background:rgba(255,255,255,.18);color:#fff}
 .action-btn.red{background:linear-gradient(135deg,#fff1f2,#ffe4e6);border-color:#fecdd3;color:#be123c}
 .action-btn.red .action-icon{background:rgba(190,24,93,.1);color:#be123c}
+.action-btn.soft{background:var(--panel);border-color:var(--line);color:var(--text);box-shadow:none}
+.action-btn.soft:hover{box-shadow:none;filter:none}
+.action-btn.soft .action-icon{background:rgba(148,163,184,.14);color:var(--muted)}
+.action-btn.soft.stop{background:#fff7f7;border-color:#fecdd3;color:#be123c}
+.action-btn.soft.stop .action-icon{background:rgba(190,24,93,.1);color:#be123c}
 [data-theme="dark"] .action-btn{box-shadow:none}
 [data-theme="dark"] .action-btn.start{background:linear-gradient(135deg,#3b82f6,#1d4ed8);border-color:#2563eb}
+[data-theme="dark"] .action-btn.pause{background:linear-gradient(135deg,#dc2626,#991b1b);border-color:#7f1d1d}
 [data-theme="dark"] .action-btn.resume{background:linear-gradient(135deg,#22c55e,#15803d);border-color:#1d8d46}
 [data-theme="dark"] .action-btn.red{background:linear-gradient(135deg,#2b1822,#351a24);border-color:#5b2435;color:#fda4af}
 [data-theme="dark"] .action-btn.red .action-icon{background:rgba(253,164,175,.12);color:#fda4af}
-.run-overwrite-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer}
-.run-overwrite-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
-.run-overwrite-title{font-size:13px;font-weight:700;color:var(--text)}
-.run-overwrite-help{font-size:12px;color:var(--muted);line-height:1.45}
+[data-theme="dark"] .action-btn.soft{background:var(--panel-soft);border-color:var(--line);color:var(--text)}
+[data-theme="dark"] .action-btn.soft .action-icon{background:rgba(148,163,184,.12);color:#cbd5e1}
+[data-theme="dark"] .action-btn.soft.stop{background:#2b1822;border-color:#5b2435;color:#fda4af}
+[data-theme="dark"] .action-btn.soft.stop .action-icon{background:rgba(253,164,175,.12);color:#fda4af}
+.run-overwrite-card{display:inline-grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;min-width:220px;max-width:280px;flex:0 1 auto;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01)),var(--panel-soft);cursor:pointer}
+.run-overwrite-copy{display:flex;flex-direction:column;gap:0;min-width:0}
+.run-overwrite-title{font-size:13px;font-weight:700;color:var(--text);line-height:1.2}
+.run-overwrite-help{display:none}
 .run-overwrite-switch{position:relative;display:inline-flex;align-items:center;justify-content:center;width:52px;height:30px;flex:0 0 auto}
 .run-overwrite-switch input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .run-overwrite-slider{position:relative;display:block;width:52px;height:30px;border-radius:999px;background:#cbd5e1;border:1px solid rgba(148,163,184,.28);transition:background .2s ease,border-color .2s ease,box-shadow .2s ease}
@@ -2378,7 +3091,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 [data-theme="dark"] .run-overwrite-card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.01)),var(--panel-soft)}
 [data-theme="dark"] .run-overwrite-slider{background:#334155;border-color:#475569}
 [data-theme="dark"] .run-overwrite-slider::after{background:#f8fafc}
-.run-actions-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.run-actions-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
 .monitor-card{margin-top:12px;padding:16px}
 .monitor-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 .monitor-kicker{font-size:12px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:#7b8aa5}
@@ -2394,16 +3107,38 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .monitor-progress-track{height:12px;border-radius:999px;background:#dbe4f0;overflow:hidden;margin-top:14px}
 .monitor-progress-track span{display:block;height:100%;width:0;background:linear-gradient(90deg,#6b63ff,#7d77ff);transition:width .35s ease}
 .monitor-progress-detail{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.45;min-height:18px}
-.monitor-error-main{font-size:24px;font-weight:700;margin-top:10px}
-.monitor-table-card{margin-top:14px;border:1px solid var(--line);border-radius:22px;overflow:hidden;background:var(--panel-soft)}
+.monitor-error-main{margin-top:10px}
+.monitor-error-stats{display:flex;flex-wrap:wrap;gap:8px}
+.monitor-error-stat{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:999px;border:1px solid rgba(91,147,211,.22);background:var(--blue-soft);color:var(--blue);font-size:12px;font-weight:700}
+.monitor-error-stat strong{font-size:13px;font-weight:800}
+.monitor-error-stat.success{background:rgba(52,195,143,.14);border-color:rgba(52,195,143,.28);color:var(--green)}
+.monitor-error-stat.failed{background:rgba(240,138,160,.14);border-color:rgba(240,138,160,.28);color:var(--red)}
+.monitor-error-stat.unavailable{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.28);color:#b45309}
+.monitor-error-summary{font-size:12px;color:var(--text);margin-top:8px;line-height:1.45;min-height:0}
+.monitor-issue-strip{display:flex;align-items:flex-start;gap:12px;max-width:100%;margin:0 18px 6px;padding:10px 12px;border:1px solid rgba(98,122,168,.14);border-radius:14px;background:linear-gradient(180deg,rgba(239,244,255,.95),rgba(233,240,252,.9))}
+.monitor-issue-strip[hidden]{display:none !important}
+.monitor-issue-strip + .monitor-issue-strip{margin-top:-2px}
+.monitor-issue-strip strong{flex:0 0 148px;display:inline-flex;align-items:center;justify-content:center;text-align:center;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5f74a2;padding:7px 10px;border-radius:999px;background:rgba(67,97,238,.08);border:1px solid rgba(96,165,250,.14)}
+.monitor-issue-rows{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:32px}
+.monitor-issue-chip{display:inline-flex;align-items:center;justify-content:center;padding:5px 10px;border-radius:999px;background:rgba(99,102,241,.1);border:1px solid rgba(129,140,248,.18);color:#31456f;font-size:12px;font-weight:600;letter-spacing:.01em;line-height:1}
+.monitor-issue-chip.more{background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.16);color:#51627f}
+.monitor-issue-chip.action{cursor:pointer}
+.monitor-issue-chip.action:hover{border-color:rgba(96,165,250,.28);color:#183153;background:rgba(96,165,250,.12)}
+.monitor-table-card{margin-top:14px;border:1px solid var(--line);border-radius:22px;overflow:hidden;background:var(--panel-soft);min-width:0}
 .monitor-table-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
 .monitor-table-title{font-size:16px;font-weight:700}
+.monitor-table-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .monitor-export-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font-size:12px;font-weight:700;cursor:pointer}
 .monitor-export-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .monitor-export-btn:hover{border-color:rgba(47,128,237,.35);color:var(--blue)}
-.monitor-table-wrap{max-height:360px;overflow:auto}
-.monitor-table{width:100%;border-collapse:collapse}
-.monitor-table th,.monitor-table td{padding:12px 16px;font-size:13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.monitor-table-wrap{max-height:360px;overflow-y:auto;overflow-x:hidden;width:100%}
+.monitor-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.monitor-table th,.monitor-table td{padding:12px 16px;font-size:13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word;overflow-wrap:anywhere}
+.monitor-table th:nth-child(1),.monitor-table td:nth-child(1){width:132px}
+.monitor-table th:nth-child(2),.monitor-table td:nth-child(2){width:108px}
+.monitor-table th:nth-child(3),.monitor-table td:nth-child(3){width:80px}
+.monitor-table th:nth-child(4),.monitor-table td:nth-child(4){width:128px}
+.monitor-table th:nth-child(6),.monitor-table td:nth-child(6){width:118px}
 .monitor-table thead th{position:sticky;top:0;background:var(--panel-soft);z-index:1;color:#71819d}
 .monitor-table tbody tr:hover{background:rgba(91,147,211,.06)}
 .monitor-replay-cell{text-align:right;white-space:nowrap}
@@ -2417,6 +3152,11 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .result-pill.running,.result-pill.info{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
 .result-pill.warning{background:#ffedd5;color:#c2410c;border-color:#fed7aa}
 [data-theme="dark"] .monitor-kicker,[data-theme="dark"] .monitor-mini-label,[data-theme="dark"] .monitor-table thead th{color:#8ea0bf}
+[data-theme="dark"] .monitor-issue-strip{border-color:rgba(98,122,168,.22);background:linear-gradient(180deg, rgba(30,41,59,.5), rgba(15,23,42,.42))}
+[data-theme="dark"] .monitor-issue-strip strong{color:#9eb0d1;background:rgba(67,97,238,.12);border-color:rgba(96,165,250,.18)}
+[data-theme="dark"] .monitor-issue-chip{background:rgba(99,102,241,.14);border-color:rgba(129,140,248,.24);color:#dbe7ff}
+[data-theme="dark"] .monitor-issue-chip.more{background:rgba(148,163,184,.12);border-color:rgba(148,163,184,.2);color:#b8c3d9}
+[data-theme="dark"] .monitor-issue-chip.action:hover{border-color:rgba(191,219,254,.32);color:#eef4ff;background:rgba(99,102,241,.16)}
 [data-theme="dark"] .monitor-export-btn{background:#121b2b;color:#dbe6f5}
 [data-theme="dark"] .monitor-progress-track{background:#223149}
 [data-theme="dark"] .monitor-table tbody tr:hover{background:rgba(91,147,211,.1)}
@@ -2501,44 +3241,20 @@ linear-gradient(to right, transparent, transparent)}
 .pad{padding:14px}
 .big-number{font-size:30px;font-weight:700}
 .list{display:flex;flex-direction:column;gap:8px}
+#projectsList{max-height:min(72vh,980px);overflow-y:auto;padding-right:4px}
 .list-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-soft);font-size:12px}
 .project-item{width:100%;text-align:left;cursor:pointer;gap:12px;background:var(--panel-soft)}
 .project-item.active{border-color:#bfdbfe;background:var(--blue-soft)}
 [data-theme="dark"] .project-item.active{border-color:#355072;background:#1a2940}
-.project-list-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-.project-mode-filters{display:flex;gap:8px;flex-wrap:wrap}
-.project-mode-filter{display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel-soft);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
-.project-mode-filter span{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--panel);color:var(--text);font-size:11px;font-weight:700}
-.project-mode-filter.active{border-color:#bfdbfe;background:#eef4ff;color:#12315f}
-.project-mode-filter.active span{background:#dbeafe;color:#1d4ed8}
-.project-mode-filter.mode-all{border-color:#d0d5dd;background:#f8fafc;color:#344054}
-.project-mode-filter.mode-all span{background:#ffffff;color:#101828}
-.project-mode-filter.mode-seeding{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
-.project-mode-filter.mode-seeding span{background:#dcfce7;color:#166534}
-.project-mode-filter.mode-booking{border-color:#fed7aa;background:#fff7ed;color:#c2410c}
-.project-mode-filter.mode-booking span{background:#ffedd5;color:#c2410c}
-.project-mode-filter.mode-scan{border-color:#bfdbfe;background:#eef4ff;color:#1d4ed8}
-.project-mode-filter.mode-scan span{background:#dbeafe;color:#1d4ed8}
-.project-mode-filter.mode-all.active{border-color:#98a2b3;background:#eef2f6;color:#1f2937}
-.project-mode-filter.mode-all.active span{background:#d0d5dd;color:#101828}
-.project-mode-filter.mode-seeding.active{border-color:#86efac;background:#dcfce7;color:#166534}
-.project-mode-filter.mode-seeding.active span{background:#bbf7d0;color:#166534}
-.project-mode-filter.mode-booking.active{border-color:#fdba74;background:#ffedd5;color:#9a3412}
-.project-mode-filter.mode-booking.active span{background:#fed7aa;color:#9a3412}
-.project-mode-filter.mode-scan.active{border-color:#93c5fd;background:#dbeafe;color:#1d4ed8}
-.project-mode-filter.mode-scan.active span{background:#bfdbfe;color:#1d4ed8}
-[data-theme="dark"] .project-mode-filter{background:#162033}
-[data-theme="dark"] .project-mode-filter span{background:#121b2b;color:#dbe6f5}
-[data-theme="dark"] .project-mode-filter.active{border-color:#355072;background:#1a2940;color:#dbe6f5}
-[data-theme="dark"] .project-mode-filter.active span{background:#223149;color:#dbe6f5}
-[data-theme="dark"] .project-mode-filter.mode-all{border-color:#475467;background:#182338;color:#dbe6f5}
-[data-theme="dark"] .project-mode-filter.mode-all span{background:#101828;color:#dbe6f5}
-[data-theme="dark"] .project-mode-filter.mode-seeding{border-color:#25573d;background:#153527;color:#9be6be}
-[data-theme="dark"] .project-mode-filter.mode-seeding span{background:#1b4631;color:#9be6be}
-[data-theme="dark"] .project-mode-filter.mode-booking{border-color:#6f502e;background:#3a2a18;color:#f3c58e}
-[data-theme="dark"] .project-mode-filter.mode-booking span{background:#4a3520;color:#f3c58e}
-[data-theme="dark"] .project-mode-filter.mode-scan{border-color:#355072;background:#1a2940;color:#dbe6f5}
-[data-theme="dark"] .project-mode-filter.mode-scan span{background:#223149;color:#dbe6f5}
+.project-list-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.project-filter-stack{display:flex;justify-content:flex-end;align-items:center;gap:10px 14px;flex-wrap:wrap;min-width:0}
+.project-mode-filters,.project-status-filters{min-width:0}
+.project-filter-select{display:flex;align-items:center;gap:8px;min-width:0}
+.project-filter-select span{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap;flex:0 0 auto}
+.project-filter-input{width:190px;min-width:0;height:36px;padding:0 34px 0 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-soft);color:var(--text);font-size:12px;font-weight:700;outline:none;cursor:pointer;appearance:auto;-webkit-appearance:menulist}
+.project-filter-input:focus{outline:none;border-color:#60a5fa;box-shadow:0 0 0 3px rgba(96,165,250,.14)}
+[data-theme="dark"] .project-filter-input{background:#162033}
+[data-theme="dark"] .project-filter-input option{background:#162033;color:#dbe6f5}
 .project-item-main{display:flex;flex-direction:column;gap:4px;min-width:0}
 .project-item-title{font-size:13px;font-weight:700;line-height:1.35}
 .project-item-meta{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -2549,7 +3265,21 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .mode-pill.mode-seeding{background:#153527;color:#9be6be;border-color:#25573d}
 [data-theme="dark"] .mode-pill.mode-booking{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
 [data-theme="dark"] .mode-pill.mode-scan{background:#1a2940;color:#dbe6f5;border-color:#355072}
-.project-item-side{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.project-item-side{display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.project-item-progress{font-size:12px;font-weight:700;color:var(--text)}
+.project-status-badge{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 10px;border-radius:999px;border:1px solid transparent;font-size:11px;font-weight:700;letter-spacing:.01em}
+.project-status-badge.status-queued{background:#f8fafc;color:#475569;border-color:#cbd5e1}
+.project-status-badge.status-running{background:#ede9fe;color:#6d28d9;border-color:#c4b5fd}
+.project-status-badge.status-paused{background:#fff7ed;color:#c2410c;border-color:#fdba74}
+.project-status-badge.status-stopped{background:#f8fafc;color:#64748b;border-color:#cbd5e1}
+.project-status-badge.status-completed{background:#eef4ff;color:#1d4ed8;border-color:#bfdbfe}
+.project-status-badge.status-failed{background:#fff1f2;color:#be123c;border-color:#fecdd3}
+[data-theme="dark"] .project-status-badge.status-queued{background:#182338;color:#dbe6f5;border-color:#475467}
+[data-theme="dark"] .project-status-badge.status-running{background:#2a2152;color:#ddd6fe;border-color:#6d56d6}
+[data-theme="dark"] .project-status-badge.status-paused{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
+[data-theme="dark"] .project-status-badge.status-stopped{background:#182338;color:#cbd5e1;border-color:#475467}
+[data-theme="dark"] .project-status-badge.status-completed{background:#1a2940;color:#b7d2f3;border-color:#355072}
+[data-theme="dark"] .project-status-badge.status-failed{background:#2a1620;color:#fda4af;border-color:#5b2435}
 .project-delete-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #fecaca;border-radius:10px;background:#fff1f2;color:#be123c;cursor:pointer}
 .project-delete-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .project-delete-btn:hover{background:#ffe4e6}
@@ -2563,8 +3293,23 @@ linear-gradient(to right, transparent, transparent)}
 .project-nav-btn:hover{background:#dbeafe}
 [data-theme="dark"] .project-nav-btn{background:#1a2940;border-color:#355072;color:#dbe6f5}
 [data-theme="dark"] .project-nav-btn:hover{background:#223149}
+.project-log-panel{margin-top:12px;border:1px solid var(--line);border-radius:14px;background:var(--panel-soft);overflow:hidden}
+.project-log-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.project-log-title{font-size:13px;font-weight:700}
+.project-log-sub{font-size:11px;color:var(--muted)}
+.project-log-list{max-height:280px;overflow:auto;display:flex;flex-direction:column}
+.project-log-item{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.project-log-item:last-child{border-bottom:0}
+.project-log-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.project-log-meta{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.project-log-message{font-size:12px;line-height:1.45;color:var(--text);word-break:break-word;overflow-wrap:anywhere}
+.project-log-empty{padding:14px 12px;font-size:12px;color:var(--muted)}
+.project-log-list::-webkit-scrollbar{width:10px;height:10px}
+.project-log-list::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+[data-theme="dark"] .project-log-list::-webkit-scrollbar-thumb{background:#41516d;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
 .timeline{display:flex;flex-direction:column;gap:10px}
 .timeline-item{padding:10px 12px;border-left:3px solid var(--blue);background:var(--panel-soft);border-radius:0 10px 10px 0}
+#activitiesTimeline{max-height:min(74vh,960px);overflow-y:auto;padding-right:4px}
 .settings-layout{display:grid;grid-template-columns:1.1fr .9fr;gap:12px}
 .badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;border:1px solid transparent}
 .badge.info{background:#e8f1ff;color:#1d4ed8;border-color:#bfdbfe}
@@ -2590,8 +3335,21 @@ linear-gradient(to right, transparent, transparent)}
 .toast-close{flex:0 0 auto;width:28px;height:28px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
 .toast-close:hover{color:var(--text);border-color:rgba(91,147,211,.3)}
 @keyframes toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.completion-alert-host{position:fixed;top:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:10px;z-index:10020;pointer-events:none;width:min(460px,calc(100vw - 32px))}
+.completion-alert{pointer-events:auto;display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:18px;border:1px solid rgba(52,195,143,.34);background:linear-gradient(180deg,rgba(16,40,28,.98),rgba(11,28,20,.98));box-shadow:0 18px 40px rgba(0,0,0,.34),0 0 0 1px rgba(52,195,143,.08);color:#ecfdf3;animation:completion-alert-in .18s ease forwards,completion-alert-pulse 1.8s ease-in-out infinite}
+.completion-alert-icon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;background:rgba(52,195,143,.16);border:1px solid rgba(134,239,172,.28);color:#9be6be;font-size:19px;font-weight:900}
+.completion-alert-copy{min-width:0;flex:1}
+.completion-alert-kicker{display:none}
+.completion-alert-title{font-size:15px;font-weight:900;line-height:1.2;color:#f0fdf4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.completion-alert-message{margin-top:2px;font-size:12px;line-height:1.4;color:#d1fae5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.completion-alert-meta{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px}
+.completion-alert-chip{display:inline-flex;align-items:center;min-height:22px;padding:0 8px;border-radius:999px;border:1px solid rgba(134,239,172,.18);background:rgba(15,23,42,.24);color:#ecfdf3;font-size:11px;font-weight:700}
+.completion-alert-close{flex:0 0 auto;width:34px;height:34px;border-radius:999px;border:1px solid rgba(134,239,172,.22);background:rgba(15,23,42,.34);color:#ecfdf3;font-size:18px;font-weight:800;cursor:pointer}
+.completion-alert-close:hover{background:rgba(15,23,42,.5);border-color:rgba(134,239,172,.4)}
+@keyframes completion-alert-in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes completion-alert-pulse{0%,100%{box-shadow:0 18px 40px rgba(0,0,0,.34),0 0 0 1px rgba(52,195,143,.08)}50%{box-shadow:0 18px 40px rgba(0,0,0,.34),0 0 0 1px rgba(52,195,143,.16),0 0 0 6px rgba(52,195,143,.06)}}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
-@media (max-width:980px){.run-layout,.run-grid,.cards-3,.cards-4,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}.overview-note{flex-direction:column;align-items:stretch}.overview-cta{justify-content:center}}
+@media (max-width:980px){.run-layout,.run-grid,.cards-3,.cards-4,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid,.scan-filter-grid,.scan-filter-block-body{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}.overview-note{flex-direction:column;align-items:stretch}.overview-cta{justify-content:center}.project-filter-stack{min-width:0;align-items:stretch}.project-filter-select{width:100%}.project-filter-input{width:100%;min-width:0}.completion-alert-host{top:12px;width:calc(100vw - 20px)}.completion-alert{padding:11px 12px;gap:10px}.completion-alert-title{font-size:14px}.completion-alert-message{font-size:11px}.completion-alert-chip{font-size:10px}.completion-alert-close{width:30px;height:30px}}
 </style>
 </head>
 <body>
@@ -2602,13 +3360,11 @@ linear-gradient(to right, transparent, transparent)}
           <div class="dot"></div>
           <div class="brand-copy">
             <strong>Tool Evidence</strong>
-            <span>Automation Suite</span>
           </div>
         </div>
         <div class="side-nav">
-          <button class="side-btn active" data-view="overview" onclick="switchView('overview', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M10 20v-5h4v5"/></svg></span><span>Overview</span></button>
           <div id="runs_group" class="side-group">
-            <button class="side-btn" data-view="runs" onclick="switchView('runs', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M6 4h12"/><path d="M9 4v4l-3 5a4 4 0 0 0 3.4 6h5.2A4 4 0 0 0 18 13l-3-5V4"/><path d="M8 14h8"/></svg></span><span>Runs</span></button>
+            <button class="side-btn active" data-view="runs" onclick="switchView('runs', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M6 4h12"/><path d="M9 4v4l-3 5a4 4 0 0 0 3.4 6h5.2A4 4 0 0 0 18 13l-3-5V4"/><path d="M8 14h8"/></svg></span><span>Runs</span></button>
             <div class="side-subnav">
               <button id="run_mode_seeding" class="side-subbtn" type="button" onclick="openRunMode('seeding')">Seeding</button>
               <button id="run_mode_booking" class="side-subbtn" type="button" onclick="openRunMode('booking')">Booking</button>
@@ -2616,7 +3372,6 @@ linear-gradient(to right, transparent, transparent)}
             </div>
           </div>
           <button class="side-btn" data-view="projects" onclick="switchView('projects', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M8 20h8"/></svg></span><span>Projects</span></button>
-          <button class="side-btn" data-view="activities" onclick="switchView('activities', this)"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M4 12h4l2-5 4 10 2-5h4"/><path d="M4 19h16"/></svg></span><span>Activities</span></button>
           <button id="access_nav_button" class="side-btn" data-view="access" onclick="switchView('access', this)" style="__ADMIN_NAV_STYLE__"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"></path><path d="M5 20a7 7 0 0 1 14 0"></path><path d="M18 7h3"></path><path d="M19.5 5.5v3"></path></svg></span><span>Access</span></button>
           <button id="settings_nav_button" class="side-btn" data-view="settings" onclick="switchView('settings', this)" style="__SETTINGS_NAV_STYLE__"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg></span><span>Settings</span></button>
         </div>
@@ -2656,7 +3411,7 @@ linear-gradient(to right, transparent, transparent)}
           </div>
         </div>
 
-        <section id="view-overview" class="view active">
+        <section id="view-overview" class="view">
           <div class="headline">
             <div class="h1">Overview</div>
             <div id="envChip" class="state">Trạng thái: Sẵn sàng</div>
@@ -2749,7 +3504,7 @@ linear-gradient(to right, transparent, transparent)}
 
         </section>
 
-        <section id="view-runs" class="view">
+        <section id="view-runs" class="view active">
           <div class="runs-head">
             <div class="headline">
               <div id="runTitleText" class="h1">Seeding</div>
@@ -2762,7 +3517,7 @@ linear-gradient(to right, transparent, transparent)}
           <div class="run-layout">
             <section class="card run-form">
               <div class="run-grid">
-                <div class="field"><label>Sheet URL</label><input id="sheet_url" /></div>
+                <div class="field"><label>Sheet URL</label><input id="sheet_url" /><div id="sheet_url_hint" class="settings-note"></div></div>
                 <div class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
                 <div class="field"><label>Drive Folder ID</label><input id="drive_id" /></div>
               </div>
@@ -2773,10 +3528,21 @@ linear-gradient(to right, transparent, transparent)}
                     <span id="overwriteRunHelp" class="run-overwrite-help">Always rerun and replace previous results</span>
                   </span>
                   <span class="run-overwrite-switch">
-                    <input id="force_run_all" type="checkbox" checked />
+                    <input id="force_run_all" type="checkbox" checked onchange="rememberCurrentRunFlags()" />
                     <span class="run-overwrite-slider"></span>
                   </span>
                 </label>
+                <label class="run-overwrite-card">
+                  <span class="run-overwrite-copy">
+                    <span id="highlightSheetErrorsLabel" class="run-overwrite-title">Highlight Sheet Errors</span>
+                    <span id="highlightSheetErrorsHelp" class="run-overwrite-help">Color output cells on the sheet when a row is unavailable or fails</span>
+                  </span>
+                  <span class="run-overwrite-switch">
+                    <input id="highlight_sheet_errors" type="checkbox" onchange="rememberCurrentRunFlags()" />
+                    <span class="run-overwrite-slider"></span>
+                  </span>
+                </label>
+                <div id="bookingRunExtraToggles"></div>
                 <div class="run-actions-main">
                   <button class="btn action-btn start" onclick="startJob()">
                     <span class="action-icon" aria-hidden="true">
@@ -2784,13 +3550,26 @@ linear-gradient(to right, transparent, transparent)}
                     </span>
                     <span id="startJobLabel" class="action-label">Start Job</span>
                   </button>
-                  <button class="btn red action-btn" onclick="stopJob()">
-                    <span id="stopJobIconWrap" class="action-icon" aria-hidden="true">
-                      <svg id="stopJobIcon" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg>
+                  <button class="btn action-btn pause" onclick="stopJob()">
+                    <span id="pauseJobIconWrap" class="action-icon" aria-hidden="true">
+                      <svg id="pauseJobIcon" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg>
                     </span>
-                    <span id="stopJobLabel" class="action-label">Stop Job</span>
+                    <span id="pauseJobLabel" class="action-label">Stop</span>
                   </button>
                 </div>
+              </div>
+              <div id="sheet_link_suggest" class="sheet-link-suggest">
+                <div class="sheet-link-suggest-head">
+                  <div id="sheet_link_suggest_title" class="sheet-link-suggest-title">Cột có link</div>
+                  <div id="sheet_link_suggest_actions" class="sheet-link-suggest-actions">
+                    <div class="sheet-link-suggest-action-group buttons">
+                      <button class="btn sheet-link-suggest-action-btn" type="button" onclick="handleSheetLinkQuickAction()">Quét nhanh</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="sheet_link_suggest_meta" class="sheet-link-suggest-meta"></div>
+                <div id="sheet_link_suggest_rows" class="sheet-link-suggest-rows"></div>
+                <datalist id="sheet_link_column_datalist"></datalist>
               </div>
             </section>
             <aside class="mapping-panel">
@@ -2827,16 +3606,38 @@ linear-gradient(to right, transparent, transparent)}
               <section class="monitor-mini">
                 <div id="runMonitorErrorLabel" class="monitor-mini-label">Loi theo link sheet</div>
                 <div id="runMonitorErrorMain" class="monitor-error-main">Khong co loi</div>
-                <div id="runMonitorErrorMeta" class="monitor-mini-sub">Success 0 - Failed 0</div>
+                <div id="runMonitorErrorMeta" class="monitor-error-summary">Success 0 - Failed 0</div>
               </section>
             </div>
             <div class="monitor-table-card">
-              <div class="monitor-table-head">
-                <div id="runMonitorTableTitle" class="monitor-table-title">Bang log xu ly</div>
-                <button id="exportLogBtn" class="monitor-export-btn" type="button" onclick="exportCurrentLog()">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 19h14"></path></svg>
-                  <span id="exportLogLabel">Xuất log Excel</span>
-                </button>
+                <div id="runMonitorIssueRowsStrip" class="monitor-issue-strip" hidden>
+                  <strong id="runMonitorIssueRowsLabel">Loi</strong>
+                  <div id="runMonitorErrorRows" class="monitor-issue-rows"></div>
+                </div>
+                <div id="runMonitorUnavailableRowsStrip" class="monitor-issue-strip" hidden>
+                  <strong id="runMonitorUnavailableRowsLabel">Khong kha dung</strong>
+                  <div id="runMonitorUnavailableRows" class="monitor-issue-rows"></div>
+                </div>
+                <div class="monitor-table-head">
+                  <div id="runMonitorTableTitle" class="monitor-table-title">Bang log xu ly</div>
+                  <div class="monitor-table-actions">
+                    <button class="btn action-btn soft" type="button" onclick="continueJob()">
+                      <span id="continueJobIconWrap" class="action-icon" aria-hidden="true">
+                        <svg id="continueJobIcon" viewBox="0 0 24 24"><path d="M8 6.5v11l9-5.5-9-5.5Z"></path></svg>
+                      </span>
+                      <span id="continueJobLabel" class="action-label">Continue</span>
+                    </button>
+                    <button class="btn action-btn soft" type="button" onclick="startErrorRowsJob()">
+                      <span id="errorOnlyJobIconWrap" class="action-icon" aria-hidden="true">
+                        <svg id="errorOnlyJobIcon" viewBox="0 0 24 24"><path d="M12 8v5"></path><circle cx="12" cy="16.5" r=".9" fill="currentColor" stroke="none"></circle><path d="M10.2 4.8 3.9 16a1.4 1.4 0 0 0 1.22 2.1h13.76A1.4 1.4 0 0 0 20.1 16L13.8 4.8a1.4 1.4 0 0 0-2.6 0Z"></path></svg>
+                      </span>
+                      <span id="errorOnlyJobLabel" class="action-label">Chạy lỗi</span>
+                    </button>
+                  <button id="exportLogBtn" class="monitor-export-btn" type="button" onclick="exportCurrentLog()">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 19h14"></path></svg>
+                    <span id="exportLogLabel">Xuất log Excel</span>
+                  </button>
+                </div>
               </div>
               <div class="monitor-table-wrap">
                 <table class="monitor-table">
@@ -2868,7 +3669,10 @@ linear-gradient(to right, transparent, transparent)}
             <section class="card pad">
               <div class="project-list-head">
                 <div id="projectsListTitle" style="font-size:15px;font-weight:600">Grouped Registry</div>
-                <div id="projectsModeFilters" class="project-mode-filters"></div>
+                <div class="project-filter-stack">
+                  <div id="projectsModeFilters" class="project-mode-filters"></div>
+                  <div id="projectsStatusFilters" class="project-status-filters"></div>
+                </div>
               </div>
               <div id="projectsList" class="list" style="margin-top:10px"></div>
             </section>
@@ -3034,7 +3838,6 @@ linear-gradient(to right, transparent, transparent)}
             </div>
             <div class="access-directory-foot">
               <div id="access_policy_note" class="settings-note"></div>
-              <button class="btn" onclick="reloadAccessAdminPanel()" id="reloadAccessButton">Reload Access</button>
             </div>
           </section>
         </section>
@@ -3061,6 +3864,13 @@ linear-gradient(to right, transparent, transparent)}
               <div class="field" style="margin-top:12px">
                 <label for="settings_page_timeout_ms">Page timeout (ms)</label>
                 <input id="settings_page_timeout_ms" type="number" min="500" step="100" />
+              </div>
+              <div class="list-row" style="margin-top:12px">
+                <div>
+                  <div id="settings_tiktok_force_focus_label" style="font-weight:600">Push Chrome to front on TikTok captcha</div>
+                  <div id="settings_tiktok_force_focus_help" class="muted">When slider captcha appears, force the browser window to foreground so you can solve it immediately.</div>
+                </div>
+                <input id="settings_tiktok_force_focus" type="checkbox" style="width:18px;height:18px" />
               </div>
               <div class="list-row" style="margin-top:12px">
                 <div>
@@ -3104,24 +3914,53 @@ linear-gradient(to right, transparent, transparent)}
     </div>
   </div>
 <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="false"></div>
+<div id="completionAlertHost" class="completion-alert-host" aria-live="assertive" aria-atomic="false"></div>
 <script>
 let currentJobId = null;
 let pollTimer = null;
 let jobsTimer = null;
 let syncFeedbackTimer = null;
+let completionTitleFlashTimer = null;
+let completionTitleFlashText = '';
+const defaultDocumentTitle = document.title;
 let jobsCache = [];
 let currentJobSnapshot = null;
 let currentLogsCache = [];
 let currentJobIdByMode = { seeding: null, booking: null, scan: null };
 let currentProjectJobId = null;
 let currentProjectModeFilter = 'all';
+let currentProjectStatusFilter = 'all';
 let currentSettingsCache = {};
 let currentRunMode = 'seeding';
 let currentMappingBlocksByMode = {};
+let currentRunFlagsByMode = {};
 let captureFivePerLink = false;
 let sheetNameSuggestTimer = null;
 let sheetNameSuggestKey = '';
+const SHEET_NAME_CACHE_TTL_MS = 3 * 60 * 1000;
 let sheetNameSuggestCache = {};
+let sheetNameSuggestInflight = {};
+const SHEET_COLUMN_CACHE_TTL_MS = 3 * 60 * 1000;
+let sheetColumnSuggestTimer = null;
+let sheetLinkSummaryTimer = null;
+let sheetColumnSuggestKey = '';
+let scanFilterSaveTimer = null;
+let sheetColumnSuggestCache = {};
+let sheetColumnSuggestInflight = {};
+let currentSheetLinkColumns = [];
+let sheetLinkSuggestPayloadByMode = {
+  seeding: { columns: [], counts: {} },
+  booking: { columns: [], counts: {} },
+  scan: { columns: [], counts: {} },
+};
+let sheetLinkSuggestSourceKeyByMode = { seeding: '', booking: '', scan: '' };
+let activeSheetColumnTarget = null;
+let bulkSheetLinkSelectionMode = false;
+let bulkSheetLinkSelectionsByMode = { seeding: [], booking: [], scan: [] };
+let sheetLinkSuggestLoadedByMode = { seeding: false, booking: false, scan: false };
+let sheetLinkSuggestLoadingByMode = { seeding: false, booking: false, scan: false };
+let monitorIssueExpandState = { failed: false, unavailable: false };
+let monitorIssueExpandJobId = '';
 let pendingMappingScrollMode = '';
 let pendingMappingHighlightIndex = -1;
 let currentAccessPolicy = { allowed_emails: [], admin_emails: [], managed_emails: [], email_types: {}, updated_at: null };
@@ -3144,6 +3983,7 @@ const authState = {
   role: '__AUTH_ROLE__',
   isAdmin: __AUTH_IS_ADMIN__,
 };
+const LOCAL_BROWSER_HOSTS = new Set(__LOCAL_BROWSER_HOSTS__);
 const localAgentState = {
   origin: localStorage.getItem('toolEvidence.localAgentOrigin') || 'http://127.0.0.1:8765',
   enabled: false,
@@ -3153,14 +3993,18 @@ const localAgentState = {
 const LOCAL_AGENT_RUNTIME_PREFIXES = [
   '/api/settings',
   '/api/sheets/names',
+  '/api/sheets/column-suggestions',
   '/api/activity',
   '/api/chrome/',
   '/api/jobs',
 ];
 
+function isConfiguredLocalBrowserHost(host) {
+  return LOCAL_BROWSER_HOSTS.has(String(host || '').trim().toLowerCase());
+}
+
 function isLocalBrowserOrigin() {
-  const host = String(window.location.hostname || '').trim().toLowerCase();
-  return host === '127.0.0.1' || host === 'localhost';
+  return isConfiguredLocalBrowserHost(window.location.hostname);
 }
 
 function isLocalAgentRuntimePath(url) {
@@ -3303,6 +4147,13 @@ const I18N = {
     runConfigHelp: 'Chia sẻ quyền Editor cho Sheet và Drive trước khi chạy.',
     runShareLabel: 'Chia sẻ Sheet & Drive folder cho (quyền Editor):',
     overwriteRunHelp: 'Luôn chạy lại và ghi đè kết quả cũ.',
+    highlightSheetErrors: 'Tô màu lỗi trên sheet',
+    highlightSheetErrorsHelp: 'Khi row chạy xong, tô màu ngay các ô kết quả trên Sheet: trắng cho Thành công, vàng cho Không khả dụng, đỏ cho Lỗi.',
+    scanNegativeFilter: 'Lọc từ ngữ tiêu cực',
+    scanNegativeFilterHelp: 'Khi bật, Scan sẽ đánh dấu lỗi nếu text hoặc OCR chứa các từ tiêu cực đã nhập bên dưới.',
+    scanKeywordFilter: 'Quét theo từ khóa',
+    scanKeywordFilterHelp: 'Khi bật, Scan sẽ đánh dấu lỗi nếu text hoặc OCR chứa một trong các từ khóa đã nhập bên dưới.',
+    scanFilterPanelTitle: 'Bộ lọc Scan',
     runMode: 'Chế độ chạy',
     columnMapping: 'Column Mapping',
     seeding: 'Seeding',
@@ -3328,34 +4179,77 @@ const I18N = {
     sheetUrl: 'Sheet URL',
     sheetName: 'Tên Sheet',
     driveFolder: 'Drive Folder ID',
-    sheetNameHintLoading: 'Đang tải danh sách sheet...',
-    sheetNameHintEmpty: 'Không tìm thấy sheet nào trong file này',
-    sheetNameHintCountFmt: count => `Tìm thấy ${count} sheet`,
+    sheetUrlHintLoading: 'Đang tải danh sách sheet...',
+    sheetUrlHintEmpty: 'Không tìm thấy sheet nào trong file này',
+    sheetUrlHintCountFmt: count => `Tìm thấy ${count} sheet`,
+    sheetNameInvalidFmt: name => `Không tìm thấy sheet: ${name}`,
+    sheetLinkCellHintLoading: 'Đang quét ô có URL...',
+    sheetLinkCellHintCountFmt: count => `Phát hiện ${count} cột có URL`,
+    sheetLinkSuggestTitle: 'Cột có link',
+    sheetLinkSuggestSheetFmt: sheet => `Sheet: ${sheet}`,
+    sheetLinkSuggestFind: 'Tìm cột',
+    sheetLinkSuggestLoading: 'Đang quét cột có link...',
+    sheetLinkSuggestHelp: 'Bấm vào ô cột liên quan đến link trước, rồi chọn một cột bên dưới.',
+    sheetLinkSuggestScanHelp: 'Bấm nhiều cột rồi chọn Tạo block, hoặc focus vào một ô để điền trực tiếp.',
+    sheetLinkSuggestReady: 'Bấm Quét nhanh để quét các cột đang chứa link trong sheet này.',
+    sheetLinkSuggestNeedSheet: 'Chọn đúng Sheet Name để hệ thống có thể quét cột link.',
+    sheetLinkSuggestActiveFmt: (field, block) => `Đang chọn cho ${field}${block ? ` · ${block}` : ''}`,
+    sheetLinkSuggestEmpty: 'Chưa phát hiện cột nào có link trong sheet này.',
+    sheetLinkSuggestCountFmt: count => `Phát hiện ${count} cột có link`,
+    sheetLinkBulkToggle: 'Chọn nhiều cột',
+    sheetLinkBulkAdd: 'Tạo block',
+    sheetLinkQuickScan: 'Quét nhanh',
+    sheetLinkQuickCreate: 'Tạo cột nhanh',
+    sheetLinkBulkClear: 'Bỏ chọn',
+    sheetLinkReload: 'Load lại',
+    sheetLinkBulkSelectedFmt: count => `Đã chọn ${count} cột`,
+    sheetLinkBulkHelp: 'Bật chọn nhiều để bấm nhiều cột link và tự thêm block.',
+    sheetLinkBulkUnsupported: 'Chọn nhiều cột hiện hỗ trợ cho Seeding, Booking và Scan.',
+    sheetLinkBulkNone: 'Chưa chọn cột nào',
+    sheetLinkBulkAddedFmt: count => `Đã tạo ${count} block từ các cột đã chọn`,
+    sheetLinkBulkNoNew: 'Các cột đã chọn đã có block rồi',
+    sheetLinkQuickScanNoSelection: 'Chưa chọn cột nào để quét nhanh',
+    sheetLinkQuickScanDoneFmt: count => `Đã tạo ${count} block quét nhanh và thêm 2 cột mới cho mỗi cột đã chọn`,
     browserPort: 'Browser Port',
     startLine: 'Dòng bắt đầu',
     autoLaunchChrome: 'Tự mở Chrome',
     startJob: 'Chạy job',
     overwriteRun: 'Chạy đè',
+    pauseJob: 'Tạm dừng',
     stopJob: 'Dừng',
     resumeJob: 'Tiếp tục',
+    continueJob: 'Chạy tiếp',
+    errorOnlyJob: 'Chạy lỗi',
     refreshJobs: 'Làm mới job',
     runQueue: 'Hàng đợi job',
     runQueueHelp: 'Chọn job để theo dõi. Mỗi mode được chạy 1 job cùng lúc.',
     liveLogs: 'Live log',
-    errorRows: 'Dòng lỗi',
+    errorRows: 'Lỗi',
     selectedJobMeta: 'Job đang chọn',
     monitorKicker: '4. Kết quả & Theo dõi',
     monitorTitle: 'Theo dõi tiến độ và lỗi',
     monitorJob: 'Job',
     monitorProgress: 'Tiến độ',
-    monitorErrors: 'Lỗi theo link sheet',
+    monitorErrors: 'Thống kê',
     monitorTable: 'Bảng log xử lý',
     monitorNoJob: 'Chưa chọn job',
     monitorNoErrors: 'Không có lỗi',
+    monitorIssueSummaryLabel: 'Tóm tắt',
+    monitorIssueRowsLabel: 'Lỗi',
+    monitorIssueUnavailableRowsLabel: 'Không khả dụng',
+    monitorIssueExpandFmt: count => `+${count}`,
+    monitorIssueCollapse: 'Thu gọn',
+    monitorIssueStatsLabel: 'Thống kê',
+    monitorIssueSummaryNone: 'Không có lỗi cần tổng hợp',
+    monitorIssueSummaryTopFmt: (label, count) => `Chủ yếu: ${label} (${count})`,
+    monitorIssueSummaryTopMoreFmt: (label, count, more) => `Chủ yếu: ${label} (${count}) · +${more} loại lỗi khác`,
     jobFinishedTitle: 'Hoàn tất',
     jobFinishedToastFmt: (name, done, total) => `${name} đã chạy xong ${done}/${total} dòng.`,
+    jobFinishedBannerTitle: 'Dự án đã hoàn tất',
+    jobFinishedBannerDismiss: 'Đã thấy',
     monitorNoLogs: 'Chưa có dữ liệu',
-    monitorSuccessFailedFmt: (ok, fail, unavailable = 0) => `Success ${ok} · Failed ${fail} · Không khả dụng ${unavailable}`,
+    monitorSuccessFailedFmt: (ok, fail, unavailable = 0) => `Thành công ${ok} · Lỗi ${fail} · Không khả dụng ${unavailable}`,
+    monitorIssueCellCountFmt: count => `${count} ô`,
     unavailableLabel: 'Không khả dụng',
     time: 'Time',
     post: 'Post',
@@ -3365,6 +4259,8 @@ const I18N = {
     exportLog: 'Xuất log Excel',
     noLogsToExport: 'Chưa có log để xuất',
     replayStartedFmt: row => `Đã tạo replay cho dòng ${row}`,
+    continueStarted: 'Đã tạo job chạy tiếp',
+    errorOnlyStarted: 'Đã tạo job chạy lại các dòng lỗi',
     noData: 'Chưa có dữ liệu',
     projectsState: 'Lưu các run hoàn tất và xem lại chi tiết',
     groupedProjects: 'Dự án đã lưu',
@@ -3372,8 +4268,19 @@ const I18N = {
     largestGroup: 'Dự án đang chọn',
     groupedRegistry: 'Thư viện dự án',
     groupSnapshot: 'Chi tiết dự án',
+    projectLogs: 'Log dự án',
+    projectLogsSub: 'Lưu theo dự án đang chọn',
+    projectModeLabel: 'Mode',
+    projectStatusLabel: 'Trạng thái',
     allProjects: 'Tất cả',
+    projectStatusAll: 'Tất cả',
+    projectStatusRunning: 'Đang chạy',
+    projectStatusCompleted: 'Hoàn tất',
+    projectStatusStopped: 'Đã dừng',
+    projectStatusFailed: 'Lỗi',
+    projectOwner: 'Người chạy',
     noProjectsInFilter: 'Chưa có dự án trong nhóm này',
+    projectNoLogs: 'Chưa có log cho dự án này',
     tasksState: 'Phân rã khối lượng xử lý',
     done: 'Hoàn thành',
     pending: 'Chờ xử lý',
@@ -3388,7 +4295,8 @@ const I18N = {
     errorQueue: 'Hàng đợi lỗi',
     currentProgress: 'Tiến độ hiện tại',
     activitiesState: 'Dòng thời gian runtime có phân loại',
-    recentTimeline: 'Dòng thời gian gần nhất',
+    recentTimeline: 'Lịch sử hoạt động',
+    activityLevel: 'Hoạt động',
     accessState: 'Admin quản lý người dùng được đăng nhập và mail admin',
     accessMailTitle: 'Mail gửi OTP',
     accessMailHelp: 'Đổi Gmail gửi mã xác nhận ngay trên giao diện admin. App password cũ sẽ được giữ kín và chỉ thay khi bạn nhập mới.',
@@ -3480,6 +4388,16 @@ const I18N = {
     viewportWidth: 'Viewport width',
     viewportHeight: 'Viewport height',
     pageTimeout: 'Timeout tải trang (ms)',
+    tiktokCaptchaWait: 'Thời gian chờ captcha TikTok (giây)',
+    pleaseWaitDelay: 'Delay thêm khi có "Please wait" (giây)',
+    tiktokForceFocus: 'Đẩy Chrome lên trước khi gặp captcha TikTok',
+    tiktokForceFocusHelp: 'Khi slider xuất hiện, ép cửa sổ trình duyệt nổi lên để bạn thao tác ngay.',
+    scanNegativeTermsLabel: 'Từ ngữ tiêu cực cho Scan',
+    scanNegativeTermsHelp: 'Mỗi dòng một từ hoặc cụm từ. Khi Scan bật lọc từ tiêu cực, row chứa từ này sẽ bị đánh dấu lỗi.',
+    scanNegativeTermsPlaceholder: 'spam\\nlừa đảo\\nchửi bới',
+    scanKeywordTermsLabel: 'Từ khóa cho Scan',
+    scanKeywordTermsHelp: 'Mỗi dòng một từ hoặc cụm từ. Khi bật quét theo từ khóa, row chứa từ này sẽ bị đánh dấu lỗi.',
+    scanKeywordTermsPlaceholder: 'khuyến mãi\\ngiảm giá\\nđặt hàng',
     waitReadyState: 'Chờ trang ở trạng thái',
     fullPageCapture: 'Chụp full page',
     fullPageHelp: 'Bật nếu bạn muốn giữ toàn bộ chiều dài trang thay vì chỉ phần đang thấy.',
@@ -3601,6 +4519,13 @@ const I18N = {
     runConfigHelp: 'Share Editor access for the Sheet and Drive folder before running.',
     runShareLabel: 'Share Sheet & Drive folder with (Editor permission):',
     overwriteRunHelp: 'Always rerun and replace previous results.',
+    highlightSheetErrors: 'Highlight errors on sheet',
+    highlightSheetErrorsHelp: 'Color the sheet output cells after each row finishes: white for success, yellow for unavailable, and red for failed.',
+    scanNegativeFilter: 'Negative word filter',
+    scanNegativeFilterHelp: 'When enabled, Scan flags a row if the OCR or text contains negative terms entered below.',
+    scanKeywordFilter: 'Keyword scan',
+    scanKeywordFilterHelp: 'When enabled, Scan flags rows when OCR or text contains any keyword entered below.',
+    scanFilterPanelTitle: 'Scan filters',
     runMode: 'Run mode',
     columnMapping: 'Column Mapping',
     seeding: 'Seeding',
@@ -3626,16 +4551,47 @@ const I18N = {
     sheetUrl: 'Sheet URL',
     sheetName: 'Sheet Name',
     driveFolder: 'Drive Folder ID',
-    sheetNameHintLoading: 'Loading sheet names...',
-    sheetNameHintEmpty: 'No sheets found in this spreadsheet',
-    sheetNameHintCountFmt: count => `${count} sheets found`,
+    sheetUrlHintLoading: 'Loading sheet names...',
+    sheetUrlHintEmpty: 'No sheets found in this spreadsheet',
+    sheetUrlHintCountFmt: count => `${count} sheets found`,
+    sheetNameInvalidFmt: name => `Sheet not found: ${name}`,
+    sheetLinkCellHintLoading: 'Scanning URL cells...',
+    sheetLinkCellHintCountFmt: count => `${count} URL columns found`,
+    sheetLinkSuggestTitle: 'Detected link columns',
+    sheetLinkSuggestSheetFmt: sheet => `Sheet: ${sheet}`,
+    sheetLinkSuggestFind: 'Find columns',
+    sheetLinkSuggestLoading: 'Scanning link columns...',
+    sheetLinkSuggestHelp: 'Click a link-related column field, then pick a column below.',
+    sheetLinkSuggestScanHelp: 'Select multiple columns and use Create blocks, or focus a field to fill it directly.',
+    sheetLinkSuggestReady: 'Click Quick scan to detect link-bearing columns in this sheet.',
+    sheetLinkSuggestNeedSheet: 'Choose a valid sheet name so the app can scan link columns.',
+    sheetLinkSuggestActiveFmt: (field, block) => `Selecting for ${field}${block ? ` · ${block}` : ''}`,
+    sheetLinkSuggestEmpty: 'No link columns detected in this sheet yet.',
+    sheetLinkSuggestCountFmt: count => `${count} link columns found`,
+    sheetLinkBulkToggle: 'Select multiple columns',
+    sheetLinkBulkAdd: 'Create blocks',
+    sheetLinkQuickScan: 'Quick scan',
+    sheetLinkQuickCreate: 'Quick create',
+    sheetLinkBulkClear: 'Clear',
+    sheetLinkReload: 'Reload',
+    sheetLinkBulkSelectedFmt: count => `${count} columns selected`,
+    sheetLinkBulkHelp: 'Enable multi-select to pick several link columns and create blocks automatically.',
+    sheetLinkBulkUnsupported: 'Multi-select is currently available for Seeding, Booking, and Scan.',
+    sheetLinkBulkNone: 'No columns selected yet',
+    sheetLinkBulkAddedFmt: count => `Created ${count} blocks from the selected columns`,
+    sheetLinkBulkNoNew: 'All selected columns already have blocks',
+    sheetLinkQuickScanNoSelection: 'No columns selected for quick scan',
+    sheetLinkQuickScanDoneFmt: count => `Created ${count} quick-scan blocks and added 2 new columns for each selection`,
     browserPort: 'Browser Port',
     startLine: 'Start Line',
     autoLaunchChrome: 'Auto Launch Chrome',
     startJob: 'Start Job',
     overwriteRun: 'Overwrite',
-    stopJob: 'Pause',
+    pauseJob: 'Pause',
+    stopJob: 'Stop',
     resumeJob: 'Resume',
+    continueJob: 'Continue',
+    errorOnlyJob: 'Run errors only',
     refreshJobs: 'Refresh Jobs',
     runQueue: 'Run Queue',
     runQueueHelp: 'Select a job to monitor. One active job is allowed per mode.',
@@ -3646,14 +4602,26 @@ const I18N = {
     monitorTitle: 'Track progress and errors',
     monitorJob: 'Job',
     monitorProgress: 'Progress',
-    monitorErrors: 'Errors by sheet link',
+    monitorErrors: 'Summary',
     monitorTable: 'Processing log table',
     monitorNoJob: 'No job selected',
     monitorNoErrors: 'No errors',
+    monitorIssueSummaryLabel: 'Summary',
+    monitorIssueRowsLabel: 'Failed',
+    monitorIssueUnavailableRowsLabel: 'Unavailable',
+    monitorIssueExpandFmt: count => `+${count}`,
+    monitorIssueCollapse: 'Collapse',
+    monitorIssueStatsLabel: 'Stats',
+    monitorIssueSummaryNone: 'No issue summary',
+    monitorIssueSummaryTopFmt: (label, count) => `Top issue: ${label} (${count})`,
+    monitorIssueSummaryTopMoreFmt: (label, count, more) => `Top issue: ${label} (${count}) · +${more} more issue types`,
     jobFinishedTitle: 'Completed',
     jobFinishedToastFmt: (name, done, total) => `${name} finished ${done}/${total} rows.`,
+    jobFinishedBannerTitle: 'Project completed',
+    jobFinishedBannerDismiss: 'Dismiss',
     monitorNoLogs: 'No data yet',
     monitorSuccessFailedFmt: (ok, fail, unavailable = 0) => `Success ${ok} · Failed ${fail} · Unavailable ${unavailable}`,
+    monitorIssueCellCountFmt: count => `${count} cells`,
     unavailableLabel: 'Unavailable',
     time: 'Time',
     post: 'Post',
@@ -3663,6 +4631,8 @@ const I18N = {
     exportLog: 'Export Excel Log',
     noLogsToExport: 'No logs to export',
     replayStartedFmt: row => `Replay job queued for row ${row}`,
+    continueStarted: 'Continue job queued',
+    errorOnlyStarted: 'Error-only job queued',
     noData: 'No data',
     projectsState: 'Store completed runs and reopen their details',
     groupedProjects: 'Saved Projects',
@@ -3670,8 +4640,19 @@ const I18N = {
     largestGroup: 'Selected Project',
     groupedRegistry: 'Project Library',
     groupSnapshot: 'Project Detail',
+    projectLogs: 'Project logs',
+    projectLogsSub: 'Saved with the selected project',
+    projectModeLabel: 'Mode',
+    projectStatusLabel: 'Status',
     allProjects: 'All',
+    projectStatusAll: 'All',
+    projectStatusRunning: 'Running',
+    projectStatusCompleted: 'Completed',
+    projectStatusStopped: 'Stopped',
+    projectStatusFailed: 'Failed',
+    projectOwner: 'Owner',
     noProjectsInFilter: 'No projects in this category',
+    projectNoLogs: 'No logs for this project yet',
     tasksState: 'Workload breakdown',
     done: 'Done',
     pending: 'Pending',
@@ -3686,7 +4667,8 @@ const I18N = {
     errorQueue: 'Error Queue',
     currentProgress: 'Current Progress',
     activitiesState: 'Latest runtime events with severity',
-    recentTimeline: 'Recent Timeline',
+    recentTimeline: 'Activity History',
+    activityLevel: 'Activity',
     accessState: 'Admins manage user access and admin emails',
     accessMailTitle: 'OTP Sender',
     accessMailHelp: 'Change the Gmail account that sends login codes from the admin UI. The old app password stays hidden and is only replaced when you enter a new one.',
@@ -3778,6 +4760,16 @@ const I18N = {
     viewportWidth: 'Viewport width',
     viewportHeight: 'Viewport height',
     pageTimeout: 'Page timeout (ms)',
+    tiktokCaptchaWait: 'TikTok captcha wait (sec)',
+    pleaseWaitDelay: 'Please wait extra delay (sec)',
+    tiktokForceFocus: 'Push Chrome to front on TikTok captcha',
+    tiktokForceFocusHelp: 'When slider captcha appears, force the browser window to foreground so you can solve it immediately.',
+    scanNegativeTermsLabel: 'Negative words for Scan',
+    scanNegativeTermsHelp: 'Use one word or phrase per line. When Scan negative filtering is enabled, rows containing these terms are flagged as failed.',
+    scanNegativeTermsPlaceholder: 'spam\\nscam\\nabuse',
+    scanKeywordTermsLabel: 'Scan keywords',
+    scanKeywordTermsHelp: 'Use one word or phrase per line. When keyword scan is enabled, rows containing these terms are flagged as failed.',
+    scanKeywordTermsPlaceholder: 'promotion\\ndiscount\\norder now',
     waitReadyState: 'Wait ready state',
     fullPageCapture: 'Full page capture',
     fullPageHelp: 'Enable this if you want to keep the entire page length instead of only the visible area.',
@@ -3909,6 +4901,7 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
     start_line: Number(block?.start_line || 4),
     mode: key,
   };
+  console.log(`[DEBUG] sanitizeMappingBlockForMode(${key}, index=${index}): input start_line=${block?.start_line}, output start_line=${next.start_line}`);
   if (key === 'seeding') {
     next.col_profile = '';
     next.col_content = '';
@@ -3930,6 +4923,74 @@ function normalizeMappingsByModeForClient(raw = {}) {
   return next;
 }
 
+function defaultRunFlagsForMode(mode) {
+  const key = String(mode || 'seeding').toLowerCase();
+  return {
+    force_run_all: true,
+    highlight_sheet_errors: true,
+    capture_five_per_link: key === 'booking' ? false : false,
+    scan_negative_filter: false,
+    scan_keyword_filter: false,
+  };
+}
+
+function normalizeRunFlagsByModeForClient(raw = {}) {
+  const next = {};
+  ['seeding', 'booking', 'scan'].forEach(mode => {
+    next[mode] = {
+      ...defaultRunFlagsForMode(mode),
+      ...((raw && typeof raw === 'object' && raw[mode] && typeof raw[mode] === 'object') ? raw[mode] : {}),
+    };
+    if (mode !== 'booking') next[mode].capture_five_per_link = false;
+    if (mode !== 'scan') next[mode].scan_negative_filter = false;
+    if (mode !== 'scan') next[mode].scan_keyword_filter = false;
+    next[mode].force_run_all = next[mode].force_run_all !== false;
+    next[mode].highlight_sheet_errors = !!next[mode].highlight_sheet_errors;
+    next[mode].capture_five_per_link = !!next[mode].capture_five_per_link;
+    next[mode].scan_negative_filter = !!next[mode].scan_negative_filter;
+    next[mode].scan_keyword_filter = !!next[mode].scan_keyword_filter;
+  });
+  return next;
+}
+
+function ensureRunFlagsForMode(mode = currentRunMode) {
+  const key = String(mode || 'seeding').toLowerCase();
+  if (!currentRunFlagsByMode || typeof currentRunFlagsByMode !== 'object') currentRunFlagsByMode = {};
+  const normalized = normalizeRunFlagsByModeForClient(currentRunFlagsByMode);
+  currentRunFlagsByMode = normalized;
+  return currentRunFlagsByMode[key] || defaultRunFlagsForMode(key);
+}
+
+function rememberCurrentRunFlags(mode = currentRunMode) {
+  const key = String(mode || currentRunMode || 'seeding').toLowerCase();
+  const flags = ensureRunFlagsForMode(key);
+  const overwriteNode = document.getElementById('force_run_all');
+  const highlightNode = document.getElementById('highlight_sheet_errors');
+  const negativeNode = document.getElementById('scan_negative_filter');
+  const keywordNode = document.getElementById('scan_keyword_filter');
+  flags.force_run_all = overwriteNode ? !!overwriteNode.checked : flags.force_run_all !== false;
+  flags.highlight_sheet_errors = highlightNode ? !!highlightNode.checked : !!flags.highlight_sheet_errors;
+  flags.capture_five_per_link = key === 'booking' ? !!captureFivePerLink : false;
+  flags.scan_negative_filter = key === 'scan' ? !!negativeNode?.checked : false;
+  flags.scan_keyword_filter = key === 'scan' ? !!keywordNode?.checked : false;
+  currentRunFlagsByMode[key] = flags;
+  return flags;
+}
+
+function applyRunFlagsForMode(mode = currentRunMode) {
+  const key = String(mode || currentRunMode || 'seeding').toLowerCase();
+  const flags = ensureRunFlagsForMode(key);
+  const overwriteNode = document.getElementById('force_run_all');
+  const highlightNode = document.getElementById('highlight_sheet_errors');
+  const negativeNode = document.getElementById('scan_negative_filter');
+  const keywordNode = document.getElementById('scan_keyword_filter');
+  if (overwriteNode) overwriteNode.checked = flags.force_run_all !== false;
+  if (highlightNode) highlightNode.checked = !!flags.highlight_sheet_errors;
+  if (negativeNode) negativeNode.checked = key === 'scan' ? !!flags.scan_negative_filter : false;
+  if (keywordNode) keywordNode.checked = key === 'scan' ? !!flags.scan_keyword_filter : false;
+  captureFivePerLink = key === 'booking' ? !!flags.capture_five_per_link : false;
+}
+
 function serializeMappingsByModeForSave() {
   const payload = {};
   Object.entries(currentMappingBlocksByMode || {}).forEach(([mode, items]) => {
@@ -3939,6 +5000,7 @@ function serializeMappingsByModeForSave() {
     if (!blocks.length) return;
     payload[key] = blocks.map((block, index) => sanitizeMappingBlockForMode(key, block, index + 1));
   });
+  console.log('[DEBUG] serializeMappingsByModeForSave result:', payload);
   return payload;
 }
 
@@ -3988,6 +5050,7 @@ function ensureMappingBlocks(mode) {
   } else {
     currentMappingBlocksByMode[key] = currentMappingBlocksByMode[key].map((block, index) => sanitizeMappingBlockForMode(key, block, index + 1));
   }
+  console.log(`[DEBUG] ensureMappingBlocks(${key}):`, currentMappingBlocksByMode[key]);
   return currentMappingBlocksByMode[key];
 }
 
@@ -4023,10 +5086,681 @@ function mappingFieldsForMode(mode) {
   ];
 }
 
+function getMappingFieldInputId(mode, index, key) {
+  return `mapping_${String(mode || 'seeding')}_${Number(index) || 0}_${String(key || '')}`;
+}
+
+function isLinkSuggestionField(mode, key) {
+  const normalizedMode = String(mode || '').toLowerCase();
+  const normalizedKey = String(key || '').toLowerCase();
+  if (normalizedMode === 'scan') return normalizedKey === 'col_url';
+  return ['col_url', 'col_drive', 'col_screenshot'].includes(normalizedKey);
+}
+
+function supportsBulkSheetLinkMode(mode = currentRunMode) {
+  const normalizedMode = String(mode || currentRunMode || '').toLowerCase();
+  return ['seeding', 'booking', 'scan'].includes(normalizedMode);
+}
+
+function getBulkSheetLinkSelections(mode = currentRunMode) {
+  const normalizedMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+  if (!Array.isArray(bulkSheetLinkSelectionsByMode[normalizedMode])) {
+    bulkSheetLinkSelectionsByMode[normalizedMode] = [];
+  }
+  return bulkSheetLinkSelectionsByMode[normalizedMode];
+}
+
+function clearBulkSheetLinkSelections(mode = currentRunMode) {
+  const normalizedMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+  bulkSheetLinkSelectionsByMode[normalizedMode] = [];
+}
+
+function toggleBulkSheetLinkMode(nextEnabled = null) {
+  if (!supportsBulkSheetLinkMode(currentRunMode)) {
+    alert(t('sheetLinkBulkUnsupported'));
+    return;
+  }
+  bulkSheetLinkSelectionMode = nextEnabled == null ? !bulkSheetLinkSelectionMode : !!nextEnabled;
+  if (!bulkSheetLinkSelectionMode) {
+    clearBulkSheetLinkSelections(currentRunMode);
+  }
+  renderSheetLinkSuggestions();
+}
+
+function toggleBulkSheetLinkSelection(column) {
+  if (!supportsBulkSheetLinkMode(currentRunMode)) {
+    alert(t('sheetLinkBulkUnsupported'));
+    return;
+  }
+  const normalized = String(column || '').trim().toUpperCase();
+  if (!normalized) return;
+  const selected = getBulkSheetLinkSelections(currentRunMode);
+  const index = selected.indexOf(normalized);
+  if (index >= 0) selected.splice(index, 1);
+  else selected.push(normalized);
+  renderSheetLinkSuggestions();
+}
+
+function sheetColumnLetterToIndex(column) {
+  const normalized = String(column || '').trim().toUpperCase();
+  if (!normalized) return 0;
+  let value = 0;
+  for (const ch of normalized) {
+    const code = ch.charCodeAt(0);
+    if (code < 65 || code > 90) return 0;
+    value = (value * 26) + (code - 64);
+  }
+  return value;
+}
+
+function sheetColumnIndexToLetter(index) {
+  let n = Number(index || 0);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  let out = '';
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    out = String.fromCharCode(65 + remainder) + out;
+    n = Math.floor((n - 1) / 26);
+  }
+  return out;
+}
+
+function shiftSheetColumn(column, delta = 0) {
+  const base = sheetColumnLetterToIndex(column);
+  if (!base) return '';
+  return sheetColumnIndexToLetter(base + Number(delta || 0));
+}
+
+function getScanContentColumnFromImageColumn(column) {
+  return shiftSheetColumn(column, -2);
+}
+
+function buildBulkSuggestedBlock(mode, column, index, template = null) {
+  const normalizedMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+  const base = sanitizeMappingBlockForMode(normalizedMode, template || defaultMappingBlock(normalizedMode, index), index);
+  const normalizedColumn = String(column || '').trim().toUpperCase();
+  const next1 = shiftSheetColumn(normalizedColumn, 1);
+  const next2 = shiftSheetColumn(normalizedColumn, 2);
+  base.name = normalizedMode === 'scan' ? `Scan ${index}` : `Post ${index}`;
+  if (normalizedMode === 'scan') {
+    const templateImageIndex = sheetColumnLetterToIndex(base.col_url);
+    const templateResultIndex = sheetColumnLetterToIndex(base.col_drive);
+    base.col_url = normalizedColumn;
+    const inferredContent = getScanContentColumnFromImageColumn(normalizedColumn);
+    if (inferredContent) base.col_content = inferredContent;
+    else base.col_content = '';
+    if (templateImageIndex && templateResultIndex) {
+      const shiftedResult = shiftSheetColumn(normalizedColumn, templateResultIndex - templateImageIndex);
+      if (shiftedResult) base.col_drive = shiftedResult;
+    }
+    return base;
+  }
+  if (normalizedMode === 'booking') {
+    base.col_url = normalizedColumn;
+    if (next1) base.col_screenshot = next1;
+    if (next2) base.col_drive = next2;
+  } else if (normalizedMode === 'seeding') {
+    base.col_url = normalizedColumn;
+    if (next1) base.col_screenshot = next1;
+    if (next2) base.col_drive = next2;
+  }
+  return base;
+}
+
+function buildSuggestedBlockFromColumns(mode, linkColumn, driveColumn, screenshotColumn, index, template = null) {
+  const normalizedMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+  const base = sanitizeMappingBlockForMode(normalizedMode, template || defaultMappingBlock(normalizedMode, index), index);
+  const normalizedLink = String(linkColumn || '').trim().toUpperCase();
+  const normalizedDrive = String(driveColumn || '').trim().toUpperCase();
+  const normalizedScreenshot = String(screenshotColumn || '').trim().toUpperCase();
+  base.name = normalizedMode === 'scan' ? `Scan ${index}` : `Post ${index}`;
+  base.col_url = normalizedLink;
+  if (normalizedMode === 'scan') {
+    const inferredContent = getScanContentColumnFromImageColumn(normalizedLink);
+    if (inferredContent) base.col_content = inferredContent;
+    else base.col_content = '';
+    if (normalizedDrive) base.col_drive = normalizedDrive;
+    return base;
+  }
+  if (normalizedMode === 'booking' || normalizedMode === 'seeding') {
+    if (normalizedDrive) base.col_drive = normalizedDrive;
+    if (normalizedScreenshot) base.col_screenshot = normalizedScreenshot;
+  }
+  return base;
+}
+
+async function addBlocksFromSelectedLinkColumns() {
+  if (!supportsBulkSheetLinkMode(currentRunMode)) {
+    alert(t('sheetLinkBulkUnsupported'));
+    return;
+  }
+  const selected = getBulkSheetLinkSelections(currentRunMode).slice();
+  if (!selected.length) {
+    alert(t('sheetLinkBulkNone'));
+    return;
+  }
+  const rawUrl = String(document.getElementById('sheet_url')?.value || '').trim();
+  const rawName = String(document.getElementById('sheet_name')?.value || '').trim();
+  if (!rawUrl || !rawName) {
+    alert(t('sheetLinkQuickScanNoSelection'));
+    return;
+  }
+  try {
+    const out = await req('/api/sheets/quick-block-columns', {
+      method: 'POST',
+      body: JSON.stringify({
+        sheet_url: rawUrl,
+        sheet_name: rawName,
+        mode: currentRunMode,
+        columns: selected,
+      }),
+    });
+    const items = Array.isArray(out?.items) ? out.items : [];
+    if (!items.length) {
+      alert(t('sheetLinkBulkNoNew'));
+      return;
+    }
+    const blocks = ensureMappingBlocks(currentRunMode);
+    const template = blocks.length ? blocks[blocks.length - 1] : defaultMappingBlock(currentRunMode, 1);
+    items.forEach(item => {
+      const nextIndex = blocks.length + 1;
+      blocks.push(
+        buildSuggestedBlockFromColumns(
+          currentRunMode,
+          item.link_column || item.source_column || '',
+          item.drive_column || '',
+          item.screenshot_column || '',
+          nextIndex,
+          template,
+        )
+      );
+    });
+    pendingMappingScrollMode = currentRunMode;
+    pendingMappingHighlightIndex = Math.max(0, blocks.length - items.length);
+    clearBulkSheetLinkSelections(currentRunMode);
+    bulkSheetLinkSelectionMode = false;
+    renderMappingEditor();
+    await fetchSheetLinkSuggestions(true);
+    setStatus(t('sheetLinkBulkAddedFmt')(items.length), 'done');
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function quickScanSelectedLinkColumns() {
+  await addBlocksFromSelectedLinkColumns();
+}
+
+function setSheetColumnTarget(mode, index, key) {
+  if (!isLinkSuggestionField(mode, key)) return;
+  activeSheetColumnTarget = {
+    mode: String(mode || currentRunMode || 'seeding').toLowerCase(),
+    index: Number(index) || 0,
+    key: String(key || '').trim(),
+  };
+  renderSheetLinkSuggestions();
+}
+
+function getActiveSheetColumnTargetValue() {
+  if (!activeSheetColumnTarget) return '';
+  const blocks = ensureMappingBlocks(activeSheetColumnTarget.mode);
+  const block = blocks[activeSheetColumnTarget.index];
+  if (!block) return '';
+  return String(block[activeSheetColumnTarget.key] || '').trim().toUpperCase();
+}
+
+function currentSheetColumnStartRow() {
+  const blocks = ensureMappingBlocks(currentRunMode);
+  const rows = blocks
+    .map(block => Number(block?.start_line || 4))
+    .filter(value => Number.isFinite(value) && value > 0);
+  return rows.length ? Math.max(1, Math.min(...rows)) : 4;
+}
+
+function getCachedSheetLinkColumns(rawUrl, rawName, startRow, allowStale = false) {
+  const key = `${String(rawUrl || '').trim()}|${String(rawName || '').trim()}|${Math.max(1, Number(startRow || 4) || 4)}`;
+  const entry = sheetColumnSuggestCache[key];
+  if (!entry || !Array.isArray(entry.columns)) return null;
+  if (allowStale) return entry;
+  if ((Date.now() - Number(entry.ts || 0)) > SHEET_COLUMN_CACHE_TTL_MS) return null;
+  return entry;
+}
+
+function getSheetLinkSuggestPayload(mode = currentRunMode) {
+  const normalizedMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+  if (!sheetLinkSuggestPayloadByMode[normalizedMode]) {
+    sheetLinkSuggestPayloadByMode[normalizedMode] = { columns: [], counts: {} };
+  }
+  return sheetLinkSuggestPayloadByMode[normalizedMode];
+}
+
+function resetSheetLinkSuggestions(mode = currentRunMode) {
+  const normalizedMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+  sheetLinkSuggestLoadedByMode[normalizedMode] = false;
+  sheetLinkSuggestLoadingByMode[normalizedMode] = false;
+  sheetLinkSuggestPayloadByMode[normalizedMode] = { columns: [], counts: {} };
+  sheetLinkSuggestSourceKeyByMode[normalizedMode] = '';
+  if (String(normalizedMode) === String(currentRunMode || '').toLowerCase()) {
+    currentSheetLinkColumns = [];
+    setSheetNameHint('');
+    renderSheetLinkSuggestions();
+  }
+}
+
+async function handleSheetLinkQuickAction() {
+  const modeKey = String(currentRunMode || 'seeding').toLowerCase();
+  const rawUrl = String(document.getElementById('sheet_url')?.value || '').trim();
+  const rawName = String(document.getElementById('sheet_name')?.value || '').trim();
+  const startRow = currentSheetColumnStartRow();
+  const currentKey = `${rawUrl}|${rawName}|${startRow}`;
+  const sourceKey = String(sheetLinkSuggestSourceKeyByMode[modeKey] || '');
+  const loadedForCurrentSheet = !!sheetLinkSuggestLoadedByMode[modeKey] && sourceKey === currentKey;
+  if (modeKey === 'scan') {
+    activeSheetColumnTarget = null;
+  }
+  if (!loadedForCurrentSheet) {
+    const cached = getCachedSheetLinkColumns(rawUrl, rawName, startRow, false);
+    if (cached) {
+      sheetLinkSuggestLoadedByMode[modeKey] = true;
+      sheetLinkSuggestPayloadByMode[modeKey] = cached;
+      sheetLinkSuggestSourceKeyByMode[modeKey] = currentKey;
+      renderSheetLinkSuggestions(cached);
+      return;
+    }
+    await findSheetLinkSuggestions(true);
+    return;
+  }
+  await quickScanSelectedLinkColumns();
+}
+
+async function reloadSheetLinkSuggestions() {
+  const modeKey = String(currentRunMode || 'seeding').toLowerCase();
+  const rawUrl = String(document.getElementById('sheet_url')?.value || '').trim();
+  const rawName = String(document.getElementById('sheet_name')?.value || '').trim();
+  const startRow = currentSheetColumnStartRow();
+  const cacheKey = `${rawUrl}|${rawName}|${startRow}`;
+  delete sheetColumnSuggestCache[cacheKey];
+  delete sheetColumnSuggestInflight[cacheKey];
+  sheetLinkSuggestLoadedByMode[modeKey] = false;
+  sheetLinkSuggestPayloadByMode[modeKey] = { columns: [], counts: {} };
+  sheetLinkSuggestSourceKeyByMode[modeKey] = '';
+  clearBulkSheetLinkSelections(modeKey);
+  activeSheetColumnTarget = null;
+  await findSheetLinkSuggestions(true);
+}
+
+async function findSheetLinkSuggestions(force = true) {
+  const normalizedMode = String(currentRunMode || 'seeding').toLowerCase();
+  sheetLinkSuggestLoadingByMode[normalizedMode] = true;
+  renderSheetLinkSuggestions();
+  try {
+    await fetchSheetLinkSuggestions(force);
+  } finally {
+    sheetLinkSuggestLoadingByMode[normalizedMode] = false;
+    renderSheetLinkSuggestions();
+    requestAnimationFrame(() => {
+      document.getElementById('sheet_link_suggest')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+}
+
+function renderSheetLinkSuggestions(payload = null) {
+  const host = document.getElementById('sheet_link_suggest');
+  const titleNode = document.getElementById('sheet_link_suggest_title');
+  const metaNode = document.getElementById('sheet_link_suggest_meta');
+  const actionsNode = document.getElementById('sheet_link_suggest_actions');
+  const rowsNode = document.getElementById('sheet_link_suggest_rows');
+  const datalist = document.getElementById('sheet_link_column_datalist');
+  if (!host || !titleNode || !metaNode || !actionsNode || !rowsNode || !datalist) return;
+
+  const modeKey = String(currentRunMode || 'seeding').toLowerCase();
+  host.style.display = '';
+  const data = payload || getSheetLinkSuggestPayload(modeKey) || { columns: currentSheetLinkColumns || [] };
+  const columns = Array.isArray(data.columns) ? data.columns.map(value => String(value || '').trim().toUpperCase()).filter(Boolean) : [];
+  const counts = data && typeof data.counts === 'object' && data.counts ? data.counts : {};
+  const totalUrlColumns = columns.length || Object.keys(counts).length;
+  const rawSheetName = String(document.getElementById('sheet_name')?.value || '').trim();
+  const rawSheetUrl = String(document.getElementById('sheet_url')?.value || '').trim();
+  const startRow = currentSheetColumnStartRow();
+  const currentKey = `${rawSheetUrl}|${rawSheetName}|${startRow}`;
+  const loaded = !!sheetLinkSuggestLoadedByMode[modeKey] && String(sheetLinkSuggestSourceKeyByMode[modeKey] || '') === currentKey;
+  const loading = !!sheetLinkSuggestLoadingByMode[modeKey];
+  const idle = !loaded && !loading;
+  currentSheetLinkColumns = columns;
+  titleNode.textContent = t('sheetLinkSuggestTitle');
+  host.classList.toggle('idle', idle);
+  host.classList.toggle('mode-seeding', modeKey === 'seeding');
+  host.classList.toggle('mode-booking', modeKey === 'booking');
+  host.classList.toggle('mode-scan', modeKey === 'scan');
+  const bulkSupported = supportsBulkSheetLinkMode(currentRunMode);
+  const bulkSelections = getBulkSheetLinkSelections(currentRunMode);
+
+  const active = activeSheetColumnTarget;
+  const scanSingleTarget = modeKey === 'scan' && !!active;
+  let helperText = '';
+  if (loading) {
+    helperText = t('sheetLinkSuggestLoading');
+  } else if (loaded && active && ensureMappingBlocks(active.mode)[active.index]) {
+    const fields = mappingFieldsForMode(active.mode);
+    const field = fields.find(item => item.key === active.key);
+    const block = ensureMappingBlocks(active.mode)[active.index] || {};
+    helperText = t('sheetLinkSuggestActiveFmt')(field?.label || active.key, String(block?.name || '').trim());
+  } else if (loaded) {
+    helperText = columns.length ? (modeKey === 'scan' ? t('sheetLinkSuggestScanHelp') : t('sheetLinkSuggestHelp')) : '';
+  }
+  const sheetLabel = loaded && rawSheetName ? t('sheetLinkSuggestSheetFmt')(rawSheetName) : '';
+  const metaText = [sheetLabel, helperText].filter(Boolean).join(' · ');
+  metaNode.textContent = '';
+  if (loading) {
+    setSheetNameHint(t('sheetLinkCellHintLoading'));
+  } else if (loaded && rawSheetName) {
+    setSheetNameHint(t('sheetLinkCellHintCountFmt')(totalUrlColumns));
+  } else {
+    setSheetNameHint('');
+  }
+
+  const quickScanDisabled = loading;
+  if (bulkSupported) {
+    actionsNode.innerHTML = loaded ? `
+      <div class="sheet-link-suggest-action-group buttons">
+        <button class="btn sheet-link-suggest-action-btn icon-only" type="button" title="${esc(t('sheetLinkReload'))}" aria-label="${esc(t('sheetLinkReload'))}" onclick="reloadSheetLinkSuggestions()" ${quickScanDisabled ? 'disabled' : ''}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
+        </button>
+        <button class="btn blue sheet-link-suggest-action-btn" type="button" onclick="addBlocksFromSelectedLinkColumns()" ${quickScanDisabled ? 'disabled' : ''}>${esc(t('sheetLinkBulkAdd'))}</button>
+      </div>
+    ` : `
+      <div class="sheet-link-suggest-action-group buttons" style="width:100%;justify-content:center">
+        <button class="btn sheet-link-suggest-action-btn" type="button" onclick="handleSheetLinkQuickAction()" ${quickScanDisabled ? 'disabled' : ''}>${esc(t('sheetLinkQuickScan'))}</button>
+      </div>
+    `;
+  } else {
+    actionsNode.innerHTML = `
+      <div class="sheet-link-suggest-action-group buttons">
+        <button class="btn sheet-link-suggest-action-btn" type="button" onclick="handleSheetLinkQuickAction()" ${quickScanDisabled ? 'disabled' : ''}>${esc(t('sheetLinkQuickScan'))}</button>
+      </div>
+    `;
+  }
+  metaNode.textContent = loading ? t('sheetLinkSuggestLoading') : metaText;
+
+  datalist.innerHTML = columns.map(col => `<option value="${esc(col)}"></option>`).join('');
+  host.classList.add('open');
+  if (!loaded) {
+    rowsNode.innerHTML = '';
+    return;
+  }
+  if (!columns.length) {
+    rowsNode.innerHTML = `<div class="sheet-link-suggest-empty">${esc(String(document.getElementById('sheet_name')?.value || '').trim() ? t('sheetLinkSuggestEmpty') : '')}</div>`;
+    return;
+  }
+  const activeValue = getActiveSheetColumnTargetValue();
+  rowsNode.innerHTML = columns.map(col => {
+    const count = Number(counts?.[col] || 0);
+    const activeClass = scanSingleTarget && activeValue === col ? ' active' : '';
+    const selectedClass = (!scanSingleTarget && bulkSupported && bulkSelections.includes(col)) ? ' selected' : '';
+    const title = count > 0 ? `${col} · ${count}` : col;
+    const clickHandler = (!scanSingleTarget && bulkSupported)
+      ? `toggleBulkSheetLinkSelection('${esc(col)}')`
+      : `applySuggestedSheetColumn('${esc(col)}')`;
+    return `<button class="sheet-link-suggest-chip${activeClass}${selectedClass}" type="button" title="${esc(title)}" onclick="${clickHandler}">${esc(col)}</button>`;
+  }).join('');
+}
+
+async function fetchSheetLinkSuggestions(force = false) {
+  const modeKey = String(currentRunMode || 'seeding').toLowerCase();
+  const rawUrl = String(document.getElementById('sheet_url')?.value || '').trim();
+  const rawName = String(document.getElementById('sheet_name')?.value || '').trim();
+  const host = document.getElementById('sheet_link_suggest');
+  const rowsNode = document.getElementById('sheet_link_suggest_rows');
+  const metaNode = document.getElementById('sheet_link_suggest_meta');
+  if (!rawUrl || !rawName) {
+    currentSheetLinkColumns = [];
+    sheetLinkSuggestLoadedByMode[modeKey] = false;
+    sheetLinkSuggestPayloadByMode[modeKey] = { columns: [], counts: {} };
+    if (rowsNode) rowsNode.innerHTML = '';
+    if (metaNode) metaNode.textContent = '';
+    return;
+  }
+  if (!force && !isKnownSheetName(rawUrl, rawName)) {
+    currentSheetLinkColumns = [];
+    sheetLinkSuggestLoadedByMode[modeKey] = false;
+    sheetLinkSuggestPayloadByMode[modeKey] = { columns: [], counts: {} };
+    if (rowsNode) rowsNode.innerHTML = '';
+    if (metaNode) metaNode.textContent = '';
+    return;
+  }
+  const startRow = currentSheetColumnStartRow();
+  const cacheKey = `${rawUrl}|${rawName}|${startRow}`;
+  const cached = getCachedSheetLinkColumns(rawUrl, rawName, startRow, false);
+  if (cached && !force) {
+    sheetColumnSuggestKey = cacheKey;
+    sheetLinkSuggestLoadedByMode[modeKey] = true;
+    sheetLinkSuggestPayloadByMode[modeKey] = cached;
+    sheetLinkSuggestSourceKeyByMode[modeKey] = cacheKey;
+    renderSheetLinkSuggestions(cached);
+    return;
+  }
+  if (sheetColumnSuggestInflight[cacheKey]) {
+    const pending = await sheetColumnSuggestInflight[cacheKey];
+    sheetColumnSuggestKey = cacheKey;
+    sheetLinkSuggestLoadedByMode[modeKey] = true;
+    sheetLinkSuggestPayloadByMode[modeKey] = pending;
+    sheetLinkSuggestSourceKeyByMode[modeKey] = cacheKey;
+    renderSheetLinkSuggestions(pending);
+    return;
+  }
+  if (host) host.classList.add('open');
+  if (rowsNode) rowsNode.innerHTML = `<div class="sheet-link-suggest-empty">${esc(t('sheetLinkSuggestLoading'))}</div>`;
+  if (metaNode) metaNode.textContent = '';
+  try {
+    sheetColumnSuggestInflight[cacheKey] = (async () => {
+      const qs = new URLSearchParams({
+        sheet_url: rawUrl,
+        sheet_name: rawName,
+        start_row: String(startRow),
+      });
+      if (force) qs.set('force', '1');
+      if (currentSettingsCache.credentials_path) qs.set('credentials_path', currentSettingsCache.credentials_path);
+      const out = await req('/api/sheets/column-suggestions?' + qs.toString());
+      if (String(out.sheet_name || '').trim() && String(out.sheet_name || '').trim() !== rawName) {
+        sheet_name.value = String(out.sheet_name || '').trim();
+        rememberResolvedSheetName(rawUrl, out.sheet_name);
+      }
+      return {
+        columns: Array.isArray(out.columns) ? out.columns : [],
+        counts: out.counts && typeof out.counts === 'object' ? out.counts : {},
+        drive_columns: Array.isArray(out.drive_columns) ? out.drive_columns : [],
+        samples: out.samples && typeof out.samples === 'object' ? out.samples : {},
+      };
+    })();
+    const payload = await sheetColumnSuggestInflight[cacheKey];
+    sheetColumnSuggestCache[cacheKey] = { ...payload, ts: Date.now() };
+    sheetColumnSuggestKey = cacheKey;
+    sheetLinkSuggestLoadedByMode[modeKey] = true;
+    sheetLinkSuggestPayloadByMode[modeKey] = payload;
+    sheetLinkSuggestSourceKeyByMode[modeKey] = cacheKey;
+    renderSheetLinkSuggestions(payload);
+  } catch (e) {
+    const stale = getCachedSheetLinkColumns(rawUrl, rawName, startRow, true);
+    if (stale) {
+      sheetLinkSuggestLoadedByMode[modeKey] = true;
+      sheetLinkSuggestPayloadByMode[modeKey] = stale;
+      sheetLinkSuggestSourceKeyByMode[modeKey] = cacheKey;
+      renderSheetLinkSuggestions(stale);
+    } else if (rowsNode) {
+      sheetLinkSuggestLoadedByMode[modeKey] = true;
+      sheetLinkSuggestPayloadByMode[modeKey] = { columns: [], counts: {}, error: e.message };
+      sheetLinkSuggestSourceKeyByMode[modeKey] = cacheKey;
+      if (host) host.classList.add('open');
+      rowsNode.innerHTML = `<div class="sheet-link-suggest-empty">${esc(e.message)}</div>`;
+    }
+  } finally {
+    delete sheetColumnSuggestInflight[cacheKey];
+  }
+}
+
+async function refreshSheetLinkCountSummary(force = false) {
+  const modeKey = String(currentRunMode || 'seeding').toLowerCase();
+  if (modeKey === 'scan') {
+    setSheetNameHint('');
+    return;
+  }
+  const rawUrl = String(document.getElementById('sheet_url')?.value || '').trim();
+  const rawName = String(document.getElementById('sheet_name')?.value || '').trim();
+  if (!rawUrl || !rawName) {
+    setSheetNameHint('');
+    return;
+  }
+  let knownSheet = isKnownSheetName(rawUrl, rawName);
+  if (!knownSheet && force) {
+    try {
+      await fetchSheetNameSuggestions(true);
+    } catch (_) {}
+    knownSheet = isKnownSheetName(rawUrl, rawName);
+  }
+  if (!knownSheet) {
+    setSheetNameHint(rawName ? t('sheetNameInvalidFmt')(rawName) : '', !!rawName);
+    return;
+  }
+  const startRow = currentSheetColumnStartRow();
+  const cached = getCachedSheetLinkColumns(rawUrl, rawName, startRow, false);
+  if (cached && !force) {
+    const totalCached = Array.isArray(cached.columns) ? cached.columns.length : Object.keys(cached.counts || {}).length;
+    setSheetNameHint(t('sheetLinkCellHintCountFmt')(totalCached));
+    return;
+  }
+  setSheetNameHint(t('sheetLinkCellHintLoading'));
+  const cacheKey = `${rawUrl}|${rawName}|${startRow}`;
+  try {
+    if (!sheetColumnSuggestInflight[cacheKey]) {
+      sheetColumnSuggestInflight[cacheKey] = (async () => {
+        const qs = new URLSearchParams({
+          sheet_url: rawUrl,
+          sheet_name: rawName,
+          start_row: String(startRow),
+        });
+        if (force) qs.set('force', '1');
+        if (currentSettingsCache.credentials_path) qs.set('credentials_path', currentSettingsCache.credentials_path);
+        const out = await req('/api/sheets/column-suggestions?' + qs.toString());
+        if (String(out.sheet_name || '').trim() && String(out.sheet_name || '').trim() !== rawName) {
+          sheet_name.value = String(out.sheet_name || '').trim();
+          rememberResolvedSheetName(rawUrl, out.sheet_name);
+        }
+        return {
+          columns: Array.isArray(out.columns) ? out.columns : [],
+          counts: out.counts && typeof out.counts === 'object' ? out.counts : {},
+          drive_columns: Array.isArray(out.drive_columns) ? out.drive_columns : [],
+          samples: out.samples && typeof out.samples === 'object' ? out.samples : {},
+        };
+      })();
+    }
+    const payload = await sheetColumnSuggestInflight[cacheKey];
+    sheetColumnSuggestCache[cacheKey] = { ...payload, ts: Date.now() };
+    const total = Array.isArray(payload.columns) ? payload.columns.length : Object.keys(payload.counts || {}).length;
+    setSheetNameHint(t('sheetLinkCellHintCountFmt')(total));
+  } catch (e) {
+    const stale = getCachedSheetLinkColumns(rawUrl, rawName, startRow, true);
+    if (stale) {
+      const totalStale = Array.isArray(stale.columns) ? stale.columns.length : Object.keys(stale.counts || {}).length;
+      setSheetNameHint(t('sheetLinkCellHintCountFmt')(totalStale));
+    } else {
+      setSheetNameHint(e.message, true);
+    }
+  } finally {
+    delete sheetColumnSuggestInflight[cacheKey];
+  }
+}
+
+function scheduleSheetLinkSuggestions(force = false) {
+  if (String(currentRunMode || '').toLowerCase() === 'scan') {
+    renderSheetLinkSuggestions();
+    return;
+  }
+  if (!sheetLinkSuggestLoadedByMode[String(currentRunMode || 'seeding').toLowerCase()]) {
+    renderSheetLinkSuggestions();
+    return;
+  }
+  if (sheetColumnSuggestTimer) clearTimeout(sheetColumnSuggestTimer);
+  sheetColumnSuggestTimer = setTimeout(() => {
+    fetchSheetLinkSuggestions(force);
+  }, force ? 0 : 800);
+}
+
+function scheduleSheetLinkCountSummary(force = false) {
+  if (sheetLinkSummaryTimer) clearTimeout(sheetLinkSummaryTimer);
+  sheetLinkSummaryTimer = setTimeout(() => {
+    refreshSheetLinkCountSummary(force);
+  }, force ? 0 : 500);
+}
+
+function applySuggestedSheetColumn(column) {
+  const normalizedColumn = String(column || '').trim().toUpperCase();
+  let target = activeSheetColumnTarget;
+  const isScanMode = String(currentRunMode || '').toLowerCase() === 'scan';
+  const hadExplicitTarget = !!target;
+  if (!target && isScanMode) {
+    const blocks = ensureMappingBlocks('scan');
+    const existingIndex = blocks.findIndex(
+      block => String(block?.col_url || '').trim().toUpperCase() === normalizedColumn
+    );
+    if (existingIndex >= 0) {
+      pendingMappingScrollMode = 'scan';
+      pendingMappingHighlightIndex = existingIndex;
+      activeSheetColumnTarget = null;
+      renderMappingEditor();
+      return;
+    }
+    let preferredIndex = blocks.findIndex(block => !String(block?.col_url || '').trim());
+    if (preferredIndex < 0) {
+      blocks.push(defaultMappingBlock('scan', blocks.length + 1));
+      preferredIndex = blocks.length - 1;
+      pendingMappingScrollMode = 'scan';
+      pendingMappingHighlightIndex = preferredIndex;
+    }
+    target = {
+      mode: 'scan',
+      index: preferredIndex >= 0 ? preferredIndex : 0,
+      key: 'col_url',
+    };
+    activeSheetColumnTarget = target;
+  }
+  if (!target) {
+    alert(t('sheetLinkSuggestHelp'));
+    return;
+  }
+  const blocks = ensureMappingBlocks(target.mode);
+  if (!blocks[target.index]) {
+    activeSheetColumnTarget = null;
+    renderSheetLinkSuggestions();
+    return;
+  }
+  blocks[target.index][target.key] = normalizedColumn;
+  if (String(target.mode || '').toLowerCase() === 'scan' && String(target.key || '').toLowerCase() === 'col_url') {
+    const inferredContent = getScanContentColumnFromImageColumn(normalizedColumn);
+    if (inferredContent) {
+      blocks[target.index].col_content = inferredContent;
+    }
+  }
+  renderMappingEditor();
+  if (isScanMode && !hadExplicitTarget) {
+    activeSheetColumnTarget = null;
+    renderSheetLinkSuggestions();
+    return;
+  }
+  renderSheetLinkSuggestions();
+  requestAnimationFrame(() => {
+    const input = document.getElementById(getMappingFieldInputId(target.mode, target.index, target.key));
+    if (input) input.focus();
+  });
+}
+
 function updateMappingBlock(mode, index, key, value) {
   const blocks = ensureMappingBlocks(mode);
   if (!blocks[index]) return;
   blocks[index][key] = key === 'start_line' ? Number(value || 4) : String(value || '');
+  console.log(`[DEBUG] updateMappingBlock(${mode}, ${index}, ${key}): ${value} -> ${blocks[index][key]}`);
+  if (String(mode || '').toLowerCase() === currentRunMode && String(key || '').toLowerCase() === 'start_line') {
+    resetSheetLinkSuggestions();
+  }
 }
 
 function removeMappingBlock(index) {
@@ -4046,6 +5780,7 @@ function addMappingBlock() {
 
 function toggleCaptureFivePerLink(checked) {
   captureFivePerLink = !!checked;
+  rememberCurrentRunFlags(currentRunMode);
 }
 
 function getModeBasePort(mode = currentRunMode) {
@@ -4070,8 +5805,7 @@ function applyAirDate(mode, index, value) {
 }
 
 function isLocalWebHost() {
-  const host = String(window.location.hostname || '').toLowerCase();
-  return host === '127.0.0.1' || host === 'localhost';
+  return isConfiguredLocalBrowserHost(window.location.hostname);
 }
 
 function launchChromeViaLocalProtocol(mode, index, port) {
@@ -4124,6 +5858,19 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
   }
 }
 
+function handleScanTermsInput(kind, value) {
+  const key = kind === 'keyword' ? 'scan_keyword_terms' : 'scan_negative_terms';
+  currentSettingsCache[key] = String(value || '');
+  scheduleScanFilterSettingsSave();
+}
+
+function renderScanFilterEditor() {
+  const host = document.getElementById('scanFilterEditor');
+  if (!host) return;
+  host.hidden = true;
+  host.innerHTML = '';
+}
+
 function renderMappingEditor() {
   const blocks = ensureMappingBlocks(currentRunMode);
   const fields = mappingFieldsForMode(currentRunMode);
@@ -4132,14 +5879,20 @@ function renderMappingEditor() {
   if (addButton) addButton.textContent = t('addBlock');
   if (!host) return;
   if (currentRunMode === 'scan') {
-    host.innerHTML = `<div class="mapping-scan-grid">${blocks.map((block, index) => {
+    host.innerHTML = `<div class="mapping-seeding-row">${blocks.map((block, index) => {
+      const blockClass = pendingMappingScrollMode === currentRunMode && pendingMappingHighlightIndex === index
+        ? 'mapping-block mapping-block-new'
+        : 'mapping-block';
       const title = block.name || `Scan ${index + 1}`;
       const rows = fields.map(field => {
         const value = block[field.key] ?? '';
         const inputType = field.type === 'number' ? 'number' : 'text';
-        return `<div class="mapping-label">${esc(field.label)}</div><div><input class="mapping-input" type="${inputType}" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
+        const inputId = getMappingFieldInputId(currentRunMode, index, field.key);
+        const listAttr = isLinkSuggestionField(currentRunMode, field.key) ? ' list="sheet_link_column_datalist"' : '';
+        const focusAttr = isLinkSuggestionField(currentRunMode, field.key) ? ` onfocus="setSheetColumnTarget('${currentRunMode}', ${index}, '${field.key}')"` : '';
+        return `<div class="mapping-label">${esc(field.label)}</div><div><input id="${esc(inputId)}" class="mapping-input" type="${inputType}" value="${esc(value)}"${listAttr}${focusAttr} oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
       }).join('');
-      return `<section class="mapping-block">
+      return `<section class="${blockClass}">
         <div class="mapping-block-head">
           <div class="mapping-block-title">${esc(title)}</div>
           ${blocks.length > 1 ? `<button class="btn red mapping-remove" type="button" onclick="removeMappingBlock(${index})">x</button>` : ''}
@@ -4147,76 +5900,34 @@ function renderMappingEditor() {
         <div class="mapping-block-grid">${rows}</div>
       </section>`;
     }).join('')}</div>`;
-  } else if (currentRunMode === 'seeding') {
+  } else if (currentRunMode === 'seeding' || currentRunMode === 'booking') {
     host.innerHTML = `<div class="mapping-seeding-row">${blocks.map((block, index) => {
       const blockClass = pendingMappingScrollMode === currentRunMode && pendingMappingHighlightIndex === index
         ? 'mapping-block mapping-block-new'
         : 'mapping-block';
       const rows = fields.map(field => {
         const value = block[field.key] ?? '';
+        const inputId = getMappingFieldInputId(currentRunMode, index, field.key);
+        const listAttr = isLinkSuggestionField(currentRunMode, field.key) ? ' list="sheet_link_column_datalist"' : '';
+        const focusAttr = isLinkSuggestionField(currentRunMode, field.key) ? ` onfocus="setSheetColumnTarget('${currentRunMode}', ${index}, '${field.key}')"` : '';
         if (field.key === 'col_air_date') {
-          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input class="mapping-input" type="text" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" onclick="openAirDatePicker('${currentRunMode}', ${index})">...</button><input id="air_date_picker_${currentRunMode}_${index}" type="date" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" onchange="applyAirDate('${currentRunMode}', ${index}, this.value)" /></div>`;
+          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" onclick="openAirDatePicker('${currentRunMode}', ${index})">...</button><input id="air_date_picker_${currentRunMode}_${index}" type="date" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" onchange="applyAirDate('${currentRunMode}', ${index}, this.value)" /></div>`;
         }
         const inputType = field.type === 'number' ? 'number' : 'text';
         if (field.key === 'name') {
-          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input class="mapping-input" type="${inputType}" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" />${blocks.length > 1 ? `<button class="btn red mapping-remove" type="button" onclick="removeMappingBlock(${index})">x</button>` : ''}</div>`;
+          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="${inputType}" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" />${blocks.length > 1 ? `<button class="btn red mapping-remove" type="button" onclick="removeMappingBlock(${index})">x</button>` : ''}</div>`;
         }
-        return `<div class="mapping-label">${esc(field.label)}</div><div><input class="mapping-input" type="${inputType}" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
+        return `<div class="mapping-label">${esc(field.label)}</div><div><input id="${esc(inputId)}" class="mapping-input" type="${inputType}" value="${esc(value)}"${listAttr}${focusAttr} oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
       }).join('');
       const chromePort = getChromePortForBlock(index, currentRunMode);
-      const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
+        const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
       return `<section class="${blockClass}"><div class="mapping-block-grid">${rows}${chromeRow}</div></section>`;
     }).join('')}</div>`;
-  } else {
-    const colTemplate = `132px repeat(${blocks.length}, minmax(110px, 1fr))`;
-    const nameRow = [
-      `<div class="mapping-matrix-label">${esc(t('postName'))}</div>`,
-      ...blocks.map((block, index) => {
-        const title = block.name || `Post ${index + 1}`;
-        return `<div class="mapping-matrix-name">
-          <input class="mapping-input" type="text" value="${esc(title)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, 'name', this.value)" />
-          ${blocks.length > 1 ? `<button class="btn red mapping-remove" type="button" onclick="removeMappingBlock(${index})">x</button>` : ''}
-        </div>`;
-      })
-    ].join('');
-    const rows = fields
-      .filter(field => field.key !== 'name')
-      .map(field => {
-        const cells = blocks.map((block, index) => {
-          const value = block[field.key] ?? '';
-          const inputType = field.type === 'number' ? 'number' : 'text';
-          if (field.key === 'col_air_date') {
-            return `<div class="mapping-field-combo"><input class="mapping-input" type="text" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" onclick="openAirDatePicker('${currentRunMode}', ${index})">...</button><input id="air_date_picker_${currentRunMode}_${index}" type="date" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" onchange="applyAirDate('${currentRunMode}', ${index}, this.value)" /></div>`;
-          }
-          return `<div><input class="mapping-input" type="${inputType}" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
-        }).join('');
-        return `<div class="mapping-matrix-label">${esc(field.label)}</div>${cells}`;
-      }).join('');
-    const chromeRow = [
-      `<div class="mapping-matrix-label">${esc(t('chrome'))}</div>`,
-      ...blocks.map((_, index) => {
-        const chromePort = getChromePortForBlock(index, currentRunMode);
-        return `<div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
-      })
-    ].join('');
-    host.innerHTML = `<section class="mapping-matrix"><div class="mapping-matrix-grid" style="grid-template-columns:${colTemplate}">${nameRow}${rows}${chromeRow}</div></section>`;
   }
   const addRow = document.querySelector('.mapping-add-row');
   if (addRow) {
     addRow.classList.toggle('booking', currentRunMode === 'booking');
-    const bookingExtra = currentRunMode === 'booking'
-      ? `<label class="mapping-toggle-card">
-          <span class="mapping-toggle-copy">
-            <span class="mapping-toggle-title">${esc(t('captureFive'))}</span>
-            <span class="mapping-toggle-help">${esc(t('captureFiveHelp'))}</span>
-          </span>
-          <span class="mapping-toggle-switch">
-            <input type="checkbox" ${captureFivePerLink ? 'checked' : ''} onchange="toggleCaptureFivePerLink(this.checked)" />
-            <span class="mapping-toggle-slider"></span>
-          </span>
-        </label>`
-      : '';
-    addRow.innerHTML = `<button id="mappingAddButton" class="btn" type="button" onclick="addMappingBlock()">${esc(t('addBlock'))}</button>${bookingExtra}`;
+    addRow.innerHTML = `<button id="mappingAddButton" class="btn" type="button" onclick="addMappingBlock()">${esc(t('addBlock'))}</button>`;
   }
   if (pendingMappingScrollMode === currentRunMode && pendingMappingHighlightIndex >= 0) {
     const row = host.querySelector('.mapping-seeding-row');
@@ -4232,6 +5943,28 @@ function renderMappingEditor() {
     pendingMappingScrollMode = '';
     pendingMappingHighlightIndex = -1;
   }
+  renderScanFilterEditor();
+  renderSheetLinkSuggestions();
+}
+
+function renderBookingRunExtraToggles() {
+  const host = document.getElementById('bookingRunExtraToggles');
+  if (!host) return;
+  if (currentRunMode !== 'booking') {
+    host.innerHTML = '';
+    return;
+  }
+  host.innerHTML = `
+    <label id="captureFiveCard" class="run-overwrite-card">
+      <span class="run-overwrite-copy">
+        <span id="captureFiveLabel" class="run-overwrite-title">${esc(t('captureFive'))}</span>
+        <span id="captureFiveHelpInline" class="run-overwrite-help">${esc(t('captureFiveHelp'))}</span>
+      </span>
+      <span class="run-overwrite-switch">
+        <input id="capture_five_per_link_toggle" type="checkbox" ${captureFivePerLink ? 'checked' : ''} onchange="toggleCaptureFivePerLink(this.checked)" />
+        <span class="run-overwrite-slider"></span>
+      </span>
+    </label>`;
 }
 
 function applyRunModeUI() {
@@ -4244,9 +5977,13 @@ function applyRunModeUI() {
   });
   const runTitle = document.getElementById('runTitleText');
   if (runTitle) runTitle.textContent = formatRunTitle(currentRunMode);
+  const scanNegativeFilterCard = document.getElementById('scanNegativeFilterCard');
+  if (scanNegativeFilterCard) scanNegativeFilterCard.style.display = 'none';
+  renderBookingRunExtraToggles();
   const runsGroup = document.getElementById('runs_group');
   if (runsGroup) runsGroup.classList.toggle('open', document.getElementById('view-runs')?.classList.contains('active'));
   renderMappingEditor();
+  renderSheetLinkSuggestions();
 }
 
 function applyLanguage() {
@@ -4270,7 +6007,7 @@ function applyLanguage() {
   const refreshJobsBtn = document.getElementById('btn_refresh_jobs');
   if (refreshJobsBtn) refreshJobsBtn.textContent = t('refresh');
 
-  const menuMap = { overview: 'overview', runs: 'runs', projects: 'projects', tasks: 'tasks', activities: 'activities', access: 'access', settings: 'settings' };
+  const menuMap = { runs: 'runs', projects: 'projects', tasks: 'tasks', activities: 'activities', access: 'access', settings: 'settings' };
   Object.entries(menuMap).forEach(([view, key]) => {
     const node = document.querySelector(`.side-btn[data-view="${view}"] span:last-child`);
     if (node) node.textContent = t(key);
@@ -4335,12 +6072,27 @@ function applyLanguage() {
   setText('label[for="sheet_name"]', t('sheetName'));
   setText('label[for="drive_id"]', t('driveFolder'));
   setText('#startJobLabel', t('startJob'));
+  setText('#pauseJobLabel', t('stopJob'));
+  setText('#continueJobLabel', t('continueJob'));
+  setText('#errorOnlyJobLabel', t('errorOnlyJob'));
   setText('#overwriteRunLabel', t('overwriteRun'));
   setText('#overwriteRunHelp', t('overwriteRunHelp'));
+  setText('#highlightSheetErrorsLabel', t('highlightSheetErrors'));
+  setText('#highlightSheetErrorsHelp', t('highlightSheetErrorsHelp'));
+  setText('#captureFiveLabel', t('captureFive'));
+  setText('#captureFiveHelpInline', t('captureFiveHelp'));
+  setText('#scanNegativeFilterLabel', t('scanNegativeFilter'));
+  setText('#scanNegativeFilterHelp', t('scanNegativeFilterHelp'));
+  setText('#sheet_link_suggest_title', t('sheetLinkSuggestTitle'));
   setText('#runMonitorKicker', t('monitorKicker'));
   setText('#runMonitorJobLabel', t('monitorJob'));
   setText('#runMonitorProgressLabel', t('monitorProgress'));
   setText('#runMonitorErrorLabel', t('monitorErrors'));
+  setText('#runMonitorIssueRowsLabel', t('monitorIssueRowsLabel'));
+  setText('#runMonitorUnavailableRowsLabel', t('monitorIssueUnavailableRowsLabel'));
+  setText('#runMonitorErrorRows', '-');
+  setText('#runMonitorUnavailableRows', '-');
+  setText('#runMonitorErrorMeta', t('monitorSuccessFailedFmt')(0, 0, 0));
   setText('#runMonitorTableTitle', t('monitorTable'));
   setText('#runMonitorHeadTime', t('time'));
   setText('#runMonitorHeadPost', t('post'));
@@ -4355,7 +6107,6 @@ function applyLanguage() {
   setText('#view-projects .cards-3 .card:nth-child(3) .k', t('largestGroup'));
   setText('#projectsListTitle', t('groupedRegistry'));
   setText('#projectsSnapshotTitle', t('groupSnapshot'));
-
   setText('#view-activities .card > div:first-child', t('recentTimeline'));
 
   setText('#accessMailTitle', t('accessMailTitle'));
@@ -4373,6 +6124,7 @@ function applyLanguage() {
   setText('#accessEntryCancelTop', t('accessEntryCancel'));
   setText('#accessEntryCancelButton', t('accessEntryCancel'));
   setText('#accessEntrySaveButton', t('accessEntrySave'));
+  renderSheetLinkSuggestions();
   const accessEntryRole = document.getElementById('access_entry_role');
   if (accessEntryRole?.options?.[0]) accessEntryRole.options[0].text = t('roleUser');
   if (accessEntryRole?.options?.[1]) accessEntryRole.options[1].text = t('roleAdmin');
@@ -4413,6 +6165,18 @@ function applyLanguage() {
   setText('label[for="settings_viewport_width"]', t('viewportWidth'));
   setText('label[for="settings_viewport_height"]', t('viewportHeight'));
   setText('label[for="settings_page_timeout_ms"]', t('pageTimeout'));
+  setText('label[for="settings_tiktok_captcha_wait_sec"]', t('tiktokCaptchaWait'));
+  setText('label[for="settings_please_wait_delay_sec"]', t('pleaseWaitDelay'));
+  setText('#settings_tiktok_force_focus_label', t('tiktokForceFocus'));
+  setText('#settings_tiktok_force_focus_help', t('tiktokForceFocusHelp'));
+  const settingsNegativeTerms = document.getElementById('settings_scan_negative_terms');
+  if (settingsNegativeTerms) settingsNegativeTerms.placeholder = t('scanNegativeTermsPlaceholder');
+  const settingsKeywordTerms = document.getElementById('settings_scan_keyword_terms');
+  if (settingsKeywordTerms) settingsKeywordTerms.placeholder = t('scanKeywordTermsPlaceholder');
+  const scanNegativeEditor = document.getElementById('scan_negative_terms_editor');
+  if (scanNegativeEditor) scanNegativeEditor.placeholder = t('scanNegativeTermsPlaceholder');
+  const scanKeywordEditor = document.getElementById('scan_keyword_terms_editor');
+  if (scanKeywordEditor) scanKeywordEditor.placeholder = t('scanKeywordTermsPlaceholder');
   setText('#view-settings .list-row div div:first-child', t('fullPageCapture'));
   setText('#view-settings .list-row .muted', t('fullPageHelp'));
   setText('#view-settings .settings-layout .card:first-child .card > div:first-child', t('jsonServiceAccount'));
@@ -4429,7 +6193,6 @@ function applyLanguage() {
   setText('#accessAdminLabel', t('accessAdminLabel'));
   setText('#accessAdminHelp', t('accessAdminHelp'));
   setText('#saveAccessButton', t('saveAccessPolicy'));
-  setText('#reloadAccessButton', t('reloadAccessPolicy'));
   setText('#view-settings .settings-layout aside > div:first-child', t('currentConfigSummary'));
   const summaryTitles = document.querySelectorAll('#view-settings .settings-layout aside .timeline-item strong');
   if (summaryTitles[0]) summaryTitles[0].textContent = t('viewport');
@@ -4467,8 +6230,11 @@ function toggleTheme() {
 }
 
 function setRunMode(mode) {
+  rememberCurrentRunFlags(currentRunMode);
   const nextMode = String(mode || 'seeding').toLowerCase();
   currentRunMode = ['seeding', 'booking', 'scan'].includes(nextMode) ? nextMode : 'seeding';
+  applyRunFlagsForMode(currentRunMode);
+  resetSheetLinkSuggestions(currentRunMode);
   currentJobId = resolveModeJobId(currentRunMode);
   applyRunModeUI();
 }
@@ -4529,7 +6295,7 @@ async function logActivityEvent(payload = {}) {
       body: JSON.stringify(payload),
     });
     if (out?.item) {
-      currentActivityEvents = [out.item, ...(currentActivityEvents || [])].slice(0, 50);
+      currentActivityEvents = [out.item, ...(currentActivityEvents || [])];
       renderActivities(getCombinedActivities());
     }
     return out?.item || null;
@@ -4661,7 +6427,37 @@ function toDateKeyFromDate(date) {
 }
 
 function getJobSummary(job) {
-  return job?.summary || { done: 0, total: 0, success: 0, failed: 0, unavailable: 0, eta: '---' };
+  const base = job?.summary || {};
+  const logs = Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : []);
+  const touchedRows = new Set();
+  const successRows = new Set();
+  const failedRows = new Set();
+  const unavailableRows = new Set();
+  logs.forEach(item => {
+    const row = Number(item?.row || 0);
+    if (!Number.isFinite(row) || row <= 0) return;
+    touchedRows.add(row);
+    if (isUnavailableLog(item)) unavailableRows.add(row);
+    else if (isFailedLog(item)) failedRows.add(row);
+    else if (isSuccessLog(item)) successRows.add(row);
+  });
+  const done = Math.max(Number(base.done || 0), touchedRows.size);
+  const success = Math.max(Number(base.success || 0), successRows.size);
+  const failed = Math.max(Number(base.failed || 0), failedRows.size, Object.keys(job?.error_rows || {}).length);
+  const unavailable = Math.max(Number(base.unavailable || 0), unavailableRows.size);
+  const total = Math.max(
+    Number(base.total || 0),
+    done,
+    success + failed + unavailable
+  );
+  return {
+    done,
+    total,
+    success,
+    failed,
+    unavailable,
+    eta: String(base.eta || '---'),
+  };
 }
 
 function getJobSheetLabel(job) {
@@ -4671,6 +6467,76 @@ function getJobSheetLabel(job) {
 
 function getJobMode(job) {
   return String(job?.mode || job?.request?.mode || job?.request?.mappings?.[0]?.mode || 'seeding').toLowerCase();
+}
+
+function getJobOwnerEmail(job) {
+  return String(job?.owner_email || job?.request?.owner_email || '').trim().toLowerCase();
+}
+
+function isJobOwnedByCurrentUser(job) {
+  const viewer = String(authState.email || '').trim().toLowerCase();
+  const owner = getJobOwnerEmail(job);
+  return !!viewer && !!owner && viewer === owner;
+}
+
+function getJobOwnerBadge(job) {
+  const owner = getJobOwnerEmail(job);
+  if (!owner) return '';
+  if (!isAdminUser()) return '';
+  if (isJobOwnedByCurrentUser(job)) return '';
+  return owner;
+}
+
+function getJobRootId(job) {
+  const req = job?.request || {};
+  return String(req.root_job_id || job?.id || '').trim();
+}
+
+function getJobLineageJobs(job) {
+  const rootId = getJobRootId(job);
+  if (!rootId) return job ? [job] : [];
+  return (jobsCache || [])
+    .filter(item => getJobRootId(item) === rootId)
+    .sort((a, b) => {
+      const at = Date.parse(String(a?.created_at || '')) || 0;
+      const bt = Date.parse(String(b?.created_at || '')) || 0;
+      return at - bt;
+    });
+}
+
+function getLineageDisplayLogs(snapshot, logs) {
+  const currentLogs = Array.isArray(logs) ? logs : [];
+  if (!snapshot) return currentLogs;
+  const lineageJobs = getJobLineageJobs(snapshot);
+  if (lineageJobs.length <= 1) return currentLogs;
+  const out = [];
+  const seen = new Set();
+  lineageJobs.forEach(job => {
+    const sourceLogs = job?.id === snapshot?.id
+      ? currentLogs
+      : (Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : []));
+    sourceLogs.forEach(item => {
+      const key = [
+        String(job?.id || ''),
+        String(item?.ts || ''),
+        String(item?.row || ''),
+        String(item?.state || ''),
+        String(item?.result || ''),
+        String(item?.tag || ''),
+        String(item?.message || ''),
+      ].join('|');
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ ...item, __job_id: job?.id || '' });
+    });
+  });
+  out.sort((a, b) => {
+    const at = Date.parse(String(a?.ts || '')) || 0;
+    const bt = Date.parse(String(b?.ts || '')) || 0;
+    if (at !== bt) return at - bt;
+    return Number(a?.row || 0) - Number(b?.row || 0);
+  });
+  return out;
 }
 
 function getJobsByMode(mode) {
@@ -4688,12 +6554,54 @@ function setSelectedJobIdForMode(mode, jobId) {
   currentJobIdByMode[key] = jobId || null;
 }
 
+function isActiveJobStatus(status) {
+  const value = String(status || '').toLowerCase();
+  return ['queued', 'running', 'paused'].includes(value);
+}
+
+function sortJobsByRecency(jobs) {
+  return [...(jobs || [])].sort((a, b) => {
+    const at = Date.parse(String(a?.created_at || a?.finished_at || '')) || 0;
+    const bt = Date.parse(String(b?.created_at || b?.finished_at || '')) || 0;
+    return bt - at;
+  });
+}
+
 function resolveModeJobId(mode) {
-  const jobs = getJobsByMode(mode);
+  const jobs = sortJobsByRecency(getJobsByMode(mode));
   if (!jobs.length) return null;
+  const ownActive = jobs.find(job => isJobOwnedByCurrentUser(job) && isActiveJobStatus(job?.status));
+  if (ownActive) return ownActive.id;
   const selected = getSelectedJobIdForMode(mode);
   const matched = selected ? jobs.find(job => job.id === selected) : null;
-  return matched ? matched.id : jobs[0].id;
+  if (matched) return matched.id;
+  const ownJob = jobs.find(isJobOwnedByCurrentUser);
+  if (ownJob) return ownJob.id;
+  const activeJob = jobs.find(job => isActiveJobStatus(job?.status));
+  return activeJob ? activeJob.id : jobs[0].id;
+}
+
+function extractBlockingJobId(message) {
+  const text = String(message || '');
+  const match = text.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
+  return match ? match[0] : '';
+}
+
+async function focusBlockingModeJob(err, requestedMode = currentRunMode) {
+  const blockingJobId = extractBlockingJobId(err?.message);
+  if (!blockingJobId) return false;
+  await refreshJobs();
+  const blockingJob = (jobsCache || []).find(job => job.id === blockingJobId);
+  if (!blockingJob) return false;
+  const blockingMode = getJobMode(blockingJob) || requestedMode;
+  setSelectedJobIdForMode(blockingMode, blockingJobId);
+  currentJobId = blockingJobId;
+  if (currentRunMode !== blockingMode) {
+    setRunMode(blockingMode);
+  }
+  await pollCurrent();
+  setStatus(`${prettyWord(blockingMode)}: đang có job chạy · ${blockingJobId.slice(0, 8)}`, 'running');
+  return true;
 }
 
 function syncModeSelections() {
@@ -4703,13 +6611,42 @@ function syncModeSelections() {
 }
 
 function getSavedProjectJobs() {
-  return (jobsCache || []).filter(job => job.status === 'completed');
+  return (jobsCache || []).filter(job => {
+    const status = String(job?.status || '').toLowerCase();
+    if (['queued', 'running', 'paused', 'completed'].includes(status)) return true;
+    if (!['stopped', 'failed'].includes(status)) return false;
+    const summary = getJobSummary(job);
+    return (
+      summary.done > 0 ||
+      summary.total > 0 ||
+      summary.success > 0 ||
+      summary.failed > 0 ||
+      summary.unavailable > 0 ||
+      !!String(job?.detail || '').trim() ||
+      (Array.isArray(job?.recent_logs) && job.recent_logs.length > 0) ||
+      (Array.isArray(job?.logs) && job.logs.length > 0)
+    );
+  });
 }
 
-function getFilteredProjectJobs() {
+function getProjectJobsForModeFilter() {
   const saved = getSavedProjectJobs();
   if (currentProjectModeFilter === 'all') return saved;
   return saved.filter(job => getJobMode(job) === currentProjectModeFilter);
+}
+
+function matchesProjectStatusFilter(job, statusFilter = currentProjectStatusFilter) {
+  const normalized = String(statusFilter || 'all').toLowerCase();
+  if (normalized === 'all') return true;
+  const status = String(job?.status || '').toLowerCase();
+  if (normalized === 'running') return ['queued', 'running', 'paused'].includes(status);
+  return status === normalized;
+}
+
+function getFilteredProjectJobs() {
+  const saved = getProjectJobsForModeFilter();
+  if (currentProjectStatusFilter === 'all') return saved;
+  return saved.filter(job => matchesProjectStatusFilter(job, currentProjectStatusFilter));
 }
 
 function getSelectedProjectJob() {
@@ -4735,6 +6672,36 @@ function setProjectModeFilter(mode) {
   renderProjects();
 }
 
+function setProjectStatusFilter(status) {
+  currentProjectStatusFilter = String(status || 'all').toLowerCase();
+  currentProjectJobId = null;
+  renderProjects();
+}
+
+function expandProjectFilter(select) {
+  if (!select) return;
+  const optionCount = Math.max(Number(select.options?.length || 0), 0);
+  const expandedSize = Math.max(2, Math.min(optionCount || 2, 6));
+  select.size = expandedSize;
+  select.classList.add('project-filter-input-open');
+}
+
+function collapseProjectFilter(select, delay = 120) {
+  if (!select) return;
+  window.setTimeout(() => {
+    if (document.activeElement === select) return;
+    select.size = 1;
+    select.classList.remove('project-filter-input-open');
+  }, delay);
+}
+
+function handleProjectFilterKeydown(event) {
+  if (!event || event.key !== 'Escape') return;
+  const select = event.currentTarget;
+  collapseProjectFilter(select, 0);
+  if (select && typeof select.blur === 'function') select.blur();
+}
+
 function getActivityLogsFromJobs() {
   const rows = [];
   (jobsCache || []).forEach(job => {
@@ -4744,6 +6711,7 @@ function getActivityLogsFromJobs() {
         ...item,
         __job_id: String(job?.id || ''),
         __job_mode: getJobMode(job),
+        owner_email: getJobOwnerEmail(job),
       });
     });
   });
@@ -4752,7 +6720,7 @@ function getActivityLogsFromJobs() {
     const right = new Date(b?.ts || 0).getTime();
     return right - left;
   });
-  return rows.slice(0, 20);
+  return rows;
 }
 
 function getCombinedActivities() {
@@ -4765,6 +6733,7 @@ function getCombinedActivities() {
     __source: 'activity',
     __job_id: String(item?.job_id || ''),
     __job_mode: String(item?.run_mode || ''),
+    owner_email: String(item?.owner_email || '').trim().toLowerCase(),
   }));
   return [...jobLogs, ...manualEvents]
     .sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
@@ -4779,11 +6748,15 @@ function openProjectInRuns(jobId) {
   sheet_url.value = request.sheet_url || '';
   sheet_name.value = request.sheet_name || '';
   drive_id.value = request.drive_id || '';
-  document.getElementById('force_run_all').checked = request.force_run_all !== false;
+  currentRunFlagsByMode[mode] = {
+    ...ensureRunFlagsForMode(mode),
+    force_run_all: request.force_run_all !== false,
+    highlight_sheet_errors: !!request.highlight_sheet_errors,
+    capture_five_per_link: !!request.capture_five_per_link,
+  };
   currentMappingBlocksByMode[mode] = (request.mappings || []).length
     ? request.mappings.map((block, index) => sanitizeMappingBlockForMode(mode, block, index + 1))
     : [defaultMappingBlock(mode, 1)];
-  captureFivePerLink = !!request.capture_five_per_link;
   setSelectedJobIdForMode(mode, job.id);
   currentJobId = job.id;
   switchView('runs');
@@ -4814,6 +6787,7 @@ function classifyLog(log) {
   if (level === 'error' || level === 'failed') return 'error';
   if (level === 'warning' || level === 'warn') return 'warning';
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
+  if (raw.includes('tiktok_url_mismatch') || raw.includes('url mismatch')) return 'error';
   if (raw.includes('fail') || raw.includes('error')) return 'error';
   if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return 'warning';
   if (raw.includes('warn') || raw.includes('quota')) return 'warning';
@@ -4850,6 +6824,115 @@ function showToast(message, type = 'info', title = '') {
   setTimeout(closeToast, 5200);
 }
 
+function primeCompletionNotifications() {
+  try {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  } catch (_) {}
+}
+
+function stopCompletionTitleFlash() {
+  if (completionTitleFlashTimer) {
+    clearInterval(completionTitleFlashTimer);
+    completionTitleFlashTimer = null;
+  }
+  document.title = defaultDocumentTitle;
+}
+
+function startCompletionTitleFlash(message) {
+  const text = String(message || '').trim();
+  if (!text) return;
+  completionTitleFlashText = text;
+  stopCompletionTitleFlash();
+  let toggle = false;
+  document.title = `${text} • ${defaultDocumentTitle}`;
+  completionTitleFlashTimer = setInterval(() => {
+    toggle = !toggle;
+    document.title = toggle ? `${completionTitleFlashText} • ${defaultDocumentTitle}` : defaultDocumentTitle;
+  }, 1200);
+}
+
+function playCompletionAlertTone() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    window.__toolEvidenceAudioCtx = window.__toolEvidenceAudioCtx || new AudioCtx();
+    const ctx = window.__toolEvidenceAudioCtx;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const pattern = [0, 0.22, 0.44];
+    pattern.forEach((offset, index) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = index === 1 ? 880 : 740;
+      gain.gain.value = 0.0001;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const startAt = ctx.currentTime + offset;
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.16, startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.18);
+      osc.start(startAt);
+      osc.stop(startAt + 0.2);
+    });
+  } catch (_) {}
+}
+
+function pushBrowserCompletionNotification(title, message, tag = '') {
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const note = new Notification(title, {
+      body: message,
+      tag: tag || 'tool-evidence-job-finished',
+      renotify: true,
+    });
+    setTimeout(() => note.close(), 12000);
+  } catch (_) {}
+}
+
+function showCompletionAlert(job, done, total) {
+  const host = document.getElementById('completionAlertHost');
+  if (!host) return;
+  const title = t('jobFinishedBannerTitle');
+  const message = t('jobFinishedToastFmt')(getJobSheetLabel(job), done, total);
+  while (host.children.length >= 2) {
+    host.lastElementChild?.remove();
+  }
+  const alertNode = document.createElement('div');
+  alertNode.className = 'completion-alert';
+  alertNode.innerHTML = `
+    <div class="completion-alert-icon">✓</div>
+    <div class="completion-alert-copy">
+      <div class="completion-alert-kicker">${esc(t('jobFinishedTitle'))}</div>
+      <div class="completion-alert-title">${esc(getJobSheetLabel(job))}</div>
+      <div class="completion-alert-message">${esc(message)}</div>
+      <div class="completion-alert-meta">
+        <span class="completion-alert-chip">${esc(prettyWord(getJobMode(job)))}</span>
+        <span class="completion-alert-chip">${esc(String(job?.id || '').slice(0, 8))}</span>
+        <span class="completion-alert-chip">${esc(`${done}/${total}`)}</span>
+      </div>
+    </div>
+    <button type="button" class="completion-alert-close" title="${esc(t('jobFinishedBannerDismiss'))}" aria-label="${esc(t('jobFinishedBannerDismiss'))}">×</button>
+  `;
+  const closeAlert = () => {
+    alertNode.remove();
+    if (!host.children.length) stopCompletionTitleFlash();
+  };
+  alertNode.querySelector('.completion-alert-close')?.addEventListener('click', closeAlert);
+  host.prepend(alertNode);
+  setTimeout(closeAlert, 12000);
+  playCompletionAlertTone();
+  startCompletionTitleFlash(title);
+  pushBrowserCompletionNotification(title, message, `job-finished-${String(job?.id || '')}`);
+}
+
+window.addEventListener('focus', () => {
+  stopCompletionTitleFlash();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) stopCompletionTitleFlash();
+});
+
 function processJobLifecycleNotifications(jobs) {
   const nextStatusMemory = {};
   (jobs || []).forEach(job => {
@@ -4866,6 +6949,7 @@ function processJobLifecycleNotifications(jobs) {
     if (isReallyCompleted && previousStatus && previousStatus !== 'completed' && !notifiedCompletedJobKeys.has(completionKey)) {
       notifiedCompletedJobKeys.add(completionKey);
       showToast(t('jobFinishedToastFmt')(getJobSheetLabel(job), done, total), 'success', t('jobFinishedTitle'));
+      showCompletionAlert(job, done, total);
     }
   });
   jobStatusMemory = nextStatusMemory;
@@ -4895,6 +6979,127 @@ function getLogPostLabel(log) {
   return extractLogBlockName(log) || (currentRunMode === 'scan' ? 'Scan' : 'Post');
 }
 
+function compactIssuePostLabel(postName) {
+  const raw = String(postName || '').trim();
+  if (!raw) return '';
+  let match = raw.match(/^post[ ]+([0-9]+)$/i);
+  if (match) return `P${match[1]}`;
+  match = raw.match(/^scan[ ]+([0-9]+)$/i);
+  if (match) return `S${match[1]}`;
+  match = raw.match(/^booking[ ]+([0-9]+)$/i);
+  if (match) return `B${match[1]}`;
+  return raw.length > 12 ? `${raw.slice(0, 12)}…` : raw;
+}
+
+function formatIssueCellChip(item) {
+  const rowPart = `#${item?.row || '?'}`;
+  const colPart = item?.column && item.column !== '-' ? `:${String(item.column).trim().toUpperCase()}` : '';
+  return `${rowPart}${colPart}`.trim();
+}
+
+function getIssueColumnsForRequestPost(requestMeta, postLabel) {
+  const mappings = Array.isArray(requestMeta?.mappings) ? requestMeta.mappings : [];
+  const normalizedPost = String(postLabel || '').trim().toLowerCase();
+  const normalizeCol = value => String(value || '').trim().toUpperCase();
+  const addUnique = (bucket, value) => {
+    const col = normalizeCol(value);
+    if (col && !bucket.includes(col)) bucket.push(col);
+  };
+  let match = mappings.find(item => String(item?.name || '').trim().toLowerCase() === normalizedPost);
+  if (!match && mappings.length === 1) match = mappings[0];
+  if (!match) {
+    return [];
+  }
+  const mode = String(match?.mode || requestMeta?.mode || currentRunMode || '').trim().toLowerCase();
+  const columns = [];
+  if (mode === 'scan') {
+    addUnique(columns, match?.col_drive);
+  } else {
+    addUnique(columns, match?.col_profile);
+    addUnique(columns, match?.col_content);
+    addUnique(columns, match?.col_drive);
+    addUnique(columns, match?.col_screenshot);
+  }
+  return columns;
+}
+
+function buildIssueCellEntries(errorRows, logs, issueCells = [], requestMeta = null) {
+  const entries = new Map();
+  const detailedRowPosts = new Set();
+  const upsert = (rowValue, postLabel, columnValue, message, kind = '') => {
+    const row = Number(rowValue || 0);
+    if (!Number.isFinite(row) || row <= 0) return;
+    const post = String(postLabel || '').trim();
+    const column = String(columnValue || '').trim().toUpperCase();
+    const rowPostKey = `${post}|${row}`;
+    if (!column && detailedRowPosts.has(rowPostKey)) return;
+    const key = `${post}|${row}|${column}`;
+    if (!entries.has(key)) {
+      entries.set(key, { key, row, post, column, message: String(message || '').trim(), kind: String(kind || '').trim() });
+      if (column) {
+        detailedRowPosts.add(rowPostKey);
+      }
+      return;
+    }
+    const existing = entries.get(key);
+    if (!existing.message && message) existing.message = String(message || '').trim();
+    if (!existing.kind && kind) existing.kind = String(kind || '').trim();
+  };
+  const upsertWithInferredColumns = (rowValue, postLabel, message, kind = '') => {
+    const inferredColumns = getIssueColumnsForRequestPost(requestMeta, postLabel);
+    if (inferredColumns.length) {
+      inferredColumns.forEach(col => upsert(rowValue, postLabel, col, message, kind));
+      return;
+    }
+    upsert(rowValue, postLabel, '', message, kind);
+  };
+
+  (Array.isArray(issueCells) ? issueCells : []).forEach(item => {
+    upsert(
+      item?.row,
+      item?.post,
+      item?.column,
+      item?.message || '',
+      item?.kind || ''
+    );
+  });
+
+  if (detailedRowPosts.size) {
+    for (const [key, value] of Array.from(entries.entries())) {
+      if (!String(value?.column || '').trim()) {
+        const rowPostKey = `${String(value?.post || '').trim()}|${Number(value?.row || 0)}`;
+        if (detailedRowPosts.has(rowPostKey)) {
+          entries.delete(key);
+        }
+      }
+    }
+  }
+
+  Object.entries(errorRows || {}).forEach(([rowKey, rawMessage]) => {
+    const message = String(rawMessage || '').trim();
+    const post = extractLogBlockName({ message }) || '';
+    upsertWithInferredColumns(rowKey, post, message, 'stored');
+  });
+
+  (Array.isArray(logs) ? logs : []).forEach(item => {
+    if (!isUnavailableLog(item) && !isFailedLog(item)) return;
+    upsertWithInferredColumns(
+      item?.row,
+      getLogPostLabel(item),
+      item?.message || item?.result || item?.state || '',
+      isUnavailableLog(item) ? 'unavailable' : 'failed'
+    );
+  });
+
+  return Array.from(entries.values()).sort((a, b) => {
+    if (a.row !== b.row) return a.row - b.row;
+    if (String(a.column || '') !== String(b.column || '')) {
+      return String(a.column || '').localeCompare(String(b.column || ''));
+    }
+    return String(a.post || '').localeCompare(String(b.post || ''));
+  });
+}
+
 function isUnavailableLog(log) {
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   return raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung');
@@ -4903,6 +7108,7 @@ function isUnavailableLog(log) {
 function isFailedLog(log) {
   const raw = `${log?.tag || ''} ${log?.state || ''} ${log?.result || ''} ${log?.message || ''}`.toLowerCase();
   if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
+  if (raw.includes('tiktok_url_mismatch') || raw.includes('url mismatch')) return true;
   return raw.includes('fail') || raw.includes('error');
 }
 
@@ -4911,6 +7117,49 @@ function isSuccessLog(log) {
   if (raw.includes('unavailable') || raw.includes('không khả dụng') || raw.includes('khong kha dung')) return false;
   if (raw.includes('fail') || raw.includes('error')) return false;
   return raw.includes('ok') || raw.includes('success') || raw.includes('done');
+}
+
+function normalizeIssueSummaryLabel(rawMessage) {
+  let text = String(rawMessage || '').trim();
+  if (!text) return '';
+  text = text.replace(/^[^:]{1,80}: */, '').trim();
+  text = text.replace(/^row *#?[0-9]+ *[-:] */i, '').trim();
+  if (!text) return '';
+  const lowered = text.toLowerCase();
+  if (lowered.includes('tiktok_url_mismatch') || lowered.includes('url mismatch')) {
+    return 'TikTok mở sai bài so với link dòng';
+  }
+  if (lowered.includes('không khả dụng') || lowered.includes('khong kha dung') || lowered.includes('unavailable')) {
+    return t('unavailableLabel');
+  }
+  return text.length > 88 ? `${text.slice(0, 85).trim()}...` : text;
+}
+
+function buildIssueSummaryText(errorRows, logs, fallbackError) {
+  const issueCounts = new Map();
+  const addIssue = message => {
+    const normalized = normalizeIssueSummaryLabel(message);
+    if (!normalized) return;
+    issueCounts.set(normalized, (issueCounts.get(normalized) || 0) + 1);
+  };
+
+  Object.values(errorRows || {}).forEach(addIssue);
+  (Array.isArray(logs) ? logs : []).forEach(item => {
+    if (!isUnavailableLog(item) && !isFailedLog(item)) return;
+    addIssue(item?.message || item?.result || item?.state || '');
+  });
+  addIssue(fallbackError);
+
+  if (!issueCounts.size) return t('monitorIssueSummaryNone');
+  const ranked = Array.from(issueCounts.entries()).sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+  const [topLabel, topCount] = ranked[0];
+  const moreKinds = Math.max(ranked.length - 1, 0);
+  return moreKinds > 0
+    ? t('monitorIssueSummaryTopMoreFmt')(topLabel, topCount, moreKinds)
+    : t('monitorIssueSummaryTopFmt')(topLabel, topCount);
 }
 
 function canReplayLog(log) {
@@ -4922,12 +7171,8 @@ function canReplayLog(log) {
 
 function statusBadge(status) {
   const key = String(status || '').toLowerCase();
-  if (key === 'completed') return '<span class="badge ok">completed</span>';
-  if (key === 'failed') return '<span class="badge error">failed</span>';
-  if (key === 'running') return '<span class="badge info">running</span>';
-  if (key === 'paused') return '<span class="badge warning">paused</span>';
-  if (key === 'stopped') return '<span class="badge warning">stopped</span>';
-  return `<span class="badge info">${esc(key || 'idle')}</span>`;
+  const normalized = key || 'queued';
+  return `<span class="project-status-badge status-${esc(normalized)}">${esc(prettyWord(normalized))}</span>`;
 }
 
 function aggregateErrorCounts(jobs) {
@@ -5044,8 +7289,8 @@ function renderOverview() {
 function switchView(name, tabEl = null) {
   if ((name === 'settings' || name === 'access') && !isAdminUser()) {
     setStatus(t('adminOnly'), 'failed');
-    name = 'overview';
-    tabEl = document.querySelector('.side-btn[data-view="overview"]');
+    name = 'runs';
+    tabEl = document.querySelector('.side-btn[data-view="runs"]');
   }
   document.querySelectorAll('.view').forEach(node => node.classList.remove('active'));
   const view = document.getElementById('view-' + name);
@@ -5087,17 +7332,63 @@ function setKPI(summary, jobId) {
 
 function renderProjects() {
   const allSaved = getSavedProjectJobs();
+  const modeFiltered = getProjectJobsForModeFilter();
   const saved = getFilteredProjectJobs();
   const selected = getSelectedProjectJob();
   const uniqueSheets = new Set(saved.map(job => getJobSheetLabel(job))).size;
   const summary = getJobSummary(selected);
   const completionText = String(selected?.completion?.summary || '').trim();
   const request = selected?.request || {};
+  const projectLogs = selected
+    ? getLineageDisplayLogs(
+        selected,
+        Array.isArray(selected?.logs)
+          ? selected.logs
+          : (Array.isArray(selected?.recent_logs) ? selected.recent_logs : [])
+      ).slice().reverse()
+    : [];
+  const projectLogsHtml = selected
+    ? `
+      <div class="project-log-panel">
+        <div class="project-log-head">
+          <div class="project-log-title">${esc(t('projectLogs'))}</div>
+          <div class="project-log-sub">${esc(t('projectLogsSub'))}</div>
+        </div>
+        <div class="project-log-list">
+          ${projectLogs.length
+            ? projectLogs.slice(0, 120).map(item => {
+                const postName = getLogPostLabel(item);
+                const lineageMeta = item.__job_id ? String(item.__job_id).slice(0, 8) : String(selected?.id || '').slice(0, 8);
+                return `
+                  <div class="project-log-item">
+                    <div class="project-log-top">
+                      <div class="project-log-meta">
+                        <span>${esc(toLocalStamp(item.ts))}</span>
+                        <span>${esc(postName)}</span>
+                        <span>#${esc(item.row)}</span>
+                        <span>${esc(lineageMeta)}</span>
+                      </div>
+                      ${resultPill(item.result, item.state, item.tag, item.message)}
+                    </div>
+                    <div class="project-log-message">${esc(item.message || `${item.state}/${item.result}`)}</div>
+                  </div>`;
+              }).join('')
+            : `<div class="project-log-empty">${esc(t('projectNoLogs'))}</div>`}
+        </div>
+      </div>`
+    : '';
   const filterOptions = [
     { key: 'all', label: t('allProjects'), count: allSaved.length },
     { key: 'seeding', label: getRunModeLabel('seeding'), count: allSaved.filter(job => getJobMode(job) === 'seeding').length },
     { key: 'booking', label: getRunModeLabel('booking'), count: allSaved.filter(job => getJobMode(job) === 'booking').length },
     { key: 'scan', label: getRunModeLabel('scan'), count: allSaved.filter(job => getJobMode(job) === 'scan').length },
+  ];
+  const statusFilterOptions = [
+    { key: 'all', label: t('projectStatusAll'), count: modeFiltered.length },
+    { key: 'running', label: t('projectStatusRunning'), count: modeFiltered.filter(job => matchesProjectStatusFilter(job, 'running')).length },
+    { key: 'completed', label: t('projectStatusCompleted'), count: modeFiltered.filter(job => matchesProjectStatusFilter(job, 'completed')).length },
+    { key: 'stopped', label: t('projectStatusStopped'), count: modeFiltered.filter(job => matchesProjectStatusFilter(job, 'stopped')).length },
+    { key: 'failed', label: t('projectStatusFailed'), count: modeFiltered.filter(job => matchesProjectStatusFilter(job, 'failed')).length },
   ];
   const totalNode = document.getElementById('projectsTotalJobs');
   const sheetsNode = document.getElementById('projectsCompletedJobs');
@@ -5105,10 +7396,25 @@ function renderProjects() {
   if (totalNode) totalNode.textContent = saved.length;
   if (sheetsNode) sheetsNode.textContent = uniqueSheets;
   if (selectedNode) selectedNode.textContent = selected ? `${summary.done || 0}/${summary.total || 0}` : '-';
-  document.getElementById('projectsModeFilters').innerHTML = filterOptions.map(opt => {
-    const active = currentProjectModeFilter === opt.key ? ' active' : '';
-    return `<button type="button" class="project-mode-filter mode-${opt.key}${active}" onclick="setProjectModeFilter('${opt.key}')">${esc(opt.label)}<span>${opt.count}</span></button>`;
-  }).join('');
+  const focusedFilterId = document.activeElement?.id || '';
+  if (focusedFilterId !== 'projectsModeFilterInput') {
+    document.getElementById('projectsModeFilters').innerHTML = `
+      <label class="project-filter-select">
+        <span>${esc(t('projectModeLabel'))}</span>
+        <select id="projectsModeFilterInput" class="project-filter-input" aria-label="${esc(t('projectModeLabel'))}" onchange="setProjectModeFilter(this.value)">
+          ${filterOptions.map(opt => `<option value="${esc(opt.key)}"${currentProjectModeFilter === opt.key ? ' selected' : ''}>${esc(opt.label)} (${opt.count})</option>`).join('')}
+        </select>
+      </label>`;
+  }
+  if (focusedFilterId !== 'projectsStatusFilterInput') {
+    document.getElementById('projectsStatusFilters').innerHTML = `
+      <label class="project-filter-select">
+        <span>${esc(t('projectStatusLabel'))}</span>
+        <select id="projectsStatusFilterInput" class="project-filter-input" aria-label="${esc(t('projectStatusLabel'))}" onchange="setProjectStatusFilter(this.value)">
+          ${statusFilterOptions.map(opt => `<option value="${esc(opt.key)}"${currentProjectStatusFilter === opt.key ? ' selected' : ''}>${esc(opt.label)} (${opt.count})</option>`).join('')}
+        </select>
+      </label>`;
+  }
   document.getElementById('projectsSnapshotAction').innerHTML = selected
     ? `<div class="project-detail-actions"><button type="button" class="project-nav-btn" title="${esc(t('openProjectRun'))}" aria-label="${esc(t('openProjectRun'))}" onclick="openProjectInRuns('${selected.id}')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12"></path><path d="m13 6 6 6-6 6"></path></svg></button></div>`
     : '';
@@ -5117,14 +7423,16 @@ function renderProjects() {
         const jobSummary = getJobSummary(job);
         const active = currentProjectJobId === job.id ? ' active' : '';
         const mode = getJobMode(job);
+        const ownerLabel = getJobOwnerBadge(job);
         return `<div class="list-row project-item${active}" onclick="selectProject('${job.id}')">
           <div class="project-item-main">
             <div class="project-item-title">${esc(getJobSheetLabel(job))}</div>
-            <div class="project-item-meta"><span class="mode-pill mode-${mode}">${esc(prettyWord(mode))}</span><span>${esc(toLocalStamp(job.finished_at || job.created_at))}</span><span>${esc(job.id.slice(0, 8))}</span></div>
+            <div class="project-item-meta"><span class="mode-pill mode-${mode}">${esc(prettyWord(mode))}</span><span>${esc(toLocalStamp(job.finished_at || job.created_at))}</span><span>${esc(job.id.slice(0, 8))}</span>${ownerLabel ? `<span>${esc(ownerLabel)}</span>` : ''}</div>
           </div>
           <div class="project-item-side">
-            <span>${jobSummary.success || 0}/${jobSummary.total || 0}</span>
-            ${isAdminUser() ? `<button type="button" class="project-delete-btn" title="${esc(t('deleteLabel'))}" onclick="deleteProject('${job.id}', event)">
+            ${statusBadge(job.status)}
+            <span class="project-item-progress">${jobSummary.done || 0}/${jobSummary.total || 0}</span>
+            ${isAdminUser() && isJobOwnedByCurrentUser(job) ? `<button type="button" class="project-delete-btn" title="${esc(t('deleteLabel'))}" onclick="deleteProject('${job.id}', event)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 12h10l1-12"></path><path d="M9 7V4h6v3"></path></svg>
             </button>` : ''}
           </div>
@@ -5134,62 +7442,71 @@ function renderProjects() {
   document.getElementById('projectsSnapshot').innerHTML = selected
     ? [
         `<div class="timeline-item"><strong>${t('group')}</strong><div>${esc(getJobSheetLabel(selected))}</div></div>`,
-        `<div class="timeline-item"><strong>${t('state')}</strong><div>${esc(prettyWord(selected.status))} · <span class="mode-pill mode-${getJobMode(selected)}">${esc(prettyWord(getJobMode(selected)))}</span></div></div>`,
+        `<div class="timeline-item"><strong>${t('state')}</strong><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusBadge(selected.status)}<span class="mode-pill mode-${getJobMode(selected)}">${esc(prettyWord(getJobMode(selected)))}</span></div></div>`,
+        ...(getJobOwnerBadge(selected) ? [`<div class="timeline-item"><strong>${t('projectOwner')}</strong><div>${esc(getJobOwnerBadge(selected))}</div></div>`] : []),
         `<div class="timeline-item"><strong>${t('latestUpdate')}</strong><div>${esc(toLocalStamp(selected.finished_at || selected.created_at))}</div></div>`,
-        `<div class="timeline-item"><strong>${t('jobs')}</strong><div>${summary.done || 0}/${summary.total || 0} · ${summary.success || 0} ok · ${summary.failed || 0} ${t('failedLabel').toLowerCase()}</div></div>`,
+        `<div class="timeline-item"><strong>${t('jobs')}</strong><div>${summary.done || 0}/${summary.total || 0} · ${summary.success || 0} ${t('success').toLowerCase()} · ${summary.failed || 0} ${t('failedLabel').toLowerCase()}</div></div>`,
         `<div class="timeline-item"><strong>${t('driveFolder')}</strong><div>${esc(request.drive_id || '-')}</div></div>`,
         `<div class="timeline-item"><strong>${t('detailLabel')}</strong><div>${esc(selected.detail || '-')}</div></div>`,
         `<div class="timeline-item"><strong>${t('summaryLabel')}</strong><div style="white-space:pre-line">${esc(completionText || '-')}</div></div>`,
+        projectLogsHtml,
       ].join('')
     : `<div class="timeline-item"><strong>${t('noProjectGroup')}</strong><div>${t('startOrSelect')}</div></div>`;
 }
 
 function renderActivities(logs) {
-  const items = (logs || []).slice(-10).reverse();
+  const items = (logs || []).slice();
   document.getElementById('activitiesTimeline').innerHTML = items.length
     ? items.map(x => {
         const level = classifyLog(x);
+        const levelLabel = level === 'info' ? t('activityLevel') : prettyWord(level);
         const jobMeta = x.__job_id ? `${String(x.__job_mode || '').trim() ? `${prettyWord(x.__job_mode)} · ` : ''}${String(x.__job_id || '').slice(0, 8)}` : '';
+        const ownerMeta = isAdminUser() && x?.owner_email ? String(x.owner_email).trim().toLowerCase() : '';
         const rowLabel = x.__source === 'activity' ? esc(String(x.state || 'ACTION')) : `#${esc(x.row)} ${esc(x.state)}/${esc(x.result)}`;
-        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${rowLabel}</strong><span class="badge ${level}">${level}</span></div><div>${esc(x.message)}</div><div class="s">${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
+        return `<div class="timeline-item"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${rowLabel}</strong><span class="badge ${level}">${esc(levelLabel)}</span></div><div>${esc(x.message)}</div><div class="s">${ownerMeta ? `${esc(ownerMeta)} · ` : ''}${jobMeta ? `${esc(jobMeta)} · ` : ''}${toLocalStamp(x.ts)}</div></div>`;
       }).join('')
     : `<div class="timeline-item"><strong>${t('noActivity')}</strong><div>${t('startOrSelect')}</div></div>`;
 }
 
+function toggleIssueStrip(kind) {
+  const key = String(kind || '').toLowerCase();
+  if (!['failed', 'unavailable'].includes(key)) return;
+  monitorIssueExpandState[key] = !monitorIssueExpandState[key];
+  renderRunMonitor(currentJobSnapshot, currentLogsCache);
+}
+
 function renderRunMonitor(snapshot, logs) {
   const st = snapshot || {};
-  const s = st.summary || { done: 0, total: 0, success: 0, failed: 0, eta: '---' };
+  const renderJobId = String(st.id || currentJobId || '').trim();
+  if (renderJobId !== monitorIssueExpandJobId) {
+    monitorIssueExpandJobId = renderJobId;
+    monitorIssueExpandState = { failed: false, unavailable: false };
+  }
+  const s = getJobSummary(st);
   let displayStatus = String(st.status || 'idle').toLowerCase();
   if (displayStatus === 'completed' && Number(s.total || 0) <= 0 && !(Array.isArray(logs) && logs.length)) {
     displayStatus = 'stopped';
   }
   const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
   const errorRows = st.error_rows || {};
-  const errorKeys = Object.keys(errorRows);
+  const issueCells = Array.isArray(st.issue_cells) ? st.issue_cells : [];
   const logItems = Array.isArray(logs) ? logs : [];
-  const successCount = logItems.length ? logItems.filter(isSuccessLog).length : Number(s.success || 0);
-  const unavailableCount = Math.max(Number(s.unavailable || 0), logItems.filter(isUnavailableLog).length);
-  const failedLogCount = logItems.filter(isFailedLog).length;
-  const issueRows = new Set();
-  errorKeys.forEach(key => {
-    const row = Number(key);
-    if (Number.isFinite(row) && row > 0) issueRows.add(row);
-  });
-  logItems.forEach(item => {
-    if (!isUnavailableLog(item) && !isFailedLog(item)) return;
-    const row = Number(item?.row || 0);
-    if (Number.isFinite(row) && row > 0) issueRows.add(row);
-  });
-  const failedCount = Math.max(Number(s.failed || 0), failedLogCount, errorKeys.length);
-  const derivedIssueCount = issueRows.size || failedCount + unavailableCount;
-  const hasIssueState = derivedIssueCount > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
+  const displayLogs = getLineageDisplayLogs(st, logItems);
+  const successCount = Number(s.success || 0);
+  const failedCount = Number(s.failed || 0);
+  const unavailableCount = Number(s.unavailable || 0);
+  const issueEntries = buildIssueCellEntries(errorRows, logItems, issueCells, st.request || null);
+  const hasIssueState = (failedCount + unavailableCount) > 0 || issueEntries.length > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
   const statusLabel = prettyWord(displayStatus || 'idle');
-  const latestLog = (logs || []).length ? logs[logs.length - 1] : null;
+  const latestLog = logItems.length ? logItems[logItems.length - 1] : null;
   const detailText = String(st.detail || latestLog?.message || '').trim();
   const etaText = s.eta && s.eta !== '---' ? `${t('eta')}: ${s.eta}` : '';
   const title = st.request ? getJobSheetLabel(st) : t('monitorNoJob');
   const metaParts = [];
+  const ownerLabel = getJobOwnerBadge(st);
+  const ownJob = isJobOwnedByCurrentUser(st);
   if (st.mode || st.request?.mode) metaParts.push(prettyWord(getJobMode(st)));
+  if (ownerLabel) metaParts.push(ownerLabel);
   if (currentJobId) metaParts.push(currentJobId.slice(0, 8));
   if (st.created_at) metaParts.push(toLocalStamp(st.created_at));
   const statusNode = document.getElementById('runMonitorStatus');
@@ -5222,22 +7539,74 @@ function renderRunMonitor(snapshot, logs) {
   document.getElementById('runMonitorProgressMeta').textContent = detailText
     ? `${detailText}${etaText ? ' · ' + etaText : ''}`
     : (etaText || '-');
-  document.getElementById('runMonitorErrorMain').textContent = hasIssueState ? `${Math.max(derivedIssueCount, 1)}` : t('monitorNoErrors');
-  document.getElementById('runMonitorErrorMeta').textContent = hasIssueState
-    ? (issueRows.size
-        ? `${Array.from(issueRows).sort((a, b) => a - b).slice(0, 5).map(x => `#${x}`).join(', ')} · ${t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount)}`
-        : t('monitorSuccessFailedFmt')(successCount, failedCount, unavailableCount))
-    : t('monitorSuccessFailedFmt')(successCount, 0, unavailableCount);
+  document.getElementById('runMonitorErrorMain').innerHTML = `
+    <div class="monitor-error-stats">
+      <span class="monitor-error-stat success">${esc(t('success'))} <strong>${esc(successCount)}</strong></span>
+      <span class="monitor-error-stat failed">${esc(t('errorRows'))} <strong>${esc(failedCount)}</strong></span>
+      <span class="monitor-error-stat unavailable">${esc(t('unavailableLabel'))} <strong>${esc(unavailableCount)}</strong></span>
+    </div>
+  `;
+  const issueRowsStrip = document.getElementById('runMonitorIssueRowsStrip');
+  const unavailableRowsStrip = document.getElementById('runMonitorUnavailableRowsStrip');
+  const issueRowsNode = document.getElementById('runMonitorErrorRows');
+  const unavailableRowsNode = document.getElementById('runMonitorUnavailableRows');
+  const failedIssueItems = issueEntries.filter(item =>
+    !isUnavailableLog({ message: item.message, result: item.kind, state: item.kind, tag: item.kind })
+  );
+  const unavailableIssueItems = issueEntries.filter(item =>
+    isUnavailableLog({ message: item.message, result: item.kind, state: item.kind, tag: item.kind })
+  );
+  const failedExpanded = !!monitorIssueExpandState.failed;
+  const unavailableExpanded = !!monitorIssueExpandState.unavailable;
+  if (issueRowsNode) {
+    if (failedIssueItems.length) {
+      const visibleRows = failedExpanded ? failedIssueItems : failedIssueItems.slice(0, 8);
+      const chips = visibleRows.map(item => {
+        return `<span class="monitor-issue-chip">${esc(formatIssueCellChip(item))}</span>`;
+      });
+      if (failedIssueItems.length > 8) {
+        chips.push(
+          failedExpanded
+            ? `<button class="monitor-issue-chip more action" type="button" onclick="toggleIssueStrip('failed')">${esc(t('monitorIssueCollapse'))}</button>`
+            : `<button class="monitor-issue-chip more action" type="button" onclick="toggleIssueStrip('failed')">${esc(t('monitorIssueExpandFmt')(failedIssueItems.length - 8))}</button>`
+        );
+      }
+      issueRowsNode.innerHTML = chips.join('');
+    } else {
+      issueRowsNode.innerHTML = '';
+    }
+  }
+  if (unavailableRowsNode) {
+    if (unavailableIssueItems.length) {
+      const visibleRows = unavailableExpanded ? unavailableIssueItems : unavailableIssueItems.slice(0, 8);
+      const chips = visibleRows.map(item => {
+        return `<span class="monitor-issue-chip unavailable">${esc(formatIssueCellChip(item))}</span>`;
+      });
+      if (unavailableIssueItems.length > 8) {
+        chips.push(
+          unavailableExpanded
+            ? `<button class="monitor-issue-chip more action" type="button" onclick="toggleIssueStrip('unavailable')">${esc(t('monitorIssueCollapse'))}</button>`
+            : `<button class="monitor-issue-chip more action" type="button" onclick="toggleIssueStrip('unavailable')">${esc(t('monitorIssueExpandFmt')(unavailableIssueItems.length - 8))}</button>`
+        );
+      }
+      unavailableRowsNode.innerHTML = chips.join('');
+    } else {
+      unavailableRowsNode.innerHTML = '';
+    }
+  }
+  document.getElementById('runMonitorErrorMeta').textContent = '';
+  if (issueRowsStrip) issueRowsStrip.hidden = failedIssueItems.length <= 0;
+  if (unavailableRowsStrip) unavailableRowsStrip.hidden = unavailableIssueItems.length <= 0;
 
-  const rows = (logs || []).slice().reverse();
-  const replayLocked = ['running', 'paused'].includes(displayStatus);
+  const rows = displayLogs.slice().reverse();
+  const replayLocked = ['running', 'paused'].includes(displayStatus) || !ownJob;
   document.getElementById('runMonitorRows').innerHTML = rows.length
     ? rows.map(x => {
         const postName = getLogPostLabel(x);
         const message = x.message || `${x.state}/${x.result}`;
         const replayBlockName = extractLogBlockName(x);
         const replayButton = canReplayLog(x)
-          ? `<button class="monitor-replay-btn" type="button" ${replayLocked ? 'disabled title="Job đang chạy, chưa thể replay"' : `onclick="replayLogRow('${esc(st.id || currentJobId || '')}', ${Number(x.row || 0)}, '${esc(replayBlockName)}')"`}>
+          ? `<button class="monitor-replay-btn" type="button" ${replayLocked ? `disabled title="${!ownJob ? 'Chỉ replay được job của chính bạn' : 'Job đang chạy, chưa thể replay'}"` : `onclick="replayLogRow('${esc(st.id || currentJobId || '')}', ${Number(x.row || 0)}, '${esc(replayBlockName)}')"`}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7c3.309 0 6 2.691 6 6a6 6 0 0 1-6 6 6 6 0 0 1-5.657-4H4.263A8.001 8.001 0 0 0 12 21c4.411 0 8-3.589 8-8s-3.589-8-8-8Z"></path></svg>
               <span>${esc(t('replay'))}</span>
             </button>`
@@ -5255,23 +7624,70 @@ function renderRunMonitor(snapshot, logs) {
 }
 
 function updateRunActionButtons(snapshot = currentJobSnapshot) {
-  const stopLabel = document.getElementById('stopJobLabel');
-  const stopIcon = document.getElementById('stopJobIcon');
-  const stopButton = stopLabel ? stopLabel.closest('button') : null;
-  if (!stopLabel || !stopIcon || !stopButton) return;
+  const pauseLabel = document.getElementById('pauseJobLabel');
+  const pauseIcon = document.getElementById('pauseJobIcon');
+  const pauseButton = pauseLabel ? pauseLabel.closest('button') : null;
+  const continueLabel = document.getElementById('continueJobLabel');
+  const continueIcon = document.getElementById('continueJobIcon');
+  const continueButton = continueLabel ? continueLabel.closest('button') : null;
+  const errorOnlyLabel = document.getElementById('errorOnlyJobLabel');
+  const errorOnlyIcon = document.getElementById('errorOnlyJobIcon');
+  const errorOnlyButton = errorOnlyLabel ? errorOnlyLabel.closest('button') : null;
+  if (!pauseLabel || !pauseIcon || !pauseButton || !continueLabel || !continueIcon || !continueButton || !errorOnlyLabel || !errorOnlyIcon || !errorOnlyButton) return;
   const status = String(snapshot?.status || '').toLowerCase();
-  const paused = status === 'paused';
-  stopLabel.textContent = paused ? t('resumeJob') : t('stopJob');
-  stopIcon.innerHTML = paused
-    ? '<path d="M8 6.5v11l9-5.5-9-5.5Z"></path>'
-    : '<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>';
-  stopButton.classList.remove('blue');
-  stopButton.classList.toggle('resume', paused);
-  stopButton.classList.toggle('red', !paused);
+  const ownJob = isJobOwnedByCurrentUser(snapshot);
+  const canStop = ownJob && ['running', 'paused'].includes(status);
+  const canContinue = ownJob && ['stopped', 'failed', 'completed'].includes(status) && !!String(snapshot?.id || currentJobId || '').trim();
+  const issueCells = Array.isArray(snapshot?.issue_cells) ? snapshot.issue_cells : [];
+  const issueRetryRows = new Set(
+    issueCells
+      .filter(item => {
+        const kind = String(item?.kind || '').toLowerCase();
+        return kind === 'failed' || kind === 'unavailable';
+      })
+      .map(item => Number(item?.row || 0))
+      .filter(row => Number.isFinite(row) && row > 0)
+  );
+  const retryErrorCount = Math.max(
+    Object.keys(snapshot?.error_rows || {}).length,
+    issueRetryRows.size
+  );
+  const canRetryErrors = ownJob && ['stopped', 'failed', 'completed'].includes(status) && retryErrorCount > 0;
+  pauseButton.classList.remove('resume', 'pause', 'red', 'soft', 'stop');
+  if (canContinue) {
+    pauseLabel.textContent = t('continueJob');
+    pauseIcon.innerHTML = '<path d="M8 6.5v11l9-5.5-9-5.5Z"></path>';
+    pauseButton.classList.add('resume');
+    pauseButton.disabled = false;
+    pauseButton.title = ownJob ? '' : 'Chỉ chạy tiếp được job của chính bạn';
+    pauseButton.onclick = continueJob;
+  } else {
+    pauseLabel.textContent = t('stopJob');
+    pauseIcon.innerHTML = '<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>';
+    pauseButton.classList.add('pause');
+    pauseButton.disabled = !canStop;
+    pauseButton.title = ownJob ? '' : 'Chỉ dừng được job của chính bạn';
+    pauseButton.onclick = stopJob;
+  }
+
+  continueLabel.textContent = t('continueJob');
+  continueIcon.innerHTML = '<path d="M8 6.5v11l9-5.5-9-5.5Z"></path>';
+  continueButton.classList.remove('pause', 'resume', 'red', 'stop');
+  continueButton.classList.add('soft');
+  continueButton.disabled = !canContinue;
+  continueButton.title = ownJob ? '' : 'Chỉ chạy tiếp được job của chính bạn';
+
+  errorOnlyLabel.textContent = t('errorOnlyJob');
+  errorOnlyIcon.innerHTML = '<path d="M12 8v5"></path><circle cx="12" cy="16.5" r=".9" fill="currentColor" stroke="none"></circle><path d="M10.2 4.8 3.9 16a1.4 1.4 0 0 0 1.22 2.1h13.76A1.4 1.4 0 0 0 20.1 16L13.8 4.8a1.4 1.4 0 0 0-2.6 0Z"></path>';
+  errorOnlyButton.classList.remove('pause', 'resume', 'red', 'stop');
+  errorOnlyButton.classList.add('soft');
+  errorOnlyButton.disabled = !canRetryErrors;
+  errorOnlyButton.title = !ownJob ? 'Chỉ chạy lại lỗi được với job của chính bạn' : (retryErrorCount > 0 ? '' : 'Job này chưa có dòng lỗi');
 }
 
 async function replayLogRow(jobId, row, blockName = '') {
   try {
+    primeCompletionNotifications();
     if (!jobId) throw new Error('No job selected');
     const payload = {
       row: Number(row || 0),
@@ -5287,6 +7703,8 @@ async function replayLogRow(jobId, row, blockName = '') {
     await pollCurrent();
     setStatus(`${t('replayStartedFmt')(payload.row)} · ${String(out.job_id || '').slice(0, 8)}`, 'running');
   } catch (e) {
+    const sourceJob = (jobsCache || []).find(job => job.id === jobId);
+    if (await focusBlockingModeJob(e, getJobMode(sourceJob || {}))) return;
     alert(e.message);
   }
 }
@@ -5815,8 +8233,15 @@ function syncAuthUI() {
   const accessStateNode = document.querySelector('#view-access .state');
   if (accessStateNode) accessStateNode.textContent = isAdminUser() ? t('accessState') : t('adminOnly');
   if (!isAdminUser() && document.getElementById('view-access')?.classList.contains('active')) {
-    switchView('overview');
+    switchView('runs');
   }
+}
+
+function setSheetUrlHint(text, isError = false) {
+  const node = document.getElementById('sheet_url_hint');
+  if (!node) return;
+  node.textContent = text || '';
+  node.style.color = isError ? '#be123c' : '#98a2b3';
 }
 
 function setSheetNameHint(text, isError = false) {
@@ -5832,36 +8257,84 @@ function renderSheetNameSuggestions(titles) {
   list.innerHTML = (titles || []).map(title => `<option value="${esc(title)}"></option>`).join('');
 }
 
+function getCachedSheetNameTitles(rawUrl, allowStale = false) {
+  const entry = sheetNameSuggestCache[String(rawUrl || '').trim()];
+  if (!entry || !Array.isArray(entry.titles)) return null;
+  if (allowStale) return entry.titles;
+  if ((Date.now() - Number(entry.ts || 0)) > SHEET_NAME_CACHE_TTL_MS) return null;
+  return entry.titles;
+}
+
+function isKnownSheetName(rawUrl, rawName) {
+  const titles = getCachedSheetNameTitles(rawUrl, true) || [];
+  const target = String(rawName || '').trim().toLowerCase();
+  if (!target) return false;
+  return titles.some(title => String(title || '').trim().toLowerCase() === target);
+}
+
+function rememberResolvedSheetName(rawUrl, sheetTitle) {
+  const normalizedUrl = String(rawUrl || '').trim();
+  const normalizedTitle = String(sheetTitle || '').trim();
+  if (!normalizedUrl || !normalizedTitle) return;
+  const entry = sheetNameSuggestCache[normalizedUrl];
+  const existing = Array.isArray(entry?.titles)
+    ? entry.titles.map(value => String(value || '').trim()).filter(Boolean)
+    : [];
+  if (!existing.some(value => value.toLowerCase() === normalizedTitle.toLowerCase())) {
+    existing.push(normalizedTitle);
+  }
+  sheetNameSuggestCache[normalizedUrl] = { titles: existing, ts: Date.now() };
+}
+
 async function fetchSheetNameSuggestions(force = false) {
   const rawUrl = String(document.getElementById('sheet_url')?.value || '').trim();
   if (!rawUrl) {
     sheetNameSuggestKey = '';
     renderSheetNameSuggestions([]);
+    setSheetUrlHint('');
     setSheetNameHint('');
     return;
   }
-  if (!force && sheetNameSuggestKey === rawUrl && Array.isArray(sheetNameSuggestCache[rawUrl])) {
-    const cached = sheetNameSuggestCache[rawUrl];
+  const cached = getCachedSheetNameTitles(rawUrl, false);
+  if (cached && (!force || sheetNameSuggestKey === rawUrl)) {
     renderSheetNameSuggestions(cached);
-    setSheetNameHint(cached.length ? t('sheetNameHintCountFmt')(cached.length) : t('sheetNameHintEmpty'));
+    setSheetUrlHint(cached.length ? t('sheetUrlHintCountFmt')(cached.length) : t('sheetUrlHintEmpty'));
     return;
   }
-  setSheetNameHint(t('sheetNameHintLoading'));
-  try {
-    const qs = new URLSearchParams({ sheet_url: rawUrl });
-    if (currentSettingsCache.credentials_path) qs.set('credentials_path', currentSettingsCache.credentials_path);
-    const out = await req('/api/sheets/names?' + qs.toString());
-    const titles = Array.isArray(out.titles) ? out.titles : [];
+  if (sheetNameSuggestInflight[rawUrl]) {
+    const pendingTitles = await sheetNameSuggestInflight[rawUrl];
     sheetNameSuggestKey = rawUrl;
-    sheetNameSuggestCache[rawUrl] = titles;
+    renderSheetNameSuggestions(pendingTitles);
+    setSheetUrlHint(pendingTitles.length ? t('sheetUrlHintCountFmt')(pendingTitles.length) : t('sheetUrlHintEmpty'));
+    return;
+  }
+  setSheetUrlHint(t('sheetUrlHintLoading'));
+  try {
+    sheetNameSuggestInflight[rawUrl] = (async () => {
+      const qs = new URLSearchParams({ sheet_url: rawUrl });
+      if (currentSettingsCache.credentials_path) qs.set('credentials_path', currentSettingsCache.credentials_path);
+      const out = await req('/api/sheets/names?' + qs.toString());
+      return Array.isArray(out.titles) ? out.titles : [];
+    })();
+    const titles = await sheetNameSuggestInflight[rawUrl];
+    sheetNameSuggestKey = rawUrl;
+    sheetNameSuggestCache[rawUrl] = { titles, ts: Date.now() };
     renderSheetNameSuggestions(titles);
     if (!String(document.getElementById('sheet_name')?.value || '').trim() && titles.length === 1) {
       document.getElementById('sheet_name').value = titles[0];
     }
-    setSheetNameHint(titles.length ? t('sheetNameHintCountFmt')(titles.length) : t('sheetNameHintEmpty'));
+    setSheetUrlHint(titles.length ? t('sheetUrlHintCountFmt')(titles.length) : t('sheetUrlHintEmpty'));
   } catch (e) {
-    renderSheetNameSuggestions([]);
-    setSheetNameHint(e.message, true);
+    const staleTitles = getCachedSheetNameTitles(rawUrl, true);
+    if (staleTitles) {
+      renderSheetNameSuggestions(staleTitles);
+      setSheetUrlHint(staleTitles.length ? t('sheetUrlHintCountFmt')(staleTitles.length) : t('sheetUrlHintEmpty'));
+    } else {
+      renderSheetNameSuggestions([]);
+      setSheetUrlHint(e.message, true);
+    }
+  } finally {
+    delete sheetNameSuggestInflight[rawUrl];
   }
 }
 
@@ -5869,7 +8342,7 @@ function scheduleSheetNameSuggestions(force = false) {
   if (sheetNameSuggestTimer) clearTimeout(sheetNameSuggestTimer);
   sheetNameSuggestTimer = setTimeout(() => {
     fetchSheetNameSuggestions(force);
-  }, force ? 0 : 450);
+  }, force ? 0 : 800);
 }
 
 function bindSheetNameAutocomplete() {
@@ -5878,12 +8351,29 @@ function bindSheetNameAutocomplete() {
   if (!urlInput || urlInput.dataset.sheetSuggestBound === '1') return;
   urlInput.dataset.sheetSuggestBound = '1';
   ['input', 'change', 'paste'].forEach(evt => {
-    urlInput.addEventListener(evt, () => scheduleSheetNameSuggestions(false));
+    urlInput.addEventListener(evt, () => {
+      scheduleSheetNameSuggestions(false);
+      resetSheetLinkSuggestions();
+      setSheetNameHint('');
+    });
   });
-  urlInput.addEventListener('blur', () => scheduleSheetNameSuggestions(true));
+  urlInput.addEventListener('blur', () => {
+    scheduleSheetNameSuggestions(true);
+  });
   if (nameInput) {
+    ['input', 'change', 'paste'].forEach(evt => {
+      nameInput.addEventListener(evt, () => {
+        resetSheetLinkSuggestions();
+        setSheetNameHint('');
+        scheduleSheetLinkCountSummary(false);
+      });
+    });
+    nameInput.addEventListener('blur', () => {
+      scheduleSheetLinkCountSummary(true);
+    });
     nameInput.addEventListener('focus', () => {
-      if (String(urlInput.value || '').trim()) scheduleSheetNameSuggestions(true);
+      const rawUrl = String(urlInput.value || '').trim();
+      if (rawUrl && !getCachedSheetNameTitles(rawUrl, false)) scheduleSheetNameSuggestions(true);
     });
   }
 }
@@ -5949,7 +8439,7 @@ function handleServiceAccountFileChange(event) {
 function renderSettingsSummary(settings) {
   const s = settings || {};
   document.getElementById('settings_summary_viewport').textContent = `${s.viewport_width || '-'} x ${s.viewport_height || '-'}`;
-  document.getElementById('settings_summary_timeout').textContent = `${s.page_timeout_ms || '-'} ms`;
+  document.getElementById('settings_summary_timeout').textContent = `${s.page_timeout_ms || '-'} ms | ${t('tiktokCaptchaWait')}: ${s.tiktok_captcha_wait_sec || '-'} s | ${t('pleaseWaitDelay')}: ${s.please_wait_delay_sec || '-'} s`;
   document.getElementById('settings_summary_full_page').textContent = s.full_page_capture ? t('fullPage') : t('viewportOnly');
   const serviceState = s.service_account_fixed ? t('fixedCredentials') : (s.service_account_saved ? t('saved') : t('notSaved'));
   document.getElementById('settings_summary_service_account').textContent = serviceState;
@@ -5961,47 +8451,137 @@ function renderSettingsSummary(settings) {
   status.textContent = serviceState;
 }
 
+function getScanNegativeTermsValue() {
+  const runNode = document.getElementById('scan_negative_terms_editor');
+  if (runNode) return String(runNode.value || '');
+  const settingsNode = document.getElementById('settings_scan_negative_terms');
+  return settingsNode ? String(settingsNode.value || '') : '';
+}
+
+function getScanKeywordTermsValue() {
+  const runNode = document.getElementById('scan_keyword_terms_editor');
+  if (runNode) return String(runNode.value || '');
+  const settingsNode = document.getElementById('settings_scan_keyword_terms');
+  return settingsNode ? String(settingsNode.value || '') : '';
+}
+
+function setScanFilterNote(message = '', isError = false) {
+  const note = document.getElementById('scan_filter_note');
+  if (!note) return;
+  note.textContent = String(message || '');
+  note.style.color = isError ? '#fca5a5' : '';
+}
+
+function buildSettingsSavePayload() {
+  const payload = {
+    credentials_path: currentSettingsCache.credentials_path || '',
+    service_account_json: document.getElementById('settings_service_account_json')?.value || '',
+    sheet_url: sheet_url.value,
+    sheet_name: sheet_name.value,
+    drive_id: drive_id.value,
+    scan_negative_terms: getScanNegativeTermsValue(),
+    scan_keyword_terms: getScanKeywordTermsValue(),
+    viewport_width: Number(document.getElementById('settings_viewport_width')?.value || 1920),
+    viewport_height: Number(document.getElementById('settings_viewport_height')?.value || 1400),
+    page_timeout_ms: Number(document.getElementById('settings_page_timeout_ms')?.value || 3000),
+    // Code-managed runtime fields: persist from current settings/runtime only.
+    tiktok_captcha_wait_sec: Number(currentSettingsCache.tiktok_captcha_wait_sec || 15),
+    please_wait_delay_sec: Number(currentSettingsCache.please_wait_delay_sec ?? 2),
+    tiktok_force_focus: !!document.getElementById('settings_tiktok_force_focus')?.checked,
+    ready_state: currentSettingsCache.ready_state || 'interactive',
+    full_page_capture: !!document.getElementById('settings_full_page_capture')?.checked,
+    mappings_by_mode: serializeMappingsByModeForSave(),
+    run_flags_by_mode: currentRunFlagsByMode,
+  };
+  console.log('[DEBUG] buildSettingsSavePayload result:', payload);
+  return payload;
+}
+
+async function persistScanFilterSettings(showNote = false) {
+  rememberCurrentRunFlags('scan');
+  const payload = buildSettingsSavePayload();
+  const out = await req('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
+  const saved = out.settings || payload;
+  currentSettingsCache = saved;
+  currentMappingBlocksByMode = normalizeMappingsByModeForClient(saved.mappings_by_mode || serializeMappingsByModeForSave());
+  currentRunFlagsByMode = normalizeRunFlagsByModeForClient(saved.run_flags_by_mode || currentRunFlagsByMode);
+  if (document.getElementById('settings_scan_negative_terms')) {
+    document.getElementById('settings_scan_negative_terms').value = saved.scan_negative_terms || '';
+  }
+  if (document.getElementById('settings_scan_keyword_terms')) {
+    document.getElementById('settings_scan_keyword_terms').value = saved.scan_keyword_terms || '';
+  }
+  renderSettingsSummary(saved);
+  renderScanFilterEditor();
+  if (showNote) setScanFilterNote(t('saved'));
+  return saved;
+}
+
+function scheduleScanFilterSettingsSave() {
+  if (currentRunMode !== 'scan') return;
+  window.clearTimeout(scanFilterSaveTimer);
+  setScanFilterNote(t('saving'));
+  scanFilterSaveTimer = window.setTimeout(async () => {
+    try {
+      await persistScanFilterSettings(true);
+    } catch (error) {
+      setScanFilterNote(error?.message || 'Save failed', true);
+    }
+  }, 420);
+}
+
 async function loadDefaults() {
   const [d, s] = await Promise.all([req('/api/default-config'), req('/api/settings')]);
   currentSettingsCache = s || {};
   currentMappingBlocksByMode = normalizeMappingsByModeForClient(currentSettingsCache.mappings_by_mode || {});
+  currentRunFlagsByMode = normalizeRunFlagsByModeForClient(currentSettingsCache.run_flags_by_mode || {});
   sheet_url.value = s.sheet_url || d.sheet_url || '';
   sheet_name.value = s.sheet_name || d.sheet_name || '';
   drive_id.value = s.drive_id || d.drive_id || '';
-  const overwriteNode = document.getElementById('force_run_all');
-  if (overwriteNode) overwriteNode.checked = true;
+  applyRunFlagsForMode(currentRunMode);
   document.getElementById('settings_viewport_width').value = s.viewport_width || 1920;
   document.getElementById('settings_viewport_height').value = s.viewport_height || 1400;
   document.getElementById('settings_page_timeout_ms').value = s.page_timeout_ms || 3000;
+  const tiktokWaitNode = document.getElementById('settings_tiktok_captcha_wait_sec');
+  if (tiktokWaitNode) tiktokWaitNode.value = s.tiktok_captcha_wait_sec || 15;
+  const pleaseWaitNode = document.getElementById('settings_please_wait_delay_sec');
+  if (pleaseWaitNode) pleaseWaitNode.value = s.please_wait_delay_sec ?? 2;
+  document.getElementById('settings_tiktok_force_focus').checked = !!s.tiktok_force_focus;
+  const settingsNegativeTerms = document.getElementById('settings_scan_negative_terms');
+  if (settingsNegativeTerms) settingsNegativeTerms.value = s.scan_negative_terms || '';
+  const settingsKeywordTerms = document.getElementById('settings_scan_keyword_terms');
+  if (settingsKeywordTerms) settingsKeywordTerms.value = s.scan_keyword_terms || '';
   document.getElementById('settings_full_page_capture').checked = !!s.full_page_capture;
   renderSettingsSummary(s);
   if (isAdminUser()) await Promise.all([loadAccessPolicy(), loadMailConfig()]);
-  if (String(sheet_url.value || '').trim()) scheduleSheetNameSuggestions(true);
-  else setSheetNameHint('');
+  if (String(sheet_url.value || '').trim()) {
+    scheduleSheetNameSuggestions(false);
+    if (String(sheet_name.value || '').trim()) scheduleSheetLinkCountSummary(false);
+  } else {
+    setSheetUrlHint('');
+    setSheetNameHint('');
+  }
+  resetSheetLinkSuggestions();
 }
 
 async function saveSidebarSettings() {
   try {
-    const payload = {
-      credentials_path: currentSettingsCache.credentials_path || '',
-      service_account_json: document.getElementById('settings_service_account_json').value,
-      sheet_url: sheet_url.value,
-      sheet_name: sheet_name.value,
-      drive_id: drive_id.value,
-      viewport_width: Number(document.getElementById('settings_viewport_width').value || 1920),
-      viewport_height: Number(document.getElementById('settings_viewport_height').value || 1400),
-      page_timeout_ms: Number(document.getElementById('settings_page_timeout_ms').value || 3000),
-      ready_state: currentSettingsCache.ready_state || 'interactive',
-      full_page_capture: document.getElementById('settings_full_page_capture').checked,
-      mappings_by_mode: serializeMappingsByModeForSave(),
-    };
+    rememberCurrentRunFlags(currentRunMode);
+    const payload = buildSettingsSavePayload();
+    console.log('[DEBUG] saveSidebarSettings payload:', payload);
     const out = await req('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
+    console.log('[DEBUG] saveSidebarSettings response:', out);
     const saved = out.settings || payload;
     currentSettingsCache = saved;
     currentMappingBlocksByMode = normalizeMappingsByModeForClient(saved.mappings_by_mode || serializeMappingsByModeForSave());
+    currentRunFlagsByMode = normalizeRunFlagsByModeForClient(saved.run_flags_by_mode || currentRunFlagsByMode);
+    applyRunFlagsForMode(currentRunMode);
     resetServiceAccountFileInput();
     renderSettingsSummary(saved);
-    if (String(sheet_url.value || '').trim()) scheduleSheetNameSuggestions(true);
+    if (String(sheet_url.value || '').trim()) {
+      scheduleSheetNameSuggestions(false);
+    }
+    resetSheetLinkSuggestions();
     setSettingsNote(t('saved'));
   } catch (e) {
     setSettingsNote(e.message, true);
@@ -6078,9 +8658,20 @@ function buildMappingsForCurrentMode() {
 
 async function startJob() {
   try {
+    primeCompletionNotifications();
+    console.log('[DEBUG] currentMappingBlocksByMode:', currentMappingBlocksByMode);
+    console.log('[DEBUG] currentRunMode:', currentRunMode);
     const mappings = buildMappingsForCurrentMode();
-    const firstStartLine = mappings.length ? Number(mappings[0].start_line || 4) : 4;
-    const forceRunAll = !!document.getElementById('force_run_all')?.checked;
+    console.log('[DEBUG] buildMappingsForCurrentMode:', mappings);
+    const firstStartLine = mappings.length && Number.isFinite(Number(mappings[0].start_line)) ? Number(mappings[0].start_line) : 4;
+    console.log('[DEBUG] firstStartLine:', firstStartLine, 'mappings[0]:', mappings[0]);
+    const modeFlags = rememberCurrentRunFlags(currentRunMode);
+    const forceRunAll = !!modeFlags.force_run_all;
+    const highlightSheetErrors = !!modeFlags.highlight_sheet_errors;
+    const scanNegativeFilter = currentRunMode === 'scan' && !!modeFlags.scan_negative_filter;
+    const scanKeywordFilter = currentRunMode === 'scan' && !!modeFlags.scan_keyword_filter;
+    const scanNegativeTerms = currentRunMode === 'scan' ? getScanNegativeTermsValue() : '';
+    const scanKeywordTerms = currentRunMode === 'scan' ? getScanKeywordTermsValue() : '';
     const browserPort = getModeBasePort(currentRunMode);
     const out = await req('/api/jobs/start', {
       method: 'POST',
@@ -6093,6 +8684,11 @@ async function startJob() {
         start_line: firstStartLine,
         mappings,
         force_run_all: !!forceRunAll,
+        highlight_sheet_errors: !!highlightSheetErrors,
+        scan_negative_filter: !!scanNegativeFilter,
+        scan_keyword_filter: !!scanKeywordFilter,
+        scan_negative_terms: scanNegativeTerms,
+        scan_keyword_terms: scanKeywordTerms,
         credentials_input: currentSettingsCache.credentials_path || '',
         capture_five_per_link: currentRunMode === 'booking' && captureFivePerLink,
         auto_launch_chrome: DEFAULT_AUTO_LAUNCH_CHROME
@@ -6103,7 +8699,37 @@ async function startJob() {
     await refreshJobs();
     await pollCurrent();
     ensureTimers();
-  } catch (e) { alert(e.message); }
+  } catch (e) {
+    if (await focusBlockingModeJob(e, currentRunMode)) return;
+    alert(e.message);
+  }
+}
+
+async function startErrorRowsJob() {
+  if (!currentJobId) { alert(t('monitorNoJob')); return; }
+  try {
+    primeCompletionNotifications();
+    const st = currentJobSnapshot || await req('/api/jobs/' + currentJobId);
+    if (!isJobOwnedByCurrentUser(st)) {
+      throw new Error('Chỉ chạy lại lỗi được với job của chính bạn');
+    }
+    const errorRowCount = Object.keys(st?.error_rows || {}).length;
+    if (!errorRowCount) {
+      throw new Error('Job này chưa có dòng lỗi để chạy lại');
+    }
+    const out = await req('/api/jobs/' + currentJobId + '/retry-errors', { method: 'POST' });
+    const runMode = getJobMode(st);
+    currentJobId = out.job_id;
+    setSelectedJobIdForMode(runMode, out.job_id);
+    await refreshJobs();
+    await pollCurrent();
+    ensureTimers();
+    setStatus(`${t('errorOnlyStarted')} · ${String(out.job_id || '').slice(0, 8)}`, 'running');
+  } catch (e) {
+    const jobMode = getJobMode(currentJobSnapshot || {});
+    if (await focusBlockingModeJob(e, jobMode || currentRunMode)) return;
+    alert(e.message);
+  }
 }
 
 async function stopJob() {
@@ -6112,19 +8738,47 @@ async function stopJob() {
     const st = currentJobSnapshot || await req('/api/jobs/' + currentJobId);
     const status = String(st?.status || '').toLowerCase();
     if (!['running', 'paused'].includes(status)) {
-      throw new Error('Job này không ở trạng thái dừng / tiếp tục được');
+      throw new Error('Ch? c? th? d?ng job ?ang ch?y');
     }
-    await req('/api/jobs/' + currentJobId + '/pause-toggle', { method: 'POST' });
+    await req('/api/jobs/' + currentJobId + '/stop', { method: 'POST' });
     await pollCurrent();
     await refreshJobs();
   } catch (e) { alert(e.message); }
+}
+
+async function continueJob() {
+  if (!currentJobId) { alert(t('monitorNoJob')); return; }
+  try {
+    primeCompletionNotifications();
+    const st = currentJobSnapshot || await req('/api/jobs/' + currentJobId);
+    const status = String(st?.status || '').toLowerCase();
+    const jobMode = getJobMode(st);
+    if (!['stopped', 'failed', 'completed'].includes(status)) {
+      throw new Error('Chỉ có thể chạy tiếp từ job đã dừng, lỗi hoặc hoàn tất');
+    }
+    const out = await req('/api/jobs/' + currentJobId + '/continue', { method: 'POST' });
+    currentJobId = out.job_id;
+    setSelectedJobIdForMode(jobMode, out.job_id);
+    await refreshJobs();
+    await pollCurrent();
+    ensureTimers();
+    setStatus(`${t('continueStarted')} · ${String(out.job_id || '').slice(0, 8)}`, 'running');
+  } catch (e) {
+    const jobMode = getJobMode(currentJobSnapshot || {});
+    if (await focusBlockingModeJob(e, jobMode || currentRunMode)) return;
+    alert(e.message);
+  }
+}
+
+async function pauseJob() {
+  return stopJob();
 }
 
 async function refreshJobs() {
   try {
     const [out, activityOut] = await Promise.all([
       req('/api/jobs'),
-      req('/api/activity?limit=50'),
+      req('/api/activity?limit=0'),
     ]);
     const jobs = out.jobs || [];
     currentActivityEvents = activityOut.items || [];
@@ -6147,7 +8801,8 @@ async function refreshJobs() {
       const s = j.summary || { done: 0, total: 0 };
       const active = currentJobId === j.id ? 'active' : '';
       const modeLabel = getJobMode(j).slice(0, 3).toUpperCase();
-      return `<tr class="${active}" onclick="selectJob('${j.id}')"><td>${statusBadge(j.status)}</td><td title="${esc(getJobMode(j))} · ${esc(j.id)}">${esc(modeLabel)} · ${esc(j.id.slice(0,8))}</td><td>${s.done}/${s.total}</td></tr>`;
+      const ownerLabel = getJobOwnerBadge(j);
+      return `<tr class="${active}" onclick="selectJob('${j.id}')"><td>${statusBadge(j.status)}</td><td title="${esc(getJobMode(j))} · ${esc(j.id)}">${esc(modeLabel)} · ${esc(j.id.slice(0,8))}${ownerLabel ? `<div class="muted" style="font-size:11px;margin-top:2px">${esc(ownerLabel)}</div>` : ''}</td><td>${s.done}/${s.total}</td></tr>`;
     }).join('');
     document.getElementById('jobsBody').innerHTML = rows;
     renderOverview();
@@ -6208,7 +8863,7 @@ async function pollCurrent() {
     const logs = lg.logs || [];
     currentLogsCache = logs;
     const targetJob = (jobsCache || []).find(job => job.id === currentJobId);
-    if (targetJob) targetJob.recent_logs = logs.slice(-20);
+    if (targetJob) targetJob.recent_logs = logs.slice();
     renderRunMonitor(st, logs);
     updateRunActionButtons(st);
     renderOverview();
@@ -6220,14 +8875,15 @@ async function pollCurrent() {
 }
 
 function ensureTimers() {
-  if (!pollTimer) pollTimer = setInterval(pollCurrent, 800);
-  if (!jobsTimer) jobsTimer = setInterval(refreshJobs, 3000);
+  if (!pollTimer) pollTimer = setInterval(pollCurrent, 450);
+  if (!jobsTimer) jobsTimer = setInterval(refreshJobs, 1800);
 }
 
 async function init() {
   await loadAuthState();
   await detectLocalAgent();
   syncAuthUI();
+  switchView('runs', document.querySelector('.side-btn[data-view="runs"]'));
   bindSheetNameAutocomplete();
   await loadDefaults();
   await refreshJobs();
@@ -6257,6 +8913,7 @@ init().catch(e => setStatus('Init error: ' + e.message, 'failed'));
         .replace("__SETTINGS_NAV_STYLE__", "")
         .replace("__SETTINGS_SECTION_STYLE__", "")
         .replace("__AUTH_IS_ADMIN__", "true" if auth_role_raw == "admin" else "false")
+        .replace("__LOCAL_BROWSER_HOSTS__", json.dumps(_local_browser_hostnames()))
     )
 
 
@@ -6306,22 +8963,162 @@ def list_sheet_names(request: Request, sheet_url: str, credentials_path: str = "
     user_email = _require_api_auth(request)
     saved = _read_saved_settings(user_email)
     cred_path = str(credentials_path or "").strip() or str(saved.get("credentials_path", "")).strip()
+    cache_key = _sheet_names_cache_key(user_email, sheet_url, cred_path)
+    cached_titles = _get_cached_sheet_titles(cache_key)
+    if cached_titles is not None:
+        return {
+            "ok": True,
+            "sheet_url": evidence.normalize_sheet_input(sheet_url),
+            "titles": cached_titles,
+            "cached": True,
+        }
     spreadsheet = _open_spreadsheet(sheet_url, cred_path)
     titles = []
     for ws in spreadsheet.worksheets():
         title = str(getattr(ws, "title", "")).strip()
         if title:
             titles.append(title)
+    _store_cached_sheet_titles(cache_key, titles)
     return {
         "ok": True,
         "sheet_url": evidence.normalize_sheet_input(sheet_url),
         "titles": titles,
+        "cached": False,
+    }
+
+
+@app.get("/api/sheets/column-suggestions")
+def list_sheet_link_columns(
+    request: Request,
+    sheet_url: str,
+    sheet_name: str,
+    credentials_path: str = "",
+    start_row: int = 4,
+    force: bool = False,
+):
+    user_email = _require_api_auth(request)
+    saved = _read_saved_settings(user_email)
+    cred_path = str(credentials_path or "").strip() or str(saved.get("credentials_path", "")).strip()
+    name = str(sheet_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
+    cache_key = _sheet_link_columns_cache_key(user_email, sheet_url, name, cred_path, start_row)
+    if force:
+        _clear_sheet_link_columns_cache(user_email, sheet_url, name, cred_path)
+        cached_payload = None
+    else:
+        cached_payload = _get_cached_sheet_link_columns(cache_key)
+    if cached_payload is not None:
+        return {
+            "ok": True,
+            "sheet_url": evidence.normalize_sheet_input(sheet_url),
+            "sheet_name": name,
+            "cached": True,
+            **cached_payload,
+        }
+    spreadsheet = _open_spreadsheet(sheet_url, cred_path)
+    worksheet = _resolve_worksheet(spreadsheet, sheet_url, name)
+    payload = _extract_sheet_link_columns(worksheet, start_row=start_row)
+    _store_cached_sheet_link_columns(cache_key, payload)
+    return {
+        "ok": True,
+        "sheet_url": evidence.normalize_sheet_input(sheet_url),
+        "sheet_name": str(getattr(worksheet, "title", name) or name),
+        "cached": False,
+        **payload,
+    }
+
+
+@app.post("/api/sheets/quick-block-columns")
+def create_quick_block_columns(request: Request, payload: QuickScanColumnsRequest):
+    user_email = _require_api_auth(request)
+    mode = _normalize_run_mode(payload.mode)
+    if mode not in {"seeding", "booking", "scan"}:
+        raise HTTPException(status_code=400, detail="Quét nhanh hiện chỉ hỗ trợ cho Seeding, Booking và Scan")
+    normalized_columns = _normalize_selected_columns(payload.columns)
+    if not normalized_columns:
+        raise HTTPException(status_code=400, detail="Chưa chọn cột nào để quét nhanh")
+    saved = _read_saved_settings(user_email)
+    cred_path = str(saved.get("credentials_path", "")).strip()
+    spreadsheet = _open_spreadsheet(payload.sheet_url, cred_path)
+    worksheet = _resolve_worksheet(spreadsheet, payload.sheet_url, str(payload.sheet_name or "").strip())
+
+    sheet_id = _worksheet_sheet_id(worksheet)
+    if sheet_id < 0:
+        raise HTTPException(status_code=400, detail="Không lấy được sheet id để tạo cột nhanh")
+
+    selected_indexes = [evidence.col_letter_to_index(column) or 0 for column in normalized_columns]
+    requests: list[dict[str, Any]] = []
+    for column_index in sorted(selected_indexes, reverse=True):
+        width = 1 if mode == "scan" else 2
+        requests.append(
+            {
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": int(column_index),
+                        "endIndex": int(column_index + width),
+                    },
+                    "inheritFromBefore": True,
+                }
+            }
+        )
+
+    try:
+        spreadsheet.batch_update({"requests": requests})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Không tạo được cột mới trên Sheet: {exc}") from exc
+
+    items: list[dict[str, str]] = []
+    left_insertions = 0
+    for source_column, source_index in zip(normalized_columns, selected_indexes):
+        if mode == "scan":
+            final_link_index = source_index + left_insertions
+            result_index = final_link_index + 1
+            items.append(
+                {
+                    "source_column": source_column,
+                    "link_column": evidence.col_index_to_letter(final_link_index),
+                    "drive_column": evidence.col_index_to_letter(result_index),
+                    "screenshot_column": "",
+                }
+            )
+            left_insertions += 1
+        else:
+            final_link_index = source_index + (left_insertions * 2)
+            drive_index = final_link_index + 1
+            screenshot_index = final_link_index + 2
+            items.append(
+                {
+                    "source_column": source_column,
+                    "link_column": evidence.col_index_to_letter(final_link_index),
+                    "drive_column": evidence.col_index_to_letter(drive_index),
+                    "screenshot_column": evidence.col_index_to_letter(screenshot_index),
+                }
+            )
+            left_insertions += 1
+
+    _clear_sheet_link_columns_cache(
+        user_email=user_email,
+        sheet_url=payload.sheet_url,
+        sheet_name=payload.sheet_name,
+        credentials_path=cred_path,
+    )
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "sheet_url": evidence.normalize_sheet_input(payload.sheet_url),
+        "sheet_name": str(getattr(worksheet, "title", str(payload.sheet_name or "").strip()) or str(payload.sheet_name or "").strip()),
+        "items": items,
     }
 
 
 @app.post("/api/settings")
 def save_settings(request: Request, payload: SettingsUpdateRequest):
     user_email = _require_api_auth(request)
+    evidence.write_log(f"[DEBUG] save_settings received payload.mappings_by_mode: {payload.mappings_by_mode}")
     credentials_path = str(payload.credentials_path or "").strip()
     inline_json = str(payload.service_account_json or "").strip()
     if inline_json:
@@ -6334,14 +9131,22 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
             json.dump(parsed, f, ensure_ascii=False, indent=2)
         credentials_path = out_path
 
+    fixed_tiktok_wait = max(5, int(float(getattr(evidence, "TIKTOK_CAPTCHA_MAX_WAIT_SEC", 15)) or 15))
+    fixed_please_wait = max(0.0, float(getattr(evidence, "PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC", 2.0) or 2.0))
     patch = {
         "credentials_path": credentials_path,
         "sheet_url": str(payload.sheet_url or "").strip(),
         "sheet_name": str(payload.sheet_name or "").strip(),
         "drive_id": str(payload.drive_id or "").strip(),
+        "scan_negative_terms": str(payload.scan_negative_terms or ""),
+        "scan_keyword_terms": str(payload.scan_keyword_terms or ""),
         "viewport_width": max(320, int(payload.viewport_width or 1920)),
         "viewport_height": max(320, int(payload.viewport_height or 1400)),
         "page_timeout_ms": max(500, int(payload.page_timeout_ms or 3000)),
+        # Force these values from code-level runtime constants (ignore UI payload).
+        "tiktok_captcha_wait_sec": fixed_tiktok_wait,
+        "please_wait_delay_sec": fixed_please_wait,
+        "tiktok_force_focus": bool(payload.tiktok_force_focus),
         "ready_state": str(payload.ready_state or "interactive").strip() or "interactive",
         "full_page_capture": bool(payload.full_page_capture),
         "mappings_by_mode": _normalize_mappings_by_mode(
@@ -6350,7 +9155,9 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
                 for mode, items in dict(payload.mappings_by_mode or {}).items()
             }
         ),
+        "run_flags_by_mode": _normalize_run_flags_by_mode(payload.run_flags_by_mode),
     }
+    evidence.write_log(f"[DEBUG] save_settings normalized patch['mappings_by_mode']: {patch['mappings_by_mode']}")
     data = _build_settings_payload(_write_saved_settings(user_email, patch))
     return {"ok": True, "settings": data}
 
@@ -6387,9 +9194,9 @@ def save_mail_config(request: Request, payload: MailConfigUpdateRequest):
 
 
 @app.get("/api/activity")
-def list_activity(request: Request, limit: int = 50):
+def list_activity(request: Request, limit: int = 0):
     owner_email = _require_api_auth(request)
-    return {"ok": True, "items": _list_activity_events(owner_email, limit=limit)}
+    return {"ok": True, "items": _list_activity_events(owner_email, limit=limit, include_all=True)}
 
 
 @app.post("/api/activity")
@@ -6449,6 +9256,7 @@ def launch_chrome_block(block_index: int, request: Request, run_mode: str = "see
 @app.post("/api/jobs/start")
 def start_job(request: Request, payload: JobStartRequest):
     owner_email = _require_api_auth(request)
+    evidence.write_log(f"[DEBUG] start_job received: start_line={payload.start_line}, mappings={payload.mappings}")
     run_mode = _normalize_run_mode(payload.run_mode)
     saved_settings = _read_saved_settings(owner_email)
     with JOBS_LOCK:
@@ -6460,28 +9268,55 @@ def start_job(request: Request, payload: JobStartRequest):
     credentials_path = _resolve_credentials_input(credentials_input, owner_email)
 
     sheet_url = evidence.normalize_sheet_input(payload.sheet_url)
+    raw_sheet_name = str(payload.sheet_name or "").strip()
+    if not raw_sheet_name:
+        raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
+    spreadsheet = _open_spreadsheet(sheet_url, credentials_path)
+    worksheet = _resolve_worksheet(spreadsheet, sheet_url, raw_sheet_name)
+    resolved_sheet_name = str(getattr(worksheet, "title", raw_sheet_name) or raw_sheet_name).strip()
     drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
     mapping_payload = [m.model_dump() for m in payload.mappings] or [_default_mapping(payload.start_line, payload.run_mode)]
     run_mode = _infer_job_mode(mapping_payload, fallback=run_mode)
     merged_settings = _build_settings_payload(saved_settings)
+    resolved_negative_terms = str(payload.scan_negative_terms or merged_settings.get("scan_negative_terms", "") or "")
+    resolved_keyword_terms = str(payload.scan_keyword_terms or merged_settings.get("scan_keyword_terms", "") or "")
     runtime_settings = {
         "credentials_path": credentials_path,
+        "scan_negative_terms": resolved_negative_terms,
+        "scan_keyword_terms": resolved_keyword_terms,
         "viewport_width": int(merged_settings.get("viewport_width", 1920) or 1920),
         "viewport_height": int(merged_settings.get("viewport_height", 1400) or 1400),
         "page_timeout_ms": int(merged_settings.get("page_timeout_ms", 3000) or 3000),
+        "tiktok_captcha_wait_sec": int(merged_settings.get("tiktok_captcha_wait_sec", 15) or 15),
+        "please_wait_delay_sec": float(merged_settings.get("please_wait_delay_sec", 2.0) or 2.0),
+        "tiktok_force_focus": bool(merged_settings.get("tiktok_force_focus", True)),
         "ready_state": str(merged_settings.get("ready_state", "interactive") or "interactive"),
         "full_page_capture": bool(merged_settings.get("full_page_capture", False)),
     }
     saved_mappings_by_mode = _normalize_mappings_by_mode(saved_settings.get("mappings_by_mode"))
     saved_mappings_by_mode[run_mode] = _normalize_mappings_by_mode({run_mode: mapping_payload}).get(run_mode, [])
+    saved_run_flags_by_mode = _normalize_run_flags_by_mode(saved_settings.get("run_flags_by_mode"))
+    saved_run_flags_by_mode[run_mode] = _normalize_run_flags_for_mode(
+        run_mode,
+        {
+            "force_run_all": bool(payload.force_run_all),
+            "highlight_sheet_errors": bool(payload.highlight_sheet_errors),
+            "capture_five_per_link": bool(payload.capture_five_per_link),
+            "scan_negative_filter": bool(payload.scan_negative_filter),
+            "scan_keyword_filter": bool(payload.scan_keyword_filter),
+        },
+    )
     _write_saved_settings(
         owner_email,
         {
             "credentials_path": credentials_path,
             "sheet_url": sheet_url,
-            "sheet_name": payload.sheet_name.strip(),
+            "sheet_name": resolved_sheet_name,
             "drive_id": drive_id,
+            "scan_negative_terms": resolved_negative_terms,
+            "scan_keyword_terms": resolved_keyword_terms,
             "mappings_by_mode": saved_mappings_by_mode,
+            "run_flags_by_mode": saved_run_flags_by_mode,
         }
     )
     browser_port = _get_mode_base_port(run_mode)
@@ -6508,7 +9343,7 @@ def start_job(request: Request, payload: JobStartRequest):
         "mode": run_mode,
         "drive_id": drive_id,
         "sheet_url": sheet_url,
-        "sheet_name": payload.sheet_name.strip(),
+        "sheet_name": resolved_sheet_name,
         "browser_port": browser_port,
         "profile_path": profile_path,
         "credentials_path": credentials_path,
@@ -6517,6 +9352,9 @@ def start_job(request: Request, payload: JobStartRequest):
         "force_run_all": bool(payload.force_run_all),
         "only_run_error_rows": bool(payload.only_run_error_rows),
         "capture_five_per_link": bool(payload.capture_five_per_link),
+        "highlight_sheet_errors": bool(payload.highlight_sheet_errors),
+        "scan_negative_filter": bool(payload.scan_negative_filter),
+        "scan_keyword_filter": bool(payload.scan_keyword_filter),
         "target_rows": [],
         "target_block_name": "",
         "mappings": mapping_payload,
@@ -6529,6 +9367,9 @@ def start_job(request: Request, payload: JobStartRequest):
         force_run_all=bool(payload.force_run_all),
         only_run_error_rows=bool(payload.only_run_error_rows),
         capture_five_per_link=bool(payload.capture_five_per_link),
+        highlight_sheet_errors=bool(payload.highlight_sheet_errors),
+        scan_negative_filter=bool(payload.scan_negative_filter),
+        scan_keyword_filter=bool(payload.scan_keyword_filter),
         detail="Chờ chạy",
     )
 
@@ -6549,6 +9390,7 @@ def replay_job_row(job_id: str, request: Request, payload: ReplayRowRequest):
         if running_id:
             raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}")
         source_request = json.loads(json.dumps(source_job.get("request") or {}))
+        root_job_id = str(source_request.get("root_job_id") or source_job.get("id") or job_id).strip()
 
     mappings = list(source_request.get("mappings") or [])
     block_name = str(payload.block_name or "").strip()
@@ -6573,6 +9415,13 @@ def replay_job_row(job_id: str, request: Request, payload: ReplayRowRequest):
     source_request["target_rows"] = [row]
     source_request["target_block_name"] = block_name
     source_request["owner_email"] = owner_email
+    latest_saved_settings = _read_saved_settings(owner_email)
+    runtime_settings = dict(source_request.get("runtime_settings") or {})
+    runtime_settings["scan_negative_terms"] = ""
+    runtime_settings["scan_keyword_terms"] = ""
+    source_request["runtime_settings"] = runtime_settings
+    source_request["root_job_id"] = root_job_id
+    source_request["source_job_id"] = job_id
 
     detail = f"Replay dòng {row}"
     if block_name:
@@ -6586,6 +9435,9 @@ def replay_job_row(job_id: str, request: Request, payload: ReplayRowRequest):
         force_run_all=True,
         only_run_error_rows=False,
         capture_five_per_link=bool(source_request.get("capture_five_per_link")),
+        highlight_sheet_errors=bool(source_request.get("highlight_sheet_errors")),
+        scan_negative_filter=bool(source_request.get("scan_negative_filter")),
+        scan_keyword_filter=bool(source_request.get("scan_keyword_filter")),
         detail=detail,
     )
 
@@ -6604,6 +9456,137 @@ def stop_job(job_id: str, request: Request):
         job["finished_at"] = _utc_now_iso()
     _persist_jobs(force=True)
     return {"ok": True, "job_id": job_id, "status": "stopped"}
+
+
+@app.post("/api/jobs/{job_id}/continue")
+def continue_job(job_id: str, request: Request):
+    owner_email = _require_api_auth(request)
+    with JOBS_LOCK:
+        source_job = JOBS.get(job_id)
+        if not source_job or _job_owner_email(source_job) != owner_email:
+            raise HTTPException(status_code=404, detail="Không tìm thấy job nguồn")
+        run_mode = _get_job_mode(source_job)
+        current_status = str(source_job.get("status") or "").strip().lower()
+        if current_status in {"running", "paused", "queued"}:
+            raise HTTPException(status_code=400, detail="Chỉ có thể chạy tiếp từ job đã dừng, lỗi hoặc hoàn tất")
+        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
+        if running_id:
+            raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}")
+        source_request, next_lines = _derive_continue_request_snapshot(source_job)
+        latest_saved_settings = _read_saved_settings(owner_email)
+        runtime_settings = dict(source_request.get("runtime_settings") or {})
+        runtime_settings["scan_negative_terms"] = ""
+        runtime_settings["scan_keyword_terms"] = ""
+        source_request["runtime_settings"] = runtime_settings
+        root_job_id = str(source_request.get("root_job_id") or source_job.get("id") or job_id).strip()
+
+    source_request["root_job_id"] = root_job_id
+    source_request["source_job_id"] = job_id
+
+    line_hints = [f"{name} #{line}" for name, line in list(next_lines.items())[:3]]
+    detail = "Chạy tiếp"
+    if line_hints:
+        detail += " từ " + ", ".join(line_hints)
+
+    return _enqueue_job(
+        owner_email=owner_email,
+        request_snapshot=source_request,
+        run_mode=run_mode,
+        start_line=int(source_request.get("start_line") or 4),
+        force_run_all=bool(source_request.get("force_run_all")),
+        only_run_error_rows=False,
+        capture_five_per_link=bool(source_request.get("capture_five_per_link")),
+        highlight_sheet_errors=bool(source_request.get("highlight_sheet_errors")),
+        scan_negative_filter=bool(source_request.get("scan_negative_filter")),
+        scan_keyword_filter=bool(source_request.get("scan_keyword_filter")),
+        detail=detail,
+    )
+
+
+@app.post("/api/jobs/{job_id}/retry-errors")
+def retry_job_errors(job_id: str, request: Request):
+    owner_email = _require_api_auth(request)
+    with JOBS_LOCK:
+        source_job = JOBS.get(job_id)
+        if not source_job or _job_owner_email(source_job) != owner_email:
+            raise HTTPException(status_code=404, detail="Không tìm thấy job nguồn")
+        run_mode = _get_job_mode(source_job)
+        current_status = str(source_job.get("status") or "").strip().lower()
+        if current_status in {"running", "paused", "queued"}:
+            raise HTTPException(status_code=400, detail="Chỉ có thể chạy lỗi từ job đã dừng, lỗi hoặc hoàn tất")
+        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
+        if running_id:
+            raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}")
+        source_request = json.loads(json.dumps(source_job.get("request") or {}))
+        root_job_id = str(source_request.get("root_job_id") or source_job.get("id") or job_id).strip()
+        raw_error_rows = dict(source_job.get("error_rows") or {})
+        issue_cells = list(source_job.get("issue_cells") or [])
+
+    target_rows: list[int] = []
+    for row_key in raw_error_rows.keys():
+        try:
+            row_num = int(str(row_key).strip().lstrip("#"))
+        except Exception:
+            continue
+        if row_num > 0:
+            target_rows.append(row_num)
+    for item in issue_cells:
+        try:
+            kind = str((item or {}).get("kind") or "").strip().lower()
+            if kind not in {"failed", "unavailable"}:
+                continue
+            row_num = int((item or {}).get("row") or 0)
+        except Exception:
+            continue
+        if row_num > 0:
+            target_rows.append(row_num)
+    target_rows = sorted(set(target_rows))
+    if not target_rows:
+        raise HTTPException(status_code=400, detail="Job này chưa có dòng lỗi để chạy lại")
+
+    retry_start_line = int(min(target_rows))
+    mappings = list(source_request.get("mappings") or [])
+    adjusted_mappings = []
+    for item in mappings:
+        block = dict(item or {})
+        try:
+            current_start = int(str(block.get("start_line", retry_start_line)).strip() or retry_start_line)
+        except Exception:
+            current_start = retry_start_line
+        block["start_line"] = min(current_start, retry_start_line)
+        adjusted_mappings.append(block)
+    if adjusted_mappings:
+        source_request["mappings"] = adjusted_mappings
+
+    source_request["mode"] = run_mode
+    source_request["owner_email"] = owner_email
+    source_request["root_job_id"] = root_job_id
+    source_request["source_job_id"] = job_id
+    source_request["target_rows"] = target_rows
+    source_request["target_block_name"] = ""
+    source_request["start_line"] = retry_start_line
+    source_request["only_run_error_rows"] = False
+    source_request["force_run_all"] = True
+    latest_saved_settings = _read_saved_settings(owner_email)
+    runtime_settings = dict(source_request.get("runtime_settings") or {})
+    runtime_settings["scan_negative_terms"] = ""
+    runtime_settings["scan_keyword_terms"] = ""
+    source_request["runtime_settings"] = runtime_settings
+
+    detail = f"Chạy lỗi {len(target_rows)} dòng"
+    return _enqueue_job(
+        owner_email=owner_email,
+        request_snapshot=source_request,
+        run_mode=run_mode,
+        start_line=int(source_request.get("start_line") or 4),
+        force_run_all=True,
+        only_run_error_rows=False,
+        capture_five_per_link=bool(source_request.get("capture_five_per_link")),
+        highlight_sheet_errors=bool(source_request.get("highlight_sheet_errors")),
+        scan_negative_filter=bool(source_request.get("scan_negative_filter")),
+        scan_keyword_filter=bool(source_request.get("scan_keyword_filter")),
+        detail=detail,
+    )
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -6625,7 +9608,7 @@ def export_job_log(job_id: str, request: Request):
     owner_email = _require_api_auth(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job or _job_owner_email(job) != owner_email:
+        if not _can_view_job(job, owner_email):
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         job_snapshot = _serialize_job(job)
     rows = _build_export_log_rows(job_snapshot)
@@ -6679,14 +9662,16 @@ def pause_toggle_job(job_id: str, request: Request):
 @app.get("/api/jobs")
 def list_jobs(request: Request):
     owner_email = _require_api_auth(request)
+    can_view_all = _is_admin_email(owner_email)
     out = []
     with JOBS_LOCK:
         for job in JOBS.values():
-            if _job_owner_email(job) != owner_email:
+            if not can_view_all and _job_owner_email(job) != owner_email:
                 continue
             out.append(
                 {
                     "id": job["id"],
+                    "owner_email": _job_owner_email(job),
                     "mode": _get_job_mode(job),
                     "status": job["status"],
                     "created_at": job["created_at"],
@@ -6697,8 +9682,9 @@ def list_jobs(request: Request):
                     "request": job.get("request"),
                     "completion": job.get("completion"),
                     "error_rows": job.get("error_rows"),
+                    "issue_cells": job.get("issue_cells"),
                     "error": job.get("error"),
-                    "recent_logs": list(job.get("logs", []))[-20:],
+                    "recent_logs": list(job.get("logs", [])),
                 }
             )
     out.sort(key=lambda x: x["created_at"], reverse=True)
@@ -6710,10 +9696,11 @@ def get_job(job_id: str, request: Request):
     owner_email = _require_api_auth(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job or _job_owner_email(job) != owner_email:
+        if not _can_view_job(job, owner_email):
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         return {
             "id": job["id"],
+            "owner_email": _job_owner_email(job),
             "mode": _get_job_mode(job),
             "status": job["status"],
             "created_at": job["created_at"],
@@ -6725,6 +9712,7 @@ def get_job(job_id: str, request: Request):
             "ui_status": job.get("ui_status"),
             "completion": job.get("completion"),
             "error_rows": job.get("error_rows"),
+            "issue_cells": job.get("issue_cells"),
             "error": job.get("error"),
         }
 
@@ -6735,16 +9723,51 @@ def get_job_logs(job_id: str, request: Request, limit: int = 100):
     lim = max(1, min(int(limit), 1000))
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job or _job_owner_email(job) != owner_email:
+        if not _can_view_job(job, owner_email):
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         logs = list(job.get("logs", []))
     return {"job_id": job_id, "logs": logs[-lim:]}
 
 
 if __name__ == "__main__":
+    import socket
     import uvicorn
 
+    def _can_bind(host_value: str, port_value: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host_value, int(port_value)))
+            return True
+        except OSError:
+            return False
+
+    def _pick_available_port(host_value: str, preferred_port: int, max_tries: int = 100) -> int:
+        base = int(preferred_port)
+        for candidate in range(base, base + max_tries):
+            if _can_bind(host_value, candidate):
+                return candidate
+        raise RuntimeError(f"Không tìm được cổng trống từ {base} đến {base + max_tries - 1}")
+
+    # Listen on all interfaces by default for dev ergonomics.
+    # But for browser access, prefer localhost/127.0.0.1 if running locally.
     host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8000"))
+    requested_port = int(os.environ.get("PORT", "8000"))
+    port = _pick_available_port(host, requested_port)
+
+    local_host = "localhost"
+    local_addr = "127.0.0.1"
+    try:
+        private_ip = socket.gethostbyname(socket.gethostname())
+    except Exception:
+        private_ip = None
+
+    if port != requested_port:
+        print(f"Port {requested_port} đang bận, tự chuyển sang cổng trống {port}")
+    print(f"Starting web_ui server on {host}:{port}")
+    print(f"Open in browser: http://{local_host}:{port} or http://{local_addr}:{port}")
+    if private_ip and private_ip not in {"127.0.0.1", "0.0.0.0"}:
+        print(f"Also available on local network: http://{private_ip}:{port}")
+
     uvicorn.run("web_ui:app", host=host, port=port, reload=False)
 

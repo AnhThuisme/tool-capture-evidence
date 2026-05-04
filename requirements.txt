@@ -9,3 +9,4 @@ oauth2client
 google-api-python-client
 Pillow
 openpyxl
+eval_type_backport

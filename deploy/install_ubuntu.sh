@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_DIR="/opt/evidence-web"
+DATA_DIR="/opt/evidence-web-data"
 SERVICE_NAME="evidence-web"
 DOMAIN="${1:-}"
 
@@ -13,8 +14,17 @@ fi
 sudo apt-get update
 sudo apt-get install -y python3 python3-venv python3-pip nginx chromium-browser chromium-chromedriver
 
-sudo mkdir -p "$APP_DIR"
-sudo rsync -av --delete ./ "$APP_DIR"/
+sudo mkdir -p "$APP_DIR" "$DATA_DIR"
+sudo rsync -av --delete \
+  --exclude ".env" \
+  --exclude ".venv" \
+  --exclude "__pycache__" \
+  --exclude ".git" \
+  --exclude ".pytest_cache" \
+  --exclude "temp_screenshots" \
+  --exclude "FB_Session" \
+  --exclude "FB_Session_Selenium" \
+  ./ "$APP_DIR"/
 
 cd "$APP_DIR"
 python3 -m venv .venv
@@ -25,7 +35,26 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
+upsert_env() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=" .env; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+
+upsert_env "HOST" "127.0.0.1"
+upsert_env "PORT" "8000"
+upsert_env "EVIDENCE_BASE_DIR" "$DATA_DIR"
+upsert_env "GOOGLE_CREDENTIALS_PATH" "$DATA_DIR/credentials.json"
+
+sudo mkdir -p "$DATA_DIR"
+sudo touch "$DATA_DIR/.keep"
+
 sudo cp deploy/evidence-web.service /etc/systemd/system/${SERVICE_NAME}.service
+sudo chown -R www-data:www-data "$APP_DIR" "$DATA_DIR"
 sudo systemctl daemon-reload
 sudo systemctl enable ${SERVICE_NAME}
 sudo systemctl restart ${SERVICE_NAME}
@@ -37,3 +66,4 @@ sudo nginx -t
 sudo systemctl restart nginx
 
 echo "Install done. Next: sudo certbot --nginx -d ${DOMAIN}"
+echo "Remember to place your Google credentials at: ${DATA_DIR}/credentials.json"

@@ -1,11 +1,125 @@
 {
-  "credentials_path": "c:\\Users\\thu.phannguyenanh\\Videos\\Web evidence\\credentials.inline.json",
-  "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
-  "sheet_name": "2. SEEDING SHARE POST FB",
-  "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV",
-  "viewport_width": 1920,
-  "viewport_height": 1400,
-  "page_timeout_ms": 3000,
-  "ready_state": "interactive",
-  "full_page_capture": false
+  "users": {
+    "thu.phannguyenanh@fanscom.vn": {
+      "drive_id": "1k2d7OGbJvDy4n5LUw9FDa2hJbpZC4v2M",
+      "ready_state": "interactive",
+      "credentials_path": "/Users/at/Downloads/Web evidence/service_accounts/thu.phannguyenanh_fanscom.vn.json",
+      "viewport_height": 1400,
+      "sheet_name": "Ap bạc M&B",
+      "page_timeout_ms": 3000,
+      "sheet_url": "http://docs.google.com/spreadsheets/d/1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg/edit?gid=2083079471#gid=2083079471",
+      "full_page_capture": false,
+      "viewport_width": 1920,
+      "scan_negative_terms": "",
+      "tiktok_force_focus": true,
+      "scan_keyword_terms": "",
+      "tiktok_captcha_wait_sec": 15,
+      "please_wait_delay_sec": 2.0,
+      "run_flags_by_mode": {
+        "seeding": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        },
+        "booking": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        },
+        "scan": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        }
+      },
+      "mappings_by_mode": {
+        "seeding": [
+          {
+            "name": "Post 1",
+            "start_line": 2,
+            "col_url": "J",
+            "col_profile": "",
+            "col_content": "",
+            "col_screenshot": "L",
+            "col_drive": "K",
+            "col_air_date": "2026-04-13",
+            "fixed_air_date": "",
+            "mode": "seeding"
+          }
+        ],
+        "booking": [
+          {
+            "name": "Post 1",
+            "start_line": 140,
+            "col_url": "O",
+            "col_profile": "",
+            "col_content": "",
+            "col_screenshot": "Q",
+            "col_drive": "P",
+            "col_air_date": "2026-04-13",
+            "fixed_air_date": "",
+            "mode": "booking"
+          }
+        ],
+        "scan": [
+          {
+            "name": "Scan 2",
+            "start_line": 4,
+            "col_url": "R",
+            "col_profile": "",
+            "col_content": "P",
+            "col_screenshot": "",
+            "col_drive": "S",
+            "col_air_date": "",
+            "fixed_air_date": "",
+            "mode": "scan"
+          }
+        ]
+      }
+    },
+    "fanscom.ecom@gmail.com": {
+      "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV",
+      "ready_state": "interactive",
+      "credentials_path": "c:\\Users\\thu.phannguyenanh\\Videos\\Web evidence\\credentials.inline.json",
+      "viewport_height": 1400,
+      "sheet_name": "2. SEEDING SHARE POST FB",
+      "page_timeout_ms": 3000,
+      "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
+      "mappings_by_mode": {
+        "scan": [
+          {
+            "name": "Scan 1",
+            "start_line": 4,
+            "col_url": "E",
+            "col_profile": "",
+            "col_content": "D",
+            "col_screenshot": "",
+            "col_drive": "F",
+            "col_air_date": "",
+            "fixed_air_date": "",
+            "mode": "scan"
+          }
+        ]
+      },
+      "full_page_capture": false,
+      "viewport_width": 1920
+    }
+  },
+  "_legacy_defaults": {
+    "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV",
+    "ready_state": "interactive",
+    "credentials_path": "c:\\Users\\thu.phannguyenanh\\Videos\\Web evidence\\credentials.inline.json",
+    "viewport_height": 1400,
+    "sheet_name": "2. SEEDING SHARE POST FB",
+    "page_timeout_ms": 3000,
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
+    "full_page_capture": false,
+    "viewport_width": 1920
+  }
 }
