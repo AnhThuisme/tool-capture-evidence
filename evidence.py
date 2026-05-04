@@ -136,7 +136,9 @@ def is_fixed_credentials_path(path: str | None) -> bool:
 def resolve_credentials_path() -> str:
     env_path = os.environ.get("GOOGLE_CREDENTIALS_PATH", "").strip()
     if env_path:
-        return env_path
+        norm_env_path = os.path.normpath(env_path)
+        if os.path.exists(norm_env_path):
+            return norm_env_path
 
     env_b64_path = _bootstrap_env_credentials_path()
     if env_b64_path:
