@@ -1364,8 +1364,32 @@ Write-Output 'OK'
 def _send_platform_email(to_email: str, subject: str, plain_body: str, html_body: str, from_name: str = "Evidence Security") -> None:
     gmail_api = _gmail_api_config()
     if gmail_api:
-        _send_email_via_gmail_api(to_email, subject, plain_body, html_body, from_name)
-        return
+        try:
+            _send_email_via_gmail_api(to_email, subject, plain_body, html_body, from_name)
+            return
+        except Exception as gmail_exc:
+            # OAuth refresh token can break on cloud deploys; fallback to SMTP/Outlook instead of blocking login.
+            gmail_detail = getattr(gmail_exc, "detail", None) if isinstance(gmail_exc, HTTPException) else str(gmail_exc)
+            try:
+                _send_email_via_smtp(to_email, subject, plain_body, html_body, from_name)
+                return
+            except Exception as smtp_exc:
+                if not _outlook_auth_enabled():
+                    smtp_detail = getattr(smtp_exc, "detail", None) if isinstance(smtp_exc, HTTPException) else str(smtp_exc)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Gửi mail thất bại. Google OAuth: {gmail_detail}. SMTP: {smtp_detail}",
+                    ) from smtp_exc
+                try:
+                    _send_email_via_outlook(to_email, subject, plain_body)
+                    return
+                except HTTPException as outlook_exc:
+                    smtp_detail = getattr(smtp_exc, "detail", None) if isinstance(smtp_exc, HTTPException) else str(smtp_exc)
+                    outlook_detail = outlook_exc.detail if isinstance(outlook_exc, HTTPException) else str(outlook_exc)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Gửi mail thất bại. Google OAuth: {gmail_detail}. SMTP: {smtp_detail}. Outlook: {outlook_detail}",
+                    ) from smtp_exc
     try:
         _send_email_via_smtp(to_email, subject, plain_body, html_body, from_name)
         return
@@ -1398,17 +1422,17 @@ def _gmail_api_access_token(config: dict[str, Any]) -> str:
             timeout=float(config.get("timeout_sec") or 20),
         )
     except requests.RequestException as exc:
-        raise HTTPException(status_code=500, detail=f"Kh?ng l?y ???c access token Gmail API: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Không lấy được access token Gmail API: {exc}") from exc
     try:
         data = resp.json()
     except Exception:
         data = {}
     if not (200 <= resp.status_code < 300):
         detail = data.get("error_description") or data.get("error") or resp.text or f"HTTP {resp.status_code}"
-        raise HTTPException(status_code=500, detail=f"Google OAuth th?t b?i: {detail}")
+        raise HTTPException(status_code=500, detail=f"Google OAuth thất bại: {detail}")
     token = str(data.get("access_token") or "").strip()
     if not token:
-        raise HTTPException(status_code=500, detail="Google OAuth kh?ng tr? access token")
+        raise HTTPException(status_code=500, detail="Google OAuth không trả access token")
     return token
 
 
