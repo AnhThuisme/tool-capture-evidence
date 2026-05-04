@@ -1872,8 +1872,9 @@ def _window_size_parts(value: str) -> tuple[int, int]:
 
 def _settings_defaults() -> dict[str, Any]:
     width, height = _window_size_parts(getattr(evidence, "CAPTURE_WINDOW_SIZE", "1920,1400"))
+    resolved_credentials = _resolve_existing_credentials_path(str(getattr(evidence, "JSON_PATH", "")))
     return {
-        "credentials_path": "",
+        "credentials_path": resolved_credentials,
         "sheet_url": str(getattr(evidence, "DEFAULT_SHEET_URL", "")),
         "sheet_name": str(getattr(evidence, "DEFAULT_SHEET_NAME_TARGET", "")),
         "drive_id": str(getattr(evidence, "DEFAULT_DRIVE_FOLDER_ID", "")),
@@ -1999,7 +2000,16 @@ def _open_spreadsheet(sheet_url: str, credentials_path: str):
         raise HTTPException(status_code=400, detail="Thiếu Sheet URL")
     cred_path = _resolve_existing_credentials_path(str(credentials_path or "").strip())
     if not cred_path or not os.path.exists(cred_path):
-        raise HTTPException(status_code=400, detail="Chưa có credentials để đọc Google Sheets")
+        has_b64 = bool(str(os.getenv("GOOGLE_CREDENTIALS_JSON_B64", "")).strip())
+        has_path = bool(str(os.getenv("GOOGLE_CREDENTIALS_PATH", "")).strip())
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Chưa có credentials để đọc Google Sheets. "
+                f"Env GOOGLE_CREDENTIALS_JSON_B64={'ON' if has_b64 else 'OFF'}, "
+                f"GOOGLE_CREDENTIALS_PATH={'ON' if has_path else 'OFF'}."
+            ),
+        )
     try:
         creds = evidence.ServiceAccountCredentials.from_json_keyfile_name(
             cred_path,
@@ -9031,7 +9041,9 @@ def default_config(request: Request):
     payload["sheet_url"] = str(saved_settings.get("sheet_url", payload["sheet_url"]))
     payload["sheet_name"] = str(saved_settings.get("sheet_name", payload["sheet_name"]))
     payload["drive_id"] = str(saved_settings.get("drive_id", payload["drive_id"]))
-    payload["credentials_path"] = str(saved_settings.get("credentials_path", payload["credentials_path"]))
+    payload["credentials_path"] = _resolve_existing_credentials_path(
+        str(saved_settings.get("credentials_path", payload["credentials_path"]))
+    )
     return payload
 
 
