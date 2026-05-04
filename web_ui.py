@@ -484,10 +484,11 @@ SETTINGS_USER_KEYS = {
 
 
 def _read_saved_settings_root() -> dict[str, Any]:
-    if not os.path.exists(evidence.SETTINGS_PATH):
+    settings_path = _settings_storage_path()
+    if not os.path.exists(settings_path):
         return {}
     try:
-        with open(evidence.SETTINGS_PATH, "r", encoding="utf-8") as f:
+        with open(settings_path, "r", encoding="utf-8") as f:
             data = json.load(f) or {}
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -791,8 +792,22 @@ def _settings_user_slug(email: str) -> str:
     return slug.strip("._-") or "default"
 
 
+def _running_on_vercel() -> bool:
+    return bool(str(os.getenv("VERCEL", "")).strip())
+
+
+def _settings_storage_path() -> str:
+    if _running_on_vercel():
+        return os.path.join("/tmp", "tool-evidence", "app_settings.json")
+    return evidence.SETTINGS_PATH
+
+
 def _user_service_account_path(email: str) -> str:
-    cred_dir = os.path.join(evidence.APP_DIR, "service_accounts")
+    cred_dir = (
+        os.path.join("/tmp", "tool-evidence", "service_accounts")
+        if _running_on_vercel()
+        else os.path.join(evidence.APP_DIR, "service_accounts")
+    )
     os.makedirs(cred_dir, exist_ok=True)
     return os.path.join(cred_dir, f"{_settings_user_slug(email)}.json")
 
@@ -1687,7 +1702,9 @@ def _write_saved_settings(user_email: str, patch: dict[str, Any]) -> dict[str, A
     data: dict[str, Any] = {"users": users}
     if legacy_defaults:
         data["_legacy_defaults"] = legacy_defaults
-    with open(evidence.SETTINGS_PATH, "w", encoding="utf-8") as f:
+    settings_path = _settings_storage_path()
+    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+    with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return current
 
