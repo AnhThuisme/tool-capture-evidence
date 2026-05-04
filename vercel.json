@@ -1,4 +1,15 @@
 {
-  "buildCommand": "python scripts/build_netlify_static.py",
-  "outputDirectory": "netlify_src"
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
+    }
+  ]
 }
