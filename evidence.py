@@ -109,7 +109,11 @@ def _bootstrap_env_credentials_path() -> str:
     raw = os.environ.get("GOOGLE_CREDENTIALS_JSON_B64", "").strip()
     if not raw:
         return ""
-    target = os.path.join(BASE_DIR, "credentials.env.json")
+    # Vercel filesystem is read-only except /tmp.
+    if str(os.environ.get("VERCEL", "")).strip():
+        target = os.path.join("/tmp", "tool-evidence", "credentials.env.json")
+    else:
+        target = os.path.join(BASE_DIR, "credentials.env.json")
     try:
         if raw.startswith("{"):
             data = json.loads(raw)
