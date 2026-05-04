@@ -796,6 +796,17 @@ def _running_on_vercel() -> bool:
     return bool(str(os.getenv("VERCEL", "")).strip())
 
 
+def _assert_job_runtime_supported() -> None:
+    if _running_on_vercel():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Vercel không hỗ trợ chạy job Selenium/Chrome nền cho Tool Evidence. "
+                "Hãy chạy job trên máy local, VPS, hoặc Render/Railway có process nền."
+            ),
+        )
+
+
 def _settings_storage_path() -> str:
     if _running_on_vercel():
         return os.path.join("/tmp", "tool-evidence", "app_settings.json")
@@ -9326,6 +9337,7 @@ def save_activity(request: Request, payload: ActivityEventRequest):
 
 @app.post("/api/chrome/launch")
 def launch_chrome(request: Request, payload: LaunchChromeRequest):
+    _assert_job_runtime_supported()
     owner_email = _require_api_auth(request)
     run_mode = _normalize_run_mode(payload.run_mode)
     with JOBS_LOCK:
@@ -9345,6 +9357,7 @@ def launch_chrome(request: Request, payload: LaunchChromeRequest):
 
 @app.post("/api/chrome/launch-block/{block_index}")
 def launch_chrome_block(block_index: int, request: Request, run_mode: str = "seeding", browser_port: int | None = None):
+    _assert_job_runtime_supported()
     owner_email = _require_api_auth(request)
     run_mode = _normalize_run_mode(run_mode)
     with JOBS_LOCK:
@@ -9363,6 +9376,7 @@ def launch_chrome_block(block_index: int, request: Request, run_mode: str = "see
 
 @app.post("/api/jobs/start")
 def start_job(request: Request, payload: JobStartRequest):
+    _assert_job_runtime_supported()
     owner_email = _require_api_auth(request)
     evidence.write_log(f"[DEBUG] start_job received: start_line={payload.start_line}, mappings={payload.mappings}")
     run_mode = _normalize_run_mode(payload.run_mode)
