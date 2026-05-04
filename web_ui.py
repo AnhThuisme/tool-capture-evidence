@@ -398,9 +398,20 @@ class ActivityEventRequest(BaseModel):
 
 
 app = FastAPI(title="Tool Evidence", version="1.0.0")
+
+
+def _session_secret_key() -> str:
+    configured = str(os.getenv("WEB_SESSION_SECRET", "")).strip()
+    if configured:
+        return configured
+    # Keep a stable fallback so sessions are not invalidated on each cold start.
+    # For production, always set WEB_SESSION_SECRET explicitly.
+    return "tool-evidence-dev-session-secret-change-me"
+
+
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv("WEB_SESSION_SECRET", secrets.token_urlsafe(32)),
+    secret_key=_session_secret_key(),
     same_site="lax",
     https_only=False,
     max_age=int(os.getenv("WEB_SESSION_MAX_AGE_SEC", "43200") or 43200),
