@@ -1926,7 +1926,7 @@ def _capture_runtime_settings() -> dict[str, Any]:
 def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any]:
     merged = dict(_settings_defaults())
     merged.update(data or {})
-    cred_path = str(merged.get("credentials_path", "")).strip()
+    cred_path = _resolve_existing_credentials_path(str(merged.get("credentials_path", "")).strip())
     merged["credentials_path"] = cred_path
     merged["scan_negative_terms"] = str(merged.get("scan_negative_terms", "") or "")
     merged["scan_keyword_terms"] = str(merged.get("scan_keyword_terms", "") or "")
@@ -1953,10 +1953,26 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     return merged
 
 
+def _resolve_existing_credentials_path(preferred_path: str = "") -> str:
+    preferred = str(preferred_path or "").strip()
+    if preferred and os.path.exists(preferred):
+        return os.path.normpath(preferred)
+    fallback = str(getattr(evidence, "JSON_PATH", "") or "").strip()
+    if fallback and os.path.exists(fallback):
+        return os.path.normpath(fallback)
+    try:
+        dynamic = str(evidence.resolve_credentials_path() or "").strip()
+    except Exception:
+        dynamic = ""
+    if dynamic and os.path.exists(dynamic):
+        return os.path.normpath(dynamic)
+    return ""
+
+
 def _resolve_credentials_input(credentials_input: str, user_email: str | None = None) -> str:
     raw = str(credentials_input or "").strip()
     if not raw:
-        return ""
+        return _resolve_existing_credentials_path("")
 
     if raw.startswith("{"):
         try:
@@ -1970,6 +1986,9 @@ def _resolve_credentials_input(credentials_input: str, user_email: str | None = 
 
     path = os.path.normpath(raw)
     if not os.path.exists(path):
+        fallback = _resolve_existing_credentials_path("")
+        if fallback:
+            return fallback
         raise HTTPException(status_code=400, detail=f"Không tìm thấy credentials file: {path}")
     return path
 
@@ -1978,7 +1997,7 @@ def _open_spreadsheet(sheet_url: str, credentials_path: str):
     norm_url = evidence.normalize_sheet_input(sheet_url)
     if not norm_url:
         raise HTTPException(status_code=400, detail="Thiếu Sheet URL")
-    cred_path = str(credentials_path or "").strip()
+    cred_path = _resolve_existing_credentials_path(str(credentials_path or "").strip())
     if not cred_path or not os.path.exists(cred_path):
         raise HTTPException(status_code=400, detail="Chưa có credentials để đọc Google Sheets")
     try:
