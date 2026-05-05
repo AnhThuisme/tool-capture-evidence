@@ -5275,6 +5275,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         need_upload = False
         max_rows = 0
         scan_url_cols: set[int] = set()
+        url_formula_cols: set[int] = set()
         unformatted_cols: set[int] = set()
         for m in normalized_mappings:
             idx_url = col_letter_to_index(m["col_url"])
@@ -5298,9 +5299,31 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 unformatted_cols.add(idx_air_date)
             if mode_name == "scan" and idx_url:
                 scan_url_cols.add(idx_url)
+            if idx_url:
+                url_formula_cols.add(idx_url)
 
         unformatted_column_cache = _batch_fetch_columns(unformatted_cols, value_render_option="UNFORMATTED_VALUE")
         formula_column_cache = _batch_fetch_columns(scan_url_cols, value_render_option="FORMULA") if scan_url_cols else {}
+        formula_url_column_cache = _batch_fetch_columns(url_formula_cols, value_render_option="FORMULA") if url_formula_cols else {}
+
+        def _extract_http_url(raw_value: str) -> str:
+            raw = str(raw_value or "").strip()
+            if not raw:
+                return ""
+            # Fast path
+            if raw.startswith("http://") or raw.startswith("https://"):
+                return raw
+            # Formula form: =HYPERLINK("https://...", "label")
+            m = re.search(r'HYPERLINK\(\s*"([^"]+)"', raw, flags=re.IGNORECASE)
+            if m:
+                cand = str(m.group(1) or "").strip()
+                if cand.startswith("http://") or cand.startswith("https://"):
+                    return cand
+            # Generic fallback: first URL-like token
+            m2 = re.search(r'https?://[^\s")]+', raw, flags=re.IGNORECASE)
+            if m2:
+                return str(m2.group(0) or "").strip()
+            return ""
         for m in normalized_mappings:
             idx_url = col_letter_to_index(m["col_url"])
             idx_profile = col_letter_to_index(m["col_profile"]) if m["col_profile"] else None
@@ -5343,7 +5366,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     scan_result_values.extend([""] * (total_scan_rows - len(scan_result_values)))
                 row_numbers = list(range(block_start_line, block_start_line + total_scan_rows))
             else:
-                links = list(unformatted_column_cache.get(idx_url, []))[start_offset:] if idx_url else []
+                shown_links = list(unformatted_column_cache.get(idx_url, []))[start_offset:] if idx_url else []
+                formula_links = list(formula_url_column_cache.get(idx_url, []))[start_offset:] if idx_url else []
+                total_rows = max(len(shown_links), len(formula_links))
+                links = []
+                for i in range(total_rows):
+                    shown = shown_links[i] if i < len(shown_links) else ""
+                    formula = formula_links[i] if i < len(formula_links) else ""
+                    resolved = _extract_http_url(str(shown))
+                    if not resolved:
+                        resolved = _extract_http_url(str(formula))
+                    links.append(resolved or str(shown or ""))
                 row_numbers = list(range(block_start_line, block_start_line + len(links)))
                 scan_expected_texts = []
             if mode_name == "scan":
