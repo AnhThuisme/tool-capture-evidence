@@ -5434,13 +5434,50 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             return found
 
         target_total = 0
+        eligibility_debug: list[dict] = []
         for block in prepared_blocks:
             block_mode_key = str(block.get("mode", "seeding")).strip().lower()
             row_nums = block.get("row_numbers") or []
+            stats = {
+                "name": str(block.get("name", "") or ""),
+                "col_url": str(block.get("col_url", "") or "").strip().upper(),
+                "start_line": int(block.get("start_line", 4) or 4),
+                "total_rows": 0,
+                "below_start": 0,
+                "filtered_requested_rows": 0,
+                "filtered_error_only": 0,
+                "empty_link": 0,
+                "invalid_link": 0,
+                "eligible": 0,
+            }
             for i, lnk in enumerate(block["links"]):
                 r = row_nums[i] if i < len(row_nums) else (i + 4)
-                if _is_target_row(block["start_line"], r, str(lnk), mode_key=block_mode_key):
+                raw_link = str(lnk or "").strip()
+                stats["total_rows"] += 1
+                if r < int(block.get("start_line", 4) or 4):
+                    stats["below_start"] += 1
+                    continue
+                if requested_rows and r not in requested_rows:
+                    stats["filtered_requested_rows"] += 1
+                    continue
+                if only_error_mode and r not in tracked_error_rows:
+                    stats["filtered_error_only"] += 1
+                    continue
+                if not raw_link:
+                    stats["empty_link"] += 1
+                    continue
+                if block_mode_key == "scan":
+                    if not normalize_scan_source_url(raw_link):
+                        stats["invalid_link"] += 1
+                        continue
+                else:
+                    if not raw_link.startswith("http"):
+                        stats["invalid_link"] += 1
+                        continue
+                if _is_target_row(block["start_line"], r, raw_link, mode_key=block_mode_key):
                     target_total += 1
+                    stats["eligible"] += 1
+            eligibility_debug.append(stats)
         if target_total == 0:
             configured_url_cols = ", ".join(
                 sorted({str(block.get("col_url", "")).strip().upper() for block in prepared_blocks if str(block.get("col_url", "")).strip()})
@@ -5452,6 +5489,16 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             )
             if detected_url_cols:
                 empty_msg += f" Sheet này đang có URL ở: {', '.join(detected_url_cols[:8])}."
+            if eligibility_debug:
+                parts = []
+                for s in eligibility_debug[:4]:
+                    parts.append(
+                        f"{s['name'] or '-'}[{s['col_url'] or '-'}]: "
+                        f"rows={s['total_rows']}, ok={s['eligible']}, "
+                        f"belowStart={s['below_start']}, reqFilter={s['filtered_requested_rows']}, "
+                        f"retryFilter={s['filtered_error_only']}, empty={s['empty_link']}, badLink={s['invalid_link']}"
+                    )
+                empty_msg += " Chi tiết lọc: " + " | ".join(parts) + "."
             empty_msg += " Kiểm tra lại Link URL, Start Line hoặc chế độ retry."
             write_log("[WARN] target_total=0: no eligible links found to process.")
             ui_call(ui_set_detail, empty_msg)
