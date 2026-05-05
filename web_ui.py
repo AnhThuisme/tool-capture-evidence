@@ -2852,7 +2852,7 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .shell{width:100%;max-width:100vw;min-height:100vh;padding:10px;overflow-x:hidden}
 .board{width:100%;max-width:calc(100vw - 20px);min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:236px minmax(0,1fr);overflow:hidden}
 .sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
-.dot{position:relative;width:56px;height:56px;border-radius:18px;background:#ffffff url('/assets/brand-mascot') center/88% no-repeat;box-shadow:0 14px 30px rgba(59,130,246,.2);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
+.dot{position:relative;width:68px;height:68px;border-radius:20px;background:#ffffff url('/assets/brand-mascot') center/92% no-repeat;box-shadow:0 14px 30px rgba(59,130,246,.2);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
 .dot::before,.dot::after{display:none}
 .brand-row{position:relative;display:flex;align-items:center;gap:14px;min-height:94px;padding:16px 16px;border:1px solid rgba(123,168,255,.14);border-radius:20px;background:linear-gradient(135deg,rgba(76,110,196,.18),rgba(255,255,255,.02) 48%,rgba(37,99,235,.08));overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
 .brand-row::after{content:"";position:absolute;right:-28px;top:-24px;width:108px;height:108px;border-radius:50%;background:rgba(96,139,255,.12);filter:blur(6px)}
@@ -5030,13 +5030,7 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
   if (key === 'seeding') {
     next.col_profile = '';
     next.col_content = '';
-    if (!String(next.col_air_date || '').trim()) {
-      next.col_air_date = getTodayLocalDateString();
-    }
   } else if (key === 'booking') {
-    if (!String(next.col_air_date || '').trim()) {
-      next.col_air_date = getTodayLocalDateString();
-    }
   } else if (key === 'scan') {
     next.col_profile = '';
     next.col_screenshot = '';
@@ -6094,7 +6088,7 @@ function renderMappingEditor() {
         const listAttr = isLinkSuggestionField(currentRunMode, field.key) ? ' list="sheet_link_column_datalist"' : '';
         const focusAttr = isLinkSuggestionField(currentRunMode, field.key) ? ` onfocus="setSheetColumnTarget('${currentRunMode}', ${index}, '${field.key}')"` : '';
         if (field.key === 'col_air_date') {
-          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" onclick="openAirDatePicker('${currentRunMode}', ${index})">...</button><input id="air_date_picker_${currentRunMode}_${index}" type="date" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" onchange="applyAirDate('${currentRunMode}', ${index}, this.value)" /></div>`;
+          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" placeholder="${esc(getTodayLocalDateString())}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" onclick="openAirDatePicker('${currentRunMode}', ${index})">...</button><input id="air_date_picker_${currentRunMode}_${index}" type="date" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" onchange="applyAirDate('${currentRunMode}', ${index}, this.value)" /></div>`;
         }
         const inputType = field.type === 'number' ? 'number' : 'text';
         if (field.key === 'name') {
