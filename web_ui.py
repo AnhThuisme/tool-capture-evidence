@@ -9481,6 +9481,22 @@ def start_job(request: Request, payload: JobStartRequest):
         "target_block_name": "",
         "mappings": mapping_payload,
     }
+    try:
+        resolved_cols = ", ".join(
+            sorted(
+                {
+                    str((m or {}).get("col_url", "")).strip().upper()
+                    for m in mapping_payload
+                    if str((m or {}).get("col_url", "")).strip()
+                }
+            )
+        ) or "-"
+        evidence.write_log(
+            f"[INFO] URL resolve mode enabled (web_ui): mapping Link URL column(s)={resolved_cols}; "
+            "runtime will parse raw URL, HYPERLINK() formula, and embedded http(s) tokens."
+        )
+    except Exception:
+        pass
     return _enqueue_job(
         owner_email=owner_email,
         request_snapshot=request_snapshot,
