@@ -3946,7 +3946,6 @@ linear-gradient(to right, transparent, transparent)}
                     <th id="accessTableHeadRole">Role</th>
                     <th id="accessTableHeadType">Type</th>
                     <th id="accessTableHeadStatus">Status</th>
-                    <th id="accessTableHeadUpdated">Updated</th>
                     <th id="accessTableHeadActions">Actions</th>
                   </tr>
                 </thead>
@@ -8132,7 +8131,7 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
   const body = document.getElementById('accessDirectoryBody');
   if (!body) return;
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="6"><div class="access-empty">${esc(t('accessDirectoryNoMatch'))}</div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="5"><div class="access-empty">${esc(t('accessDirectoryNoMatch'))}</div></td></tr>`;
     return;
   }
   const typeLabel = type => type === 'internal' ? t('accessTypeInternal') : t('accessTypeExternal');
@@ -8161,7 +8160,6 @@ function renderAccessDirectory(policy = currentAccessPolicy) {
       <td><span class="access-role-pill ${esc(row.role)}">${esc(roleLabel(row.role))}</span></td>
       <td><span class="access-type-pill ${esc(row.type)}">${esc(typeLabel(row.type))}</span></td>
       <td><span class="access-status ${esc(row.status)}">${esc(statusLabel(row.status))}</span></td>
-      <td>${esc(row.updated)}</td>
       <td>${rowActions(row)}</td>
     </tr>`).join('');
 }
