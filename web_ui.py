@@ -7820,15 +7820,12 @@ function updateRunActionButtons(snapshot = currentJobSnapshot) {
     issueCells
       .filter(item => {
         const kind = String(item?.kind || '').toLowerCase();
-        return kind === 'failed' || kind === 'unavailable';
+        return kind === 'failed' || kind === 'error';
       })
       .map(item => Number(item?.row || 0))
       .filter(row => Number.isFinite(row) && row > 0)
   );
-  const retryErrorCount = Math.max(
-    Object.keys(snapshot?.error_rows || {}).length,
-    issueRetryRows.size
-  );
+  const retryErrorCount = issueRetryRows.size;
   const canRetryErrors = ownJob && ['stopped', 'failed', 'completed'].includes(status) && retryErrorCount > 0;
   pauseButton.classList.remove('resume', 'pause', 'red', 'soft', 'stop');
   if (canContinue) {
@@ -8890,7 +8887,16 @@ async function startErrorRowsJob() {
     if (!isJobOwnedByCurrentUser(st)) {
       throw new Error('Chỉ chạy lại lỗi được với job của chính bạn');
     }
-    const errorRowCount = Object.keys(st?.error_rows || {}).length;
+    const issueCells = Array.isArray(st?.issue_cells) ? st.issue_cells : [];
+    const errorRowCount = new Set(
+      issueCells
+        .filter(item => {
+          const kind = String(item?.kind || '').toLowerCase();
+          return kind === 'failed' || kind === 'error';
+        })
+        .map(item => Number(item?.row || 0))
+        .filter(row => Number.isFinite(row) && row > 0)
+    ).size;
     if (!errorRowCount) {
       throw new Error('Job này chưa có dòng lỗi để chạy lại');
     }
@@ -9717,21 +9723,13 @@ def retry_job_errors(job_id: str, request: Request):
             raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}")
         source_request = json.loads(json.dumps(source_job.get("request") or {}))
         root_job_id = str(source_request.get("root_job_id") or source_job.get("id") or job_id).strip()
-        raw_error_rows = dict(source_job.get("error_rows") or {})
         issue_cells = list(source_job.get("issue_cells") or [])
 
     target_rows: list[int] = []
-    for row_key in raw_error_rows.keys():
-        try:
-            row_num = int(str(row_key).strip().lstrip("#"))
-        except Exception:
-            continue
-        if row_num > 0:
-            target_rows.append(row_num)
     for item in issue_cells:
         try:
             kind = str((item or {}).get("kind") or "").strip().lower()
-            if kind not in {"failed", "unavailable"}:
+            if kind not in {"failed", "error"}:
                 continue
             row_num = int((item or {}).get("row") or 0)
         except Exception:
