@@ -5994,49 +5994,60 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
     const blockName = getBlockActivityName(blockIndex);
     currentRunMode = previousMode;
     if (!isLocalWebHost()) {
+      const isMac = /mac/i.test(String(navigator.platform || ''));
       if (!localAgentState.checked) {
         await detectLocalAgent();
       }
       if (localAgentState.enabled) {
         const out = await req(`/api/chrome/launch-block/${blockIndex}?run_mode=${encodeURIComponent(runMode)}&browser_port=${port}`, { method: 'POST' });
+        try {
+          await logActivityEvent({
+            kind: 'login',
+            level: 'info',
+            run_mode: runMode,
+            block_name: blockName,
+            browser_port: Number(out?.browser_port || port),
+            message: `${blockName}: đã mở Chrome ${Number(out?.browser_port || port)} qua local agent`,
+          });
+        } catch (_) {}
+        setStatus(out.message || `Đã mở Chrome ${Number(out?.browser_port || port)} trên máy local`, 'running');
+        return;
+      }
+      if (isMac) {
+        setStatus(
+          `Mac chưa có local agent/handler nên chưa mở được Chrome ${port}. Hãy chạy local agent trên Mac (127.0.0.1:8765).`,
+          'failed'
+        );
+        return;
+      }
+      try {
         await logActivityEvent({
           kind: 'login',
           level: 'info',
           run_mode: runMode,
           block_name: blockName,
-          browser_port: Number(out?.browser_port || port),
-          message: `${blockName}: đã mở Chrome ${Number(out?.browser_port || port)} qua local agent`,
+          browser_port: port,
+          message: `${blockName}: đã gửi lệnh mở Chrome ${port} trên máy cục bộ`,
         });
-        setStatus(out.message || `Đã mở Chrome ${Number(out?.browser_port || port)} trên máy local`, 'running');
-        return;
-      }
-      await logActivityEvent({
-        kind: 'login',
-        level: 'info',
-        run_mode: runMode,
-        block_name: blockName,
-        browser_port: port,
-        message: `${blockName}: đã gửi lệnh mở Chrome ${port} trên máy cục bộ`,
-      });
+      } catch (_) {}
       const local = launchChromeViaLocalProtocol(runMode, blockIndex, port);
-      const isMac = /mac/i.test(String(navigator.platform || ''));
       setStatus(
-        isMac
-          ? `Đã gửi lệnh mở Chrome ${local.port}. Nếu chưa bật cửa sổ, hãy chạy local agent trên Mac để mở ổn định.`
-          : `Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`,
+        `Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`,
         'running'
       );
       return;
     }
     const out = await req(`/api/chrome/launch-block/${blockIndex}?run_mode=${encodeURIComponent(runMode)}&browser_port=${port}`, { method: 'POST' });
-    await logActivityEvent({
-      kind: 'login',
-      level: 'info',
-      run_mode: runMode,
-      block_name: blockName,
-      browser_port: Number(out?.browser_port || port),
-      message: `${blockName}: đã mở Chrome ${Number(out?.browser_port || port)} để đăng nhập`,
-    });
+    try {
+      await logActivityEvent({
+        kind: 'login',
+        level: 'info',
+        run_mode: runMode,
+        block_name: blockName,
+        browser_port: Number(out?.browser_port || port),
+        message: `${blockName}: đã mở Chrome ${Number(out?.browser_port || port)} để đăng nhập`,
+      });
+    } catch (_) {}
     setStatus(out.message || 'Chrome launch requested', 'running');
   } catch (e) {
     alert(e.message);
