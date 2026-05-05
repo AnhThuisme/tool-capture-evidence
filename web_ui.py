@@ -5991,6 +5991,17 @@ function launchChromeViaLocalProtocol(mode, index, port) {
   return { href, port: resolvedPort };
 }
 
+function openChromePortWindow(port) {
+  const resolvedPort = Number(port || 0);
+  if (!resolvedPort) return;
+  const host = String(window.location.hostname || '').trim() || '127.0.0.1';
+  const debugUrl = `http://${host}:${resolvedPort}`;
+  const win = window.open(debugUrl, '_blank', 'noopener,noreferrer');
+  if (!win) {
+    setStatus(`Đã gửi lệnh mở Chrome ${resolvedPort}. Hãy mở thủ công: ${debugUrl}`, 'running');
+  }
+}
+
 async function launchChromeBlock(index, mode = currentRunMode, explicitPort = null) {
   try {
     const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
@@ -6011,6 +6022,7 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
       });
       const local = launchChromeViaLocalProtocol(runMode, blockIndex, port);
       setStatus(`Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`, 'running');
+      openChromePortWindow(local.port);
       return;
     }
     const out = await req(`/api/chrome/launch-block/${blockIndex}?run_mode=${encodeURIComponent(runMode)}&browser_port=${port}`, { method: 'POST' });
@@ -6023,6 +6035,7 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
       message: `${blockName}: đã mở Chrome ${Number(out?.browser_port || port)} để đăng nhập`,
     });
     setStatus(out.message || 'Chrome launch requested', 'running');
+    openChromePortWindow(Number(out?.browser_port || port));
   } catch (e) {
     alert(e.message);
   }
