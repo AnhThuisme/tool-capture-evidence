@@ -2721,7 +2721,7 @@ def _run_job(job_id: str):
                     else:
                         job["status"] = "stopped"
                         detail_text = str(job.get("detail") or "").strip()
-                        if total <= 0 and not done:
+                        if total <= 0 and not done and not detail_text:
                             job["detail"] = "Không có dòng hợp lệ để xử lý. Kiểm tra Link URL, Start Line hoặc chế độ retry."
                         elif not detail_text:
                             job["detail"] = (
