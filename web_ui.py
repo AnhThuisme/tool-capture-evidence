@@ -7670,9 +7670,25 @@ function renderRunMonitor(snapshot, logs) {
   const logItems = Array.isArray(logs) ? logs : [];
   const displayLogs = getLineageDisplayLogs(st, logItems);
   const successCount = Number(s.success || 0);
-  const failedCount = Number(s.failed || 0);
-  const unavailableCount = Number(s.unavailable || 0);
+  let failedCount = Number(s.failed || 0);
+  let unavailableCount = Number(s.unavailable || 0);
   const issueEntries = buildIssueCellEntries(errorRows, logItems, issueCells, st.request || null);
+  if (issueEntries.length) {
+    const failedRowsFromIssues = new Set(
+      issueEntries
+        .filter(item => !isUnavailableLog({ message: item.message, result: item.kind, state: item.kind, tag: item.kind }))
+        .map(item => Number(item?.row || 0))
+        .filter(row => Number.isFinite(row) && row > 0)
+    );
+    const unavailableRowsFromIssues = new Set(
+      issueEntries
+        .filter(item => isUnavailableLog({ message: item.message, result: item.kind, state: item.kind, tag: item.kind }))
+        .map(item => Number(item?.row || 0))
+        .filter(row => Number.isFinite(row) && row > 0)
+    );
+    failedCount = Math.max(failedCount, failedRowsFromIssues.size);
+    unavailableCount = Math.max(unavailableCount, unavailableRowsFromIssues.size);
+  }
   const hasIssueState = (failedCount + unavailableCount) > 0 || issueEntries.length > 0 || String(st.status || '').toLowerCase() === 'failed' || !!String(st.error || '').trim();
   const statusLabel = prettyWord(displayStatus || 'idle');
   const latestLog = logItems.length ? logItems[logItems.length - 1] : null;
