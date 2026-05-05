@@ -5304,7 +5304,7 @@ function shiftSheetColumn(column, delta = 0) {
 }
 
 function getScanContentColumnFromImageColumn(column) {
-  return shiftSheetColumn(column, -2);
+  return shiftSheetColumn(column, -1);
 }
 
 function buildBulkSuggestedBlock(mode, column, index, template = null) {
