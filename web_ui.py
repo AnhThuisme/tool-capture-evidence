@@ -5010,6 +5010,14 @@ function formatRunConfigTitle(mode = currentRunMode) {
   return t('runConfig');
 }
 
+function getTodayLocalDateString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function sanitizeMappingBlockForMode(mode, block, index = 1) {
   const key = String(mode || 'seeding').toLowerCase();
   const next = {
@@ -5022,6 +5030,13 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
   if (key === 'seeding') {
     next.col_profile = '';
     next.col_content = '';
+    if (!String(next.col_air_date || '').trim()) {
+      next.col_air_date = getTodayLocalDateString();
+    }
+  } else if (key === 'booking') {
+    if (!String(next.col_air_date || '').trim()) {
+      next.col_air_date = getTodayLocalDateString();
+    }
   } else if (key === 'scan') {
     next.col_profile = '';
     next.col_screenshot = '';
@@ -5945,8 +5960,11 @@ function getChromePortForBlock(index, mode = currentRunMode) {
 }
 
 function openAirDatePicker(mode, index) {
+  const blocks = ensureMappingBlocks(mode);
+  const currentValue = String(blocks?.[index]?.col_air_date || '').trim();
   const picker = document.getElementById(`air_date_picker_${mode}_${index}`);
   if (!picker) return;
+  picker.value = currentValue || getTodayLocalDateString();
   if (typeof picker.showPicker === 'function') picker.showPicker();
   else picker.click();
 }
