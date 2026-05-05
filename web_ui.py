@@ -9669,11 +9669,17 @@ def stop_job(job_id: str, request: Request):
         job = JOBS.get(job_id)
         if not job or _job_owner_email(job) != owner_email:
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
-        adapter: WebAppAdapter = job["adapter"]
-        if adapter:
+        current_status = str(job.get("status") or "").strip().lower()
+        if current_status not in {"running", "paused", "queued"}:
+            raise HTTPException(status_code=400, detail="Job không ở trạng thái có thể dừng")
+        adapter: WebAppAdapter | None = job.get("adapter")
+        if adapter is not None:
             adapter.is_running = False
         job["status"] = "stopped"
         job["finished_at"] = _utc_now_iso()
+        job["detail"] = "Đã dừng thủ công"
+        job["ui_status"] = "ĐÃ DỪNG"
+        job["ui_color"] = "#f59e0b"
     _persist_jobs(force=True)
     return {"ok": True, "job_id": job_id, "status": "stopped"}
 
