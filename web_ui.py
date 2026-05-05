@@ -5668,6 +5668,30 @@ async function fetchSheetLinkSuggestions(force = false) {
   if (host) host.classList.add('open');
   if (rowsNode) rowsNode.innerHTML = `<div class="sheet-link-suggest-empty">${esc(t('sheetLinkSuggestLoading'))}</div>`;
   if (metaNode) metaNode.textContent = '';
+
+  function deriveFallbackLinkColumns() {
+    const out = [];
+    const seen = new Set();
+    const add = (value) => {
+      const col = String(value || '').trim().toUpperCase();
+      if (!col || seen.has(col)) return;
+      seen.add(col);
+      out.push(col);
+    };
+    // Keep currently configured mapping column(s) first.
+    const modeBlocks = ensureMappingBlocks(modeKey);
+    modeBlocks.forEach(block => add(block?.col_url));
+    // If Booking detects empty, reuse Seeding detections for the same sheet.
+    if (modeKey === 'booking') {
+      const seedingKey = String(sheetLinkSuggestSourceKeyByMode?.seeding || '');
+      const sameSheet = seedingKey.startsWith(`${rawUrl}|${rawName}|`);
+      const seedingPayload = sameSheet ? (sheetLinkSuggestPayloadByMode?.seeding || {}) : {};
+      const seedingColumns = Array.isArray(seedingPayload.columns) ? seedingPayload.columns : [];
+      seedingColumns.forEach(add);
+    }
+    return out;
+  }
+
   try {
     sheetColumnSuggestInflight[cacheKey] = (async () => {
       const qs = new URLSearchParams({
@@ -5690,12 +5714,23 @@ async function fetchSheetLinkSuggestions(force = false) {
       };
     })();
     const payload = await sheetColumnSuggestInflight[cacheKey];
-    sheetColumnSuggestCache[cacheKey] = { ...payload, ts: Date.now() };
+    const finalPayload = { ...payload };
+    if ((!Array.isArray(finalPayload.columns) || !finalPayload.columns.length) && modeKey === 'booking') {
+      const fallbackColumns = deriveFallbackLinkColumns();
+      if (fallbackColumns.length) {
+        finalPayload.columns = fallbackColumns;
+        finalPayload.counts = finalPayload.counts && typeof finalPayload.counts === 'object' ? finalPayload.counts : {};
+        fallbackColumns.forEach(col => {
+          if (!Object.prototype.hasOwnProperty.call(finalPayload.counts, col)) finalPayload.counts[col] = 0;
+        });
+      }
+    }
+    sheetColumnSuggestCache[cacheKey] = { ...finalPayload, ts: Date.now() };
     sheetColumnSuggestKey = cacheKey;
     sheetLinkSuggestLoadedByMode[modeKey] = true;
-    sheetLinkSuggestPayloadByMode[modeKey] = payload;
+    sheetLinkSuggestPayloadByMode[modeKey] = finalPayload;
     sheetLinkSuggestSourceKeyByMode[modeKey] = cacheKey;
-    renderSheetLinkSuggestions(payload);
+    renderSheetLinkSuggestions(finalPayload);
   } catch (e) {
     const stale = getCachedSheetLinkColumns(rawUrl, rawName, startRow, true);
     if (stale) {
