@@ -1628,12 +1628,33 @@ def _is_authenticated(request: Request) -> bool:
     return bool((request.session or {}).get("auth_email"))
 
 
+def _is_loopback_host(host: str) -> bool:
+    raw = str(host or "").strip().lower()
+    if not raw:
+        return False
+    host_only = raw.split(":", 1)[0].strip("[]")
+    return host_only in {"127.0.0.1", "localhost", "::1"}
+
+
 def _auth_email_from_request(request: Request) -> str:
     try:
         session_data = request.session or {}
     except AssertionError:
         session_data = request.scope.get("session") or {}
-    return _normalize_email(session_data.get("auth_email", ""))
+    session_email = _normalize_email(session_data.get("auth_email", ""))
+    if session_email:
+        return session_email
+    # Local-agent fallback: allow explicit user header only on loopback requests.
+    try:
+        headers = request.headers or {}
+        host = str(headers.get("host") or "").strip().lower()
+        forwarded_for = str(headers.get("x-forwarded-for") or "").strip()
+        candidate = _normalize_email(headers.get("x-tool-evidence-user", ""))
+        if candidate and _is_loopback_host(host) and not forwarded_for:
+            return candidate
+    except Exception:
+        pass
+    return ""
 
 
 def _get_user_role(email: str) -> str:
