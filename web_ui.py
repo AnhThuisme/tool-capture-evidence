@@ -6010,11 +6010,13 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
     const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
     const blockIndex = Number(index) || 0;
     const port = Number(explicitPort) || getChromePortForBlock(blockIndex, runMode);
+    const localDebugUrl = `http://127.0.0.1:${port}`;
     const popup = window.open('', '_blank', 'noopener,width=1280,height=820');
     if (popup) {
       try {
         popup.document.title = `Chrome ${port}`;
         popup.document.body.innerHTML = `<div style="font-family:system-ui;padding:20px">Đang mở Chrome ${port}...</div>`;
+        popup.location.href = localDebugUrl;
       } catch (_) {}
     }
     const previousMode = currentRunMode;
