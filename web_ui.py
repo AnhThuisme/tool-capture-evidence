@@ -9459,12 +9459,8 @@ def save_activity(request: Request, payload: ActivityEventRequest):
 @app.post("/api/chrome/launch")
 def launch_chrome(request: Request, payload: LaunchChromeRequest):
     _assert_job_runtime_supported()
-    owner_email = _require_api_auth(request)
+    _require_api_auth(request)
     run_mode = _normalize_run_mode(payload.run_mode)
-    with JOBS_LOCK:
-        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
-    if running_id:
-        raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}. Không thể mở lại Chrome lúc này.")
     browser_port = int(payload.browser_port or _get_mode_base_port(run_mode))
     profile_path = (payload.profile_path or "").strip() or _get_mode_profile(run_mode, 0)
     ok, info = evidence.launch_chrome_for_login(
@@ -9479,12 +9475,8 @@ def launch_chrome(request: Request, payload: LaunchChromeRequest):
 @app.post("/api/chrome/launch-block/{block_index}")
 def launch_chrome_block(block_index: int, request: Request, run_mode: str = "seeding", browser_port: int | None = None):
     _assert_job_runtime_supported()
-    owner_email = _require_api_auth(request)
+    _require_api_auth(request)
     run_mode = _normalize_run_mode(run_mode)
-    with JOBS_LOCK:
-        running_id = _any_running_job_for_mode(run_mode, owner_email=owner_email)
-    if running_id:
-        raise HTTPException(status_code=409, detail=f"Mode {run_mode} đang có job chạy: {running_id}. Không thể mở lại Chrome block lúc này.")
     idx = int(block_index)
     base_port = _get_mode_base_port(run_mode)
     port = int(browser_port or evidence.get_post_port(idx, base_port))
