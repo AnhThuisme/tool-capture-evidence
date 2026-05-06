@@ -96,9 +96,18 @@ def get_post_port(post_index: int, base_port: int = 9223) -> int:
     return base_port + 100 + post_index
 
 
-def get_block_profile(block_index: int, mode: str = "seeding") -> str:
+def get_block_profile(block_index: int, mode: str = "seeding", browser_port: int | None = None) -> str:
     mode_name = str(mode or "seeding").strip().lower() or "seeding"
     idx = max(0, int(block_index or 0))
+    if browser_port:
+        try:
+            port = int(browser_port)
+            if port > 0:
+                if mode_name == "seeding" and port == 9223:
+                    return LOCAL_PROFILE_PATH
+                return os.path.join(TEMP_DIR, f"chrome_profile_{mode_name}_port_{port}")
+        except Exception:
+            pass
     if mode_name == "seeding":
         return LOCAL_PROFILE_PATH if idx <= 0 else os.path.join(TEMP_DIR, f"chrome_profile_worker_{idx}")
     suffix = f"{mode_name}_{idx}" if idx > 0 else f"{mode_name}_main"
@@ -5712,9 +5721,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 return None
             if block_index == 0 and app.driver:
                 return app.driver
-            worker_profile = get_block_profile(block_index, block_mode)
-            os.makedirs(worker_profile, exist_ok=True)
             worker_port = get_post_port(block_index, browser_port)
+            worker_profile = get_block_profile(block_index, block_mode, browser_port=worker_port)
+            os.makedirs(worker_profile, exist_ok=True)
             # If the user already opened this block's Chrome and logged in manually,
             # attach to that exact debugger session instead of starting a fresh browser.
             try:

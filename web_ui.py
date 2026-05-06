@@ -2280,9 +2280,18 @@ def _get_mode_base_port(run_mode: str | None) -> int:
     return int(MODE_BROWSER_PORTS.get(_normalize_run_mode(run_mode), MODE_BROWSER_PORTS["seeding"]))
 
 
-def _get_mode_profile(run_mode: str | None, block_index: int = 0) -> str:
+def _get_mode_profile(run_mode: str | None, block_index: int = 0, browser_port: int | None = None) -> str:
     mode = _normalize_run_mode(run_mode)
     idx = int(block_index or 0)
+    if browser_port:
+        try:
+            port = int(browser_port)
+            if port > 0:
+                if mode == "seeding" and port == 9223:
+                    return evidence.LOCAL_PROFILE_PATH
+                return os.path.join(evidence.TEMP_DIR, f"chrome_profile_{mode}_port_{port}")
+        except Exception:
+            pass
     if mode == "seeding":
         return evidence.LOCAL_PROFILE_PATH if idx <= 0 else os.path.join(evidence.TEMP_DIR, f"chrome_profile_worker_{idx}")
     suffix = f"{mode}_{idx}" if idx > 0 else f"{mode}_main"
@@ -6011,13 +6020,12 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
     const blockIndex = Number(index) || 0;
     const port = Number(explicitPort) || getChromePortForBlock(blockIndex, runMode);
     const localDebugUrl = `http://127.0.0.1:${port}`;
-    const popup = window.open('', '_blank', 'noopener,width=1280,height=820');
-    if (popup) {
-      try {
-        popup.document.title = `Chrome ${port}`;
-        popup.document.body.innerHTML = `<div style="font-family:system-ui;padding:20px">Đang mở Chrome ${port}...</div>`;
-        popup.location.href = localDebugUrl;
-      } catch (_) {}
+    const popup = window.open(localDebugUrl, '_blank', 'noopener,noreferrer,width=1280,height=820');
+    if (!popup) {
+      setStatus(
+        `Trình duyệt đang chặn popup. Hãy cho phép popup cho site hiện tại rồi bấm lại (Chrome ${port}).`,
+        'failed'
+      );
     }
     const previousMode = currentRunMode;
     currentRunMode = runMode;
@@ -6041,9 +6049,6 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
           });
         } catch (_) {}
         setStatus(out.message || `Đã mở Chrome ${Number(out?.browser_port || port)} trên máy local`, 'running');
-        if (popup) {
-          try { popup.location.href = `http://127.0.0.1:${Number(out?.browser_port || port)}`; } catch (_) {}
-        }
         return;
       }
       if (isMac) {
@@ -6068,9 +6073,6 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
         `Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`,
         'running'
       );
-      if (popup) {
-        try { popup.location.href = `http://127.0.0.1:${local.port}`; } catch (_) {}
-      }
       return;
     }
     const out = await req(`/api/chrome/launch-block/${blockIndex}?run_mode=${encodeURIComponent(runMode)}&browser_port=${port}`, { method: 'POST' });
@@ -6085,13 +6087,10 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
       });
     } catch (_) {}
     setStatus(out.message || 'Chrome launch requested', 'running');
-    if (popup) {
-      try { popup.location.href = `http://127.0.0.1:${Number(out?.browser_port || port)}`; } catch (_) {}
-    }
   } catch (e) {
     try {
       const maybePort = Number(explicitPort) || getChromePortForBlock(Number(index) || 0, String(mode || currentRunMode || 'seeding').toLowerCase());
-      const popup = window.open('', '_blank', 'noopener,width=1280,height=820');
+      const popup = window.open('about:blank', '_blank', 'noopener,noreferrer,width=1280,height=820');
       if (popup) popup.document.body.innerHTML = `<div style="font-family:system-ui;padding:20px;color:#b91c1c">Không mở được Chrome ${maybePort}: ${String(e?.message || e || 'Unknown error')}</div>`;
     } catch (_) {}
     alert(e.message);
@@ -9485,7 +9484,7 @@ def launch_chrome(request: Request, payload: LaunchChromeRequest):
     _require_api_auth(request)
     run_mode = _normalize_run_mode(payload.run_mode)
     browser_port = int(payload.browser_port or _get_mode_base_port(run_mode))
-    profile_path = (payload.profile_path or "").strip() or _get_mode_profile(run_mode, 0)
+    profile_path = (payload.profile_path or "").strip() or _get_mode_profile(run_mode, 0, browser_port=browser_port)
     ok, info = evidence.launch_chrome_for_login(
         browser_port=browser_port,
         profile_path=profile_path,
@@ -9503,7 +9502,7 @@ def launch_chrome_block(block_index: int, request: Request, run_mode: str = "see
     idx = int(block_index)
     base_port = _get_mode_base_port(run_mode)
     port = int(browser_port or evidence.get_post_port(idx, base_port))
-    profile = _get_mode_profile(run_mode, idx)
+    profile = _get_mode_profile(run_mode, idx, browser_port=port)
     ok, info = evidence.launch_chrome_for_login(browser_port=port, profile_path=profile)
     if not ok:
         raise HTTPException(status_code=500, detail=info)
@@ -9578,7 +9577,7 @@ def start_job(request: Request, payload: JobStartRequest):
         }
     )
     browser_port = _get_mode_base_port(run_mode)
-    profile_path = _get_mode_profile(run_mode, 0)
+    profile_path = _get_mode_profile(run_mode, 0, browser_port=browser_port)
 
     if payload.auto_launch_chrome and run_mode != "scan":
         for idx, mapping in enumerate(mapping_payload):
@@ -9586,7 +9585,7 @@ def start_job(request: Request, payload: JobStartRequest):
             if block_mode == "scan":
                 continue
             block_port = evidence.get_post_port(idx, _get_mode_base_port(block_mode))
-            block_profile = _get_mode_profile(block_mode, idx)
+            block_profile = _get_mode_profile(block_mode, idx, browser_port=block_port)
             ok, info = evidence.launch_chrome_for_login(
                 browser_port=block_port,
                 profile_path=block_profile,
