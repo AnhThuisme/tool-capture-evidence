@@ -6010,6 +6010,15 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
     const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
     const blockIndex = Number(index) || 0;
     const port = Number(explicitPort) || getChromePortForBlock(blockIndex, runMode);
+    const localDebugUrl = `http://127.0.0.1:${port}`;
+    const popup = window.open('', '_blank', 'noopener,width=1280,height=820');
+    if (popup) {
+      try {
+        popup.document.title = `Chrome ${port}`;
+        popup.document.body.innerHTML = `<div style="font-family:system-ui;padding:20px">Đang mở Chrome ${port}...</div>`;
+        popup.location.href = localDebugUrl;
+      } catch (_) {}
+    }
     const previousMode = currentRunMode;
     currentRunMode = runMode;
     const blockName = getBlockActivityName(blockIndex);
@@ -6032,6 +6041,9 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
           });
         } catch (_) {}
         setStatus(out.message || `Đã mở Chrome ${Number(out?.browser_port || port)} trên máy local`, 'running');
+        if (popup) {
+          try { popup.location.href = `http://127.0.0.1:${Number(out?.browser_port || port)}`; } catch (_) {}
+        }
         return;
       }
       if (isMac) {
@@ -6056,6 +6068,9 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
         `Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`,
         'running'
       );
+      if (popup) {
+        try { popup.location.href = `http://127.0.0.1:${local.port}`; } catch (_) {}
+      }
       return;
     }
     const out = await req(`/api/chrome/launch-block/${blockIndex}?run_mode=${encodeURIComponent(runMode)}&browser_port=${port}`, { method: 'POST' });
@@ -6070,7 +6085,15 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
       });
     } catch (_) {}
     setStatus(out.message || 'Chrome launch requested', 'running');
+    if (popup) {
+      try { popup.location.href = `http://127.0.0.1:${Number(out?.browser_port || port)}`; } catch (_) {}
+    }
   } catch (e) {
+    try {
+      const maybePort = Number(explicitPort) || getChromePortForBlock(Number(index) || 0, String(mode || currentRunMode || 'seeding').toLowerCase());
+      const popup = window.open('', '_blank', 'noopener,width=1280,height=820');
+      if (popup) popup.document.body.innerHTML = `<div style="font-family:system-ui;padding:20px;color:#b91c1c">Không mở được Chrome ${maybePort}: ${String(e?.message || e || 'Unknown error')}</div>`;
+    } catch (_) {}
     alert(e.message);
   }
 }
