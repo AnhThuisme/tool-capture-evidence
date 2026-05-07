@@ -455,6 +455,7 @@ MODE_BROWSER_PORTS = {
     "booking": 9423,
     "scan": 9623,
 }
+DEFAULT_SHARED_BROWSER_PORT = 9223
 
 _SCREENSHOT_HOOK_LOCK = threading.Lock()
 _SCREENSHOT_HOOK_REFCOUNT = 0
@@ -2314,7 +2315,8 @@ def _any_running_job_for_mode(run_mode: str | None = None, owner_email: str | No
 
 
 def _get_mode_base_port(run_mode: str | None) -> int:
-    return int(MODE_BROWSER_PORTS.get(_normalize_run_mode(run_mode), MODE_BROWSER_PORTS["seeding"]))
+    # Use one shared Chrome debug session across all modes/blocks.
+    return int(DEFAULT_SHARED_BROWSER_PORT)
 
 
 def _get_mode_profile(run_mode: str | None, block_index: int = 0, browser_port: int | None = None) -> str:
@@ -2676,7 +2678,7 @@ def _enqueue_job(
         job_store={},
         persist_callback=_persist_jobs,
         reuse_single_browser_session=True,
-        attach_only_existing_browser=True,
+        attach_only_existing_browser=False,
     )
 
     job = {
@@ -4171,7 +4173,8 @@ let jobStatusMemory = {};
 let notifiedCompletedJobKeys = new Set();
 let pollInFlight = false;
 let jobsRefreshInFlight = false;
-const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9423, scan: 9623 };
+const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9223, scan: 9223 };
+const DEFAULT_SHARED_BROWSER_PORT = 9223;
 const DEFAULT_AUTO_LAUNCH_CHROME = true;
 const MAX_MONITOR_LOG_CACHE = 1200;
 const JOBS_REFRESH_ACTIVITY_LIMIT = 120;
@@ -6031,12 +6034,11 @@ function toggleCaptureFivePerLink(checked) {
 }
 
 function getModeBasePort(mode = currentRunMode) {
-  return Number(BROWSER_PORT_BY_MODE[String(mode || 'seeding').toLowerCase()] || BROWSER_PORT_BY_MODE.seeding);
+  return Number(DEFAULT_SHARED_BROWSER_PORT);
 }
 
 function getChromePortForBlock(index, mode = currentRunMode) {
-  const basePort = getModeBasePort(mode);
-  return Number(index) <= 0 ? basePort : basePort + 100 + Number(index);
+  return Number(DEFAULT_SHARED_BROWSER_PORT);
 }
 
 function openAirDatePicker(mode, index) {
