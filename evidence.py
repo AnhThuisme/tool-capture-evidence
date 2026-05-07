@@ -5401,10 +5401,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 results = scan_result_values
             else:
                 results = list(unformatted_column_cache.get(idx_drive, []))[start_offset:] if idx_drive else []
-                captions_existing = list(unformatted_column_cache.get(idx_content, []))[start_offset:] if idx_content else []
-                screenshots_existing = list(unformatted_column_cache.get(idx_screenshot, []))[start_offset:] if idx_screenshot else []
+            captions_existing = list(unformatted_column_cache.get(idx_content, []))[start_offset:] if idx_content else []
+            screenshots_existing = list(unformatted_column_cache.get(idx_screenshot, []))[start_offset:] if idx_screenshot else []
             air_dates = list(unformatted_column_cache.get(idx_air_date, []))[start_offset:] if idx_air_date else []
-                    prepared_blocks.append(
+            prepared_blocks.append(
                 {
                     "block_index": int(m.get("block_index", 0)),
                     "name": m["name"],
