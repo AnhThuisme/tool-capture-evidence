@@ -4119,9 +4119,11 @@ let captureFivePerLink = false;
 let sheetNameSuggestTimer = null;
 let sheetNameSuggestKey = '';
 const SHEET_NAME_CACHE_TTL_MS = 3 * 60 * 1000;
+const SHEET_NAME_SUGGEST_DEBOUNCE_MS = 300;
 let sheetNameSuggestCache = {};
 let sheetNameSuggestInflight = {};
 const SHEET_COLUMN_CACHE_TTL_MS = 3 * 60 * 1000;
+const SHEET_LINK_SUMMARY_DEBOUNCE_MS = 250;
 let sheetColumnSuggestTimer = null;
 let sheetLinkSummaryTimer = null;
 let sheetColumnSuggestKey = '';
@@ -5920,7 +5922,7 @@ function scheduleSheetLinkCountSummary(force = false) {
   if (sheetLinkSummaryTimer) clearTimeout(sheetLinkSummaryTimer);
   sheetLinkSummaryTimer = setTimeout(() => {
     refreshSheetLinkCountSummary(force);
-  }, force ? 0 : 500);
+  }, force ? 0 : SHEET_LINK_SUMMARY_DEBOUNCE_MS);
 }
 
 function applySuggestedSheetColumn(column) {
@@ -8648,7 +8650,7 @@ function scheduleSheetNameSuggestions(force = false) {
   if (sheetNameSuggestTimer) clearTimeout(sheetNameSuggestTimer);
   sheetNameSuggestTimer = setTimeout(() => {
     fetchSheetNameSuggestions(force);
-  }, force ? 0 : 800);
+  }, force ? 0 : SHEET_NAME_SUGGEST_DEBOUNCE_MS);
 }
 
 function bindSheetNameAutocomplete() {
@@ -8675,11 +8677,11 @@ function bindSheetNameAutocomplete() {
       });
     });
     nameInput.addEventListener('blur', () => {
-      scheduleSheetLinkCountSummary(true);
+      scheduleSheetLinkCountSummary(false);
     });
     nameInput.addEventListener('focus', () => {
       const rawUrl = String(urlInput.value || '').trim();
-      if (rawUrl && !getCachedSheetNameTitles(rawUrl, false)) scheduleSheetNameSuggestions(true);
+      if (rawUrl && !getCachedSheetNameTitles(rawUrl, false)) scheduleSheetNameSuggestions(false);
     });
   }
 }
@@ -9626,9 +9628,9 @@ def start_job(request: Request, payload: JobStartRequest):
     raw_sheet_name = str(payload.sheet_name or "").strip()
     if not raw_sheet_name:
         raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
-    spreadsheet = _open_spreadsheet(sheet_url, credentials_path)
-    worksheet = _resolve_worksheet(spreadsheet, sheet_url, raw_sheet_name)
-    resolved_sheet_name = str(getattr(worksheet, "title", raw_sheet_name) or raw_sheet_name).strip()
+    # Avoid opening the spreadsheet twice before runtime starts.
+    # The worker run will validate/access the target worksheet.
+    resolved_sheet_name = raw_sheet_name
     drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
     mapping_payload = [m.model_dump() for m in payload.mappings] or [_default_mapping(payload.start_line, payload.run_mode)]
     run_mode = _infer_job_mode(mapping_payload, fallback=run_mode)
