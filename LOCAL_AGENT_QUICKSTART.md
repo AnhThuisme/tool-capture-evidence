@@ -7,7 +7,7 @@ For deployed web usage: this opens local Chrome debug and starts local agent on 
 2. It will auto:
 - rebuild `.venv` if broken,
 - install dependencies,
-- open Chrome debug on port `9223`,
+- open Chrome debug on port `9223` (with PNA unblock flag),
 - start local agent at `http://127.0.0.1:8765`.
 3. Keep the window open.
 4. Use deployed web and click `Lauch Chrome` or run job.
@@ -17,7 +17,7 @@ For deployed web usage: this opens local Chrome debug and starts local agent on 
 2. It will auto:
 - rebuild `.venv` if broken,
 - install dependencies,
-- open Chrome debug on port `9223`,
+- open Chrome debug on port `9223` (with PNA unblock flag),
 - start local agent at `http://127.0.0.1:8765`.
 3. Keep the terminal window open.
 4. Use deployed web and click `Lauch Chrome` or run job.

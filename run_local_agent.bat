@@ -37,7 +37,7 @@ if "%LAUNCH_CHROME_ON_START%"=="" set LAUNCH_CHROME_ON_START=1
 
 if "%LAUNCH_CHROME_ON_START%"=="1" (
   echo [start] launching Chrome debug on port %CHROME_DEBUG_PORT%...
-  start "" chrome --remote-debugging-port=%CHROME_DEBUG_PORT% --user-data-dir="%USERPROFILE%\\.chrome-debug-evidence"
+  start "" chrome --remote-debugging-port=%CHROME_DEBUG_PORT% --disable-features=BlockInsecurePrivateNetworkRequests --user-data-dir="%USERPROFILE%\\.chrome-debug-evidence"
 )
 
 echo [start] local agent =^> http://127.0.0.1:%LOCAL_AGENT_PORT%

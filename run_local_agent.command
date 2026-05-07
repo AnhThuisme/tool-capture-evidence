@@ -37,7 +37,7 @@ CHROME_DEBUG_PORT="${CHROME_DEBUG_PORT:-9223}"
 
 if [ "${LAUNCH_CHROME_ON_START:-1}" = "1" ]; then
   echo "[start] launching Chrome debug on port ${CHROME_DEBUG_PORT}..."
-  open -na "Google Chrome" --args --remote-debugging-port="${CHROME_DEBUG_PORT}" --user-data-dir="$HOME/.chrome-debug-evidence" >/dev/null 2>&1 || true
+  open -na "Google Chrome" --args --remote-debugging-port="${CHROME_DEBUG_PORT}" --disable-features=BlockInsecurePrivateNetworkRequests --user-data-dir="$HOME/.chrome-debug-evidence" >/dev/null 2>&1 || true
 fi
 
 echo "[start] local agent => http://127.0.0.1:${LOCAL_AGENT_PORT}"
