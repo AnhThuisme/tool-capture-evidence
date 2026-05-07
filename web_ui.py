@@ -3685,6 +3685,7 @@ linear-gradient(to right, transparent, transparent)}
             <div class="headline">
               <div id="runTitleText" class="h1">Seeding</div>
             </div>
+            <div id="runtimeBadge" class="state" style="margin-left:auto">Runtime: Host</div>
             <div class="run-share-note run-share-top">
               <div id="runShareLabel" class="run-share-title">Chia sẻ Sheet & Drive folder cho (quyền Editor):</div>
               <div id="runShareEmail" class="run-share-email">Chưa có email service account</div>
@@ -4215,11 +4216,21 @@ function runtimeHref(url) {
   return shouldUseLocalAgent(url) ? `${localAgentState.origin}${url}` : url;
 }
 
+function updateRuntimeBadge() {
+  const node = document.getElementById('runtimeBadge');
+  if (!node) return;
+  const useLocal = !isLocalBrowserOrigin() && !!localAgentState.enabled;
+  node.textContent = useLocal ? t('runtimeLocal') : t('runtimeHost');
+  node.style.background = useLocal ? '#dcfce7' : '#eef2f6';
+  node.style.color = useLocal ? '#166534' : '#334155';
+}
+
 async function detectLocalAgent() {
   if (isLocalBrowserOrigin()) {
     localAgentState.enabled = false;
     localAgentState.checked = true;
     localAgentState.lastError = '';
+    updateRuntimeBadge();
     return false;
   }
   try {
@@ -4232,11 +4243,13 @@ async function detectLocalAgent() {
     localAgentState.enabled = true;
     localAgentState.checked = true;
     localAgentState.lastError = '';
+    updateRuntimeBadge();
     return true;
   } catch (e) {
     localAgentState.enabled = false;
     localAgentState.checked = true;
     localAgentState.lastError = String(e?.message || e || 'Local agent unavailable');
+    updateRuntimeBadge();
     return false;
   }
 }
@@ -4279,6 +4292,8 @@ const I18N = {
     searchPlaceholder: 'Tìm job hoặc trạng thái...',
     launchChrome: 'Mở Chrome',
     loginFacebookBeforeRun: 'Lauch Chrome',
+    runtimeHost: 'Runtime: Host',
+    runtimeLocal: 'Runtime: Local Agent',
     refresh: 'Làm mới',
     light: 'Sáng',
     dark: 'Tối',
@@ -4652,6 +4667,8 @@ const I18N = {
     searchPlaceholder: 'Search jobs or status...',
     launchChrome: 'Launch Chrome',
     loginFacebookBeforeRun: 'Lauch Chrome',
+    runtimeHost: 'Runtime: Host',
+    runtimeLocal: 'Runtime: Local Agent',
     refresh: 'Refresh',
     light: 'Light',
     dark: 'Dark',
@@ -6352,6 +6369,7 @@ function applyLanguage() {
   setNthText('#view-overview .day', 4, t('jobs'));
 
   setText('#view-runs .headline .state', t('runConfigHelp'));
+  setText('#runtimeBadge', (!isLocalBrowserOrigin() && localAgentState.enabled) ? t('runtimeLocal') : t('runtimeHost'));
   setText('#runShareLabel', t('runShareLabel'));
   applyRunModeUI();
   setText('label[for="sheet_url"]', t('sheetUrl'));
@@ -6492,6 +6510,7 @@ function applyLanguage() {
   renderRunShareInfo(currentSettingsCache);
   renderAccessDirectory(currentAccessPolicy);
   renderAccessPolicySummary(currentAccessPolicy);
+  updateRuntimeBadge();
   syncAuthUI();
 }
 
