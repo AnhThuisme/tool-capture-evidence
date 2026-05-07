@@ -3727,6 +3727,12 @@ linear-gradient(to right, transparent, transparent)}
                 </label>
                 <div id="bookingRunExtraToggles"></div>
                 <div class="run-actions-main">
+                  <button class="btn action-btn soft" type="button" onclick="loginFacebookBeforeRun()">
+                    <span class="action-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M14 8h3V4h-3c-3.3 0-5 2-5 5v3H6v4h3v4h4v-4h3.2l.8-4H13V9c0-.8.2-1 1-1Z"></path></svg>
+                    </span>
+                    <span id="loginFacebookLabel" class="action-label">Đăng nhập Facebook</span>
+                  </button>
                   <button class="btn action-btn start" onclick="startJob()">
                     <span class="action-icon" aria-hidden="true">
                       <svg viewBox="0 0 24 24"><path d="M8 6.5v11l9-5.5-9-5.5Z"></path></svg>
@@ -4278,6 +4284,7 @@ const I18N = {
   vi: {
     searchPlaceholder: 'Tìm job hoặc trạng thái...',
     launchChrome: 'Mở Chrome',
+    loginFacebookBeforeRun: 'Lauch Chrome',
     refresh: 'Làm mới',
     light: 'Sáng',
     dark: 'Tối',
@@ -4650,6 +4657,7 @@ const I18N = {
   en: {
     searchPlaceholder: 'Search jobs or status...',
     launchChrome: 'Launch Chrome',
+    loginFacebookBeforeRun: 'Lauch Chrome',
     refresh: 'Refresh',
     light: 'Light',
     dark: 'Dark',
@@ -6356,6 +6364,7 @@ function applyLanguage() {
   setText('label[for="sheet_url"]', t('sheetUrl'));
   setText('label[for="sheet_name"]', t('sheetName'));
   setText('label[for="drive_id"]', t('driveFolder'));
+  setText('#loginFacebookLabel', t('loginFacebookBeforeRun'));
   setText('#startJobLabel', t('startJob'));
   setText('#pauseJobLabel', t('stopJob'));
   setText('#continueJobLabel', t('continueJob'));
@@ -8961,6 +8970,13 @@ async function launchChrome() {
     });
     setStatus(out.message || 'Chrome launch requested', 'running');
   } catch (e) { alert(e.message); }
+}
+
+async function loginFacebookBeforeRun() {
+  await launchChrome();
+  alert(currentLang === 'vi'
+    ? 'Chrome đã mở. Bạn đăng nhập Facebook xong rồi quay lại bấm Chạy job.'
+    : 'Chrome is open. Please log in to Facebook, then come back and start the job.');
 }
 
 function buildMappingsForCurrentMode() {
