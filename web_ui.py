@@ -131,6 +131,7 @@ class WebAppAdapter:
         persist_callback=None,
         log_limit: int = 0,
         reuse_single_browser_session: bool = False,
+        attach_only_existing_browser: bool = False,
     ):
         self.is_running = True
         self.is_paused = False
@@ -148,6 +149,7 @@ class WebAppAdapter:
         self._log_limit = max(int(log_limit or 0), 0)
         self._persist_callback = persist_callback or (lambda force=False: None)
         self.reuse_single_browser_session = bool(reuse_single_browser_session)
+        self.attach_only_existing_browser = bool(attach_only_existing_browser)
 
         self.label_detail = _LabelProxy(self._on_detail)
         self.label_status = _LabelProxy(self._on_status)
@@ -2674,6 +2676,7 @@ def _enqueue_job(
         job_store={},
         persist_callback=_persist_jobs,
         reuse_single_browser_session=True,
+        attach_only_existing_browser=True,
     )
 
     job = {

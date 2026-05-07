@@ -5099,6 +5099,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             return None
 
         if not scan_only_request:
+            attach_only_existing_browser = bool(getattr(app, "attach_only_existing_browser", False))
             try:
                 service = resolve_chromedriver_service()
             except Exception as e:
@@ -5117,6 +5118,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             except Exception as e:
                 last_err = e
                 write_log(f"[INFO] No attachable Chrome on port {browser_port}: {e}")
+                if attach_only_existing_browser:
+                    raise Exception(
+                        f"ATTACH_ONLY_MODE: Không attach được Chrome đang mở ở port {browser_port}. "
+                        "Hãy mở Chrome với --remote-debugging-port và đăng nhập trước."
+                    )
 
             # 2) If not attachable, start new Chrome with profile candidates.
             if not started:
