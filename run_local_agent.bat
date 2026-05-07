@@ -15,12 +15,13 @@ if %errorlevel% neq 0 (
 )
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [setup] creating virtual environment...
+  echo [setup] rebuilding .venv...
+  if exist ".venv" rmdir /s /q ".venv"
   py -3 -m venv .venv 2>nul || python -m venv .venv
 )
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [ERROR] virtual environment is broken.
+  echo [ERROR] failed to create virtual environment.
   pause
   exit /b 1
 )
@@ -31,6 +32,13 @@ echo [setup] installing/updating dependencies...
 
 if "%LOCAL_AGENT_PORT%"=="" set LOCAL_AGENT_PORT=8765
 if "%LOCAL_AGENT_ALLOWED_ORIGINS%"=="" set LOCAL_AGENT_ALLOWED_ORIGINS=*
+if "%CHROME_DEBUG_PORT%"=="" set CHROME_DEBUG_PORT=9223
+if "%LAUNCH_CHROME_ON_START%"=="" set LAUNCH_CHROME_ON_START=1
+
+if "%LAUNCH_CHROME_ON_START%"=="1" (
+  echo [start] launching Chrome debug on port %CHROME_DEBUG_PORT%...
+  start "" chrome --remote-debugging-port=%CHROME_DEBUG_PORT% --user-data-dir="%USERPROFILE%\\.chrome-debug-evidence"
+)
 
 echo [start] local agent =^> http://127.0.0.1:%LOCAL_AGENT_PORT%
 echo [hint] keep this window open while using web deploy
