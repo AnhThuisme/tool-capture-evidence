@@ -424,6 +424,8 @@ ACTIVITY_HISTORY_PATH = os.path.join(evidence.BASE_DIR, "web_activity_history.js
 AUTH_POLICY_PATH = os.path.join(evidence.BASE_DIR, "web_auth_policy.json")
 MAIL_CONFIG_PATH = os.path.join(evidence.BASE_DIR, "web_mail_config.json")
 JOB_PERSIST_MIN_INTERVAL_SEC = 0.5
+JOB_LIST_RECENT_LOG_LIMIT_DEFAULT = 40
+JOB_LIST_RECENT_LOG_LIMIT_MAX = 200
 _LAST_JOB_PERSIST_TS = 0.0
 RUN_MODES = ("seeding", "booking", "scan")
 OTP_STORE_LOCK = threading.Lock()
@@ -2265,6 +2267,37 @@ def _get_job_mode(job: dict[str, Any]) -> str:
     return _infer_job_mode(request.get("mappings"), fallback="seeding")
 
 
+def _compact_request_for_client(raw_request: Any) -> dict[str, Any]:
+    request = dict(raw_request or {})
+    try:
+        browser_port = int(request.get("browser_port") or 0)
+    except Exception:
+        browser_port = 0
+    try:
+        start_line = max(1, int(request.get("start_line") or 1))
+    except Exception:
+        start_line = 1
+    return {
+        "owner_email": _normalize_email(request.get("owner_email")) or "",
+        "mode": _infer_job_mode(request.get("mappings"), fallback=request.get("mode") or "seeding"),
+        "drive_id": str(request.get("drive_id") or ""),
+        "sheet_url": str(request.get("sheet_url") or ""),
+        "sheet_name": str(request.get("sheet_name") or ""),
+        "browser_port": browser_port,
+        "start_line": start_line,
+        "force_run_all": bool(request.get("force_run_all")),
+        "only_run_error_rows": bool(request.get("only_run_error_rows")),
+        "capture_five_per_link": bool(request.get("capture_five_per_link")),
+        "highlight_sheet_errors": bool(request.get("highlight_sheet_errors")),
+        "scan_negative_filter": bool(request.get("scan_negative_filter")),
+        "scan_keyword_filter": bool(request.get("scan_keyword_filter")),
+        "root_job_id": str(request.get("root_job_id") or ""),
+        "target_rows": list(request.get("target_rows") or []),
+        "target_block_name": str(request.get("target_block_name") or ""),
+        "mappings": list(request.get("mappings") or []),
+    }
+
+
 def _any_running_job_for_mode(run_mode: str | None = None, owner_email: str | None = None) -> str | None:
     target_mode = _normalize_run_mode(run_mode)
     target_owner = _normalize_email(owner_email)
@@ -4072,6 +4105,8 @@ const defaultDocumentTitle = document.title;
 let jobsCache = [];
 let currentJobSnapshot = null;
 let currentLogsCache = [];
+let currentLogsCursor = 0;
+let currentLogsJobId = '';
 let currentJobIdByMode = { seeding: null, booking: null, scan: null };
 let currentProjectJobId = null;
 let currentProjectModeFilter = 'all';
@@ -4120,8 +4155,14 @@ let accessMailEditorOpen = false;
 let accessEntryEditorState = { open: false, originalEmail: '', email: '', role: 'user', type: 'internal' };
 let jobStatusMemory = {};
 let notifiedCompletedJobKeys = new Set();
+let pollInFlight = false;
+let jobsRefreshInFlight = false;
 const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9423, scan: 9623 };
 const DEFAULT_AUTO_LAUNCH_CHROME = true;
+const MAX_MONITOR_LOG_CACHE = 1200;
+const JOBS_REFRESH_ACTIVITY_LIMIT = 120;
+const JOB_POLL_INTERVAL_MS = 1200;
+const JOBS_LIST_REFRESH_INTERVAL_MS = 5000;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
 let currentTheme = localStorage.getItem('ui_theme') || 'light';
 const authState = {
@@ -6468,13 +6509,23 @@ function toggleTheme() {
   setTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
+function resetCurrentLogsState(jobId = '') {
+  currentLogsJobId = String(jobId || '').trim();
+  currentLogsCursor = 0;
+  currentLogsCache = [];
+}
+
 function setRunMode(mode) {
   rememberCurrentRunFlags(currentRunMode);
   const nextMode = String(mode || 'seeding').toLowerCase();
   currentRunMode = ['seeding', 'booking', 'scan'].includes(nextMode) ? nextMode : 'seeding';
   applyRunFlagsForMode(currentRunMode);
   resetSheetLinkSuggestions(currentRunMode);
+  const previousJobId = currentJobId;
   currentJobId = resolveModeJobId(currentRunMode);
+  if (currentJobId !== previousJobId) {
+    resetCurrentLogsState(currentJobId || '');
+  }
   applyRunModeUI();
 }
 
@@ -6485,7 +6536,7 @@ function openRunMode(mode) {
     pollCurrent();
   } else {
     currentJobSnapshot = null;
-    currentLogsCache = [];
+    resetCurrentLogsState('');
     renderRunMonitor(null, []);
   }
 }
@@ -7169,7 +7220,11 @@ window.addEventListener('focus', () => {
   stopCompletionTitleFlash();
 });
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) stopCompletionTitleFlash();
+  if (!document.hidden) {
+    stopCompletionTitleFlash();
+    refreshJobs();
+    pollCurrent();
+  }
 });
 
 function processJobLifecycleNotifications(jobs) {
@@ -9035,10 +9090,13 @@ async function pauseJob() {
 }
 
 async function refreshJobs() {
+  if (jobsRefreshInFlight) return true;
+  jobsRefreshInFlight = true;
   try {
+    const previousJobId = currentJobId;
     const [out, activityOut] = await Promise.all([
-      req('/api/jobs'),
-      req('/api/activity?limit=0'),
+      req('/api/jobs?recent_log_limit=40'),
+      req('/api/activity?limit=' + JOBS_REFRESH_ACTIVITY_LIMIT),
     ]);
     const jobs = out.jobs || [];
     currentActivityEvents = activityOut.items || [];
@@ -9051,9 +9109,12 @@ async function refreshJobs() {
       currentJobId = resolveModeJobId(currentRunMode);
       if (!currentJobId) {
         currentJobSnapshot = null;
-        currentLogsCache = [];
+        resetCurrentLogsState('');
         renderRunMonitor(null, []);
       }
+    }
+    if (currentJobId !== previousJobId) {
+      resetCurrentLogsState(currentJobId || '');
     }
     document.getElementById('jobCountText').textContent = t('jobsLoadedFmt')(jobs.length);
     document.getElementById('jobCountText').dataset.jobs = jobs.length;
@@ -9072,6 +9133,8 @@ async function refreshJobs() {
   } catch (e) {
     setStatus('Load jobs error: ' + e.message, 'failed');
     return false;
+  } finally {
+    jobsRefreshInFlight = false;
   }
 }
 
@@ -9102,6 +9165,9 @@ async function refreshJobsWithFeedback(btn) {
 }
 
 function selectJob(jobId) {
+  if (currentJobId !== jobId) {
+    resetCurrentLogsState(jobId || '');
+  }
   currentJobId = jobId;
   const matched = (jobsCache || []).find(job => job.id === jobId);
   if (matched) {
@@ -9113,30 +9179,59 @@ function selectJob(jobId) {
 
 async function pollCurrent() {
   if (!currentJobId) return;
+  if (pollInFlight) return;
+  pollInFlight = true;
   try {
-    const st = await req('/api/jobs/' + currentJobId);
+    const activeJobId = String(currentJobId || '').trim();
+    const st = await req('/api/jobs/' + activeJobId);
+    if (activeJobId !== String(currentJobId || '').trim()) return;
     currentJobSnapshot = st;
     const s = st.summary || { done: 0, total: 0, success: 0, failed: 0, eta: '---' };
-    setKPI(s, currentJobId);
+    setKPI(s, activeJobId);
     setStatus('Status: ' + st.status + ' | Detail: ' + (st.detail || '-'), st.status);
-    const lg = await req('/api/jobs/' + currentJobId + '/logs?limit=200');
-    const logs = lg.logs || [];
-    currentLogsCache = logs;
-    const targetJob = (jobsCache || []).find(job => job.id === currentJobId);
-    if (targetJob) targetJob.recent_logs = logs.slice();
-    renderRunMonitor(st, logs);
+    if (currentLogsJobId !== activeJobId) {
+      resetCurrentLogsState(activeJobId);
+    }
+    const lg = await req('/api/jobs/' + activeJobId + '/logs?limit=200&since=' + currentLogsCursor);
+    const logs = Array.isArray(lg?.logs) ? lg.logs : [];
+    if (lg?.reset || currentLogsCursor <= 0) {
+      currentLogsCache = logs.slice();
+    } else if (logs.length) {
+      currentLogsCache = currentLogsCache.concat(logs);
+    }
+    const nextCursor = Number(lg?.next_cursor ?? currentLogsCursor + logs.length);
+    currentLogsCursor = Number.isFinite(nextCursor) && nextCursor >= 0 ? nextCursor : 0;
+    if (currentLogsCache.length > MAX_MONITOR_LOG_CACHE) {
+      currentLogsCache = currentLogsCache.slice(-MAX_MONITOR_LOG_CACHE);
+    }
+    const targetJob = (jobsCache || []).find(job => job.id === activeJobId);
+    if (targetJob) targetJob.recent_logs = currentLogsCache.slice(-40);
+    renderRunMonitor(st, currentLogsCache);
     updateRunActionButtons(st);
-    renderOverview();
-    renderProjects();
-    renderActivities(getCombinedActivities());
   } catch (e) {
     setStatus('Poll error: ' + e.message, 'failed');
+  } finally {
+    pollInFlight = false;
   }
 }
 
 function ensureTimers() {
-  if (!pollTimer) pollTimer = setInterval(pollCurrent, 450);
-  if (!jobsTimer) jobsTimer = setInterval(refreshJobs, 1800);
+  if (!pollTimer) {
+    pollTimer = setInterval(() => {
+      const status = String(currentJobSnapshot?.status || '').toLowerCase();
+      const isActive = ['queued', 'running', 'paused'].includes(status);
+      if (document.hidden && !isActive) return;
+      pollCurrent();
+    }, JOB_POLL_INTERVAL_MS);
+  }
+  if (!jobsTimer) {
+    jobsTimer = setInterval(() => {
+      const status = String(currentJobSnapshot?.status || '').toLowerCase();
+      const isActive = ['queued', 'running', 'paused'].includes(status);
+      if (document.hidden && !isActive) return;
+      refreshJobs();
+    }, JOBS_LIST_REFRESH_INTERVAL_MS);
+  }
 }
 
 async function init() {
@@ -9147,10 +9242,13 @@ async function init() {
   bindSheetNameAutocomplete();
   await loadDefaults();
   await refreshJobs();
-  await pollCurrent();
+  if (currentJobId) {
+    await pollCurrent();
+  } else {
+    renderRunMonitor(null, []);
+  }
   renderOverview();
   renderActivities(getCombinedActivities());
-  renderRunMonitor(null, []);
   renderAccessPolicySummary(currentAccessPolicy);
   ensureTimers();
   applyTheme();
@@ -9931,14 +10029,17 @@ def pause_toggle_job(job_id: str, request: Request):
 
 
 @app.get("/api/jobs")
-def list_jobs(request: Request):
+def list_jobs(request: Request, recent_log_limit: int = JOB_LIST_RECENT_LOG_LIMIT_DEFAULT):
     owner_email = _require_api_auth(request)
     can_view_all = _is_admin_email(owner_email)
+    log_limit = max(0, min(int(recent_log_limit), JOB_LIST_RECENT_LOG_LIMIT_MAX))
     out = []
     with JOBS_LOCK:
         for job in JOBS.values():
             if not can_view_all and _job_owner_email(job) != owner_email:
                 continue
+            logs_ref = job.get("logs") or []
+            recent_logs = list(logs_ref[-log_limit:]) if log_limit > 0 else []
             out.append(
                 {
                     "id": job["id"],
@@ -9950,12 +10051,12 @@ def list_jobs(request: Request):
                     "finished_at": job["finished_at"],
                     "summary": job.get("summary"),
                     "detail": job.get("detail"),
-                    "request": job.get("request"),
+                    "request": _compact_request_for_client(job.get("request")),
                     "completion": job.get("completion"),
                     "error_rows": job.get("error_rows"),
                     "issue_cells": job.get("issue_cells"),
                     "error": job.get("error"),
-                    "recent_logs": list(job.get("logs", [])),
+                    "recent_logs": recent_logs,
                 }
             )
     out.sort(key=lambda x: x["created_at"], reverse=True)
@@ -9979,7 +10080,7 @@ def get_job(job_id: str, request: Request):
             "finished_at": job["finished_at"],
             "summary": job.get("summary"),
             "detail": job.get("detail"),
-            "request": job.get("request"),
+            "request": _compact_request_for_client(job.get("request")),
             "ui_status": job.get("ui_status"),
             "completion": job.get("completion"),
             "error_rows": job.get("error_rows"),
@@ -9989,15 +10090,30 @@ def get_job(job_id: str, request: Request):
 
 
 @app.get("/api/jobs/{job_id}/logs")
-def get_job_logs(job_id: str, request: Request, limit: int = 100):
+def get_job_logs(job_id: str, request: Request, limit: int = 100, since: int = 0):
     owner_email = _require_api_auth(request)
     lim = max(1, min(int(limit), 1000))
+    cursor = max(0, int(since or 0))
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not _can_view_job(job, owner_email):
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
-        logs = list(job.get("logs", []))
-    return {"job_id": job_id, "logs": logs[-lim:]}
+        logs_ref = job.get("logs") or []
+        total = len(logs_ref)
+        reset = False
+        if cursor <= 0:
+            chunk = list(logs_ref[-lim:])
+            next_cursor = total
+        else:
+            if cursor > total:
+                reset = True
+                chunk = list(logs_ref[-lim:])
+                next_cursor = total
+            else:
+                end = min(total, cursor + lim)
+                chunk = list(logs_ref[cursor:end])
+                next_cursor = end
+    return {"job_id": job_id, "logs": chunk, "total": total, "next_cursor": next_cursor, "reset": reset}
 
 
 if __name__ == "__main__":

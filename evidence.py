@@ -2512,11 +2512,8 @@ def _is_expected_tiktok_page(requested_url: str, current_url: str) -> bool:
             return False
         if req_video_id != cur_video_id:
             return False
-    req_handle = _extract_tiktok_handle(req)
-    cur_handle = _extract_tiktok_handle(cur)
-    # If request includes handle, enforce match as extra safety.
-    if req_handle and cur_handle and req_handle != cur_handle:
-        return False
+    # Intentionally ignore handle (@username) because TikTok can rewrite it
+    # while still pointing to the same canonical video.
     return True
 
 
