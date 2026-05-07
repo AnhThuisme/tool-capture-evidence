@@ -2810,8 +2810,10 @@ def _run_job(job_id: str):
                     else:
                         job["status"] = "stopped"
                         detail_text = str(job.get("detail") or "").strip()
-                        if total <= 0 and not done and not detail_text:
-                            job["detail"] = "Không có dòng hợp lệ để xử lý. Kiểm tra Link URL, Start Line hoặc chế độ retry."
+                        detail_lower = detail_text.lower()
+                        if total <= 0 and not done:
+                            if (not detail_text) or detail_lower in {"chờ chạy", "cho chay", "running", "queued"}:
+                                job["detail"] = "Không có dòng hợp lệ để xử lý. Kiểm tra Link URL, Start Line hoặc chế độ retry."
                         elif not detail_text:
                             job["detail"] = (
                                 "Chưa có tác vụ nào được xử lý."
