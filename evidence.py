@@ -5187,6 +5187,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             if row_value >= 1:
                 requested_rows.add(row_value)
         requested_block_name = str(target_block_name or "").strip().lower()
+        reuse_single_browser_session = bool(getattr(app, "reuse_single_browser_session", False))
+        if reuse_single_browser_session:
+            write_log("[INFO] Reuse single browser session enabled: all web blocks share the main logged-in profile.")
 
         mapping_list = mappings or [
             {
@@ -5719,6 +5722,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         def _start_worker_driver(block_index: int, block_mode: str):
             if scan_only_request:
                 return None
+            if reuse_single_browser_session and app.driver and str(block_mode or "").strip().lower() != "scan":
+                return app.driver
             if block_index == 0 and app.driver:
                 return app.driver
             worker_port = get_post_port(block_index, browser_port)
@@ -6262,7 +6267,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
         # Run all configured posts in parallel (no fixed upper limit).
         worker_total = max(1, len(prepared_blocks))
-        if len(prepared_blocks) > 1:
+        if reuse_single_browser_session and len(prepared_blocks) > 1:
+            for block in prepared_blocks:
+                _run_block(block)
+        elif len(prepared_blocks) > 1:
             with ThreadPoolExecutor(max_workers=worker_total) as ex:
                 futures = [ex.submit(_run_block, b) for b in prepared_blocks]
                 for fu in as_completed(futures):
