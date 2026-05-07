@@ -456,6 +456,7 @@ MODE_BROWSER_PORTS = {
     "scan": 9623,
 }
 DEFAULT_SHARED_BROWSER_PORT = 9223
+SHARED_DEBUG_PROFILE_PATH = os.path.expanduser("~/.chrome-debug-evidence")
 
 _SCREENSHOT_HOOK_LOCK = threading.Lock()
 _SCREENSHOT_HOOK_REFCOUNT = 0
@@ -2320,21 +2321,8 @@ def _get_mode_base_port(run_mode: str | None) -> int:
 
 
 def _get_mode_profile(run_mode: str | None, block_index: int = 0, browser_port: int | None = None) -> str:
-    mode = _normalize_run_mode(run_mode)
-    idx = int(block_index or 0)
-    if browser_port:
-        try:
-            port = int(browser_port)
-            if port > 0:
-                if mode == "seeding" and port == 9223:
-                    return evidence.LOCAL_PROFILE_PATH
-                return os.path.join(evidence.TEMP_DIR, f"chrome_profile_{mode}_port_{port}")
-        except Exception:
-            pass
-    if mode == "seeding":
-        return evidence.LOCAL_PROFILE_PATH if idx <= 0 else os.path.join(evidence.TEMP_DIR, f"chrome_profile_worker_{idx}")
-    suffix = f"{mode}_{idx}" if idx > 0 else f"{mode}_main"
-    return os.path.join(evidence.TEMP_DIR, f"chrome_profile_{suffix}")
+    # Force one shared profile for all modes/blocks so login state is consistent.
+    return SHARED_DEBUG_PROFILE_PATH
 
 
 def _safe_filename_part(value: str) -> str:
