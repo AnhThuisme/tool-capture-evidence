@@ -9689,9 +9689,16 @@ def start_job(request: Request, payload: JobStartRequest):
     raw_sheet_name = str(payload.sheet_name or "").strip()
     if not raw_sheet_name:
         raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
-    # Avoid opening the spreadsheet twice before runtime starts.
-    # The worker run will validate/access the target worksheet.
-    resolved_sheet_name = raw_sheet_name
+    # Validate target worksheet before starting runtime to avoid "running but no write"
+    # when the Sheet Name is mistyped or no longer exists.
+    try:
+        spreadsheet = _open_spreadsheet(sheet_url, credentials_path)
+        worksheet = _resolve_worksheet(spreadsheet, sheet_url, raw_sheet_name)
+        resolved_sheet_name = str(getattr(worksheet, "title", raw_sheet_name) or raw_sheet_name).strip() or raw_sheet_name
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Không mở được sheet trước khi chạy: {exc}") from exc
     drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
     mapping_payload = [m.model_dump() for m in payload.mappings] or [_default_mapping(payload.start_line, payload.run_mode)]
     run_mode = _infer_job_mode(mapping_payload, fallback=run_mode)
