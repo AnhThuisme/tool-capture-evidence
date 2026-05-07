@@ -5401,9 +5401,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 results = scan_result_values
             else:
                 results = list(unformatted_column_cache.get(idx_drive, []))[start_offset:] if idx_drive else []
-            captions_existing = list(unformatted_column_cache.get(idx_content, []))[start_offset:] if idx_content else []
+                captions_existing = list(unformatted_column_cache.get(idx_content, []))[start_offset:] if idx_content else []
+                screenshots_existing = list(unformatted_column_cache.get(idx_screenshot, []))[start_offset:] if idx_screenshot else []
             air_dates = list(unformatted_column_cache.get(idx_air_date, []))[start_offset:] if idx_air_date else []
-            prepared_blocks.append(
+                    prepared_blocks.append(
                 {
                     "block_index": int(m.get("block_index", 0)),
                     "name": m["name"],
@@ -5426,6 +5427,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     "scan_expected_texts": scan_expected_texts,
                     "results": results,
                     "captions_existing": captions_existing,
+                    "screenshots_existing": screenshots_existing,
                     "air_dates": air_dates,
                 }
             )
@@ -5846,6 +5848,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 scan_expected_texts = block.get("scan_expected_texts", [])
                 results = block["results"]
                 captions_existing = block["captions_existing"]
+                screenshots_existing = block["screenshots_existing"]
                 air_dates = block["air_dates"]
                 start_at = block["start_line"]
 
@@ -5936,11 +5939,42 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                     eta_text = _start_row(log_block_name, row, url)
 
-                    if (not is_scan_mode) and (not app.force_run_all.get()) and idx_drive and idx_content:
-                        if idx < len(results) and "drive.google.com" in str(results[idx]):
-                            if idx < len(captions_existing) and captions_existing[idx].strip():
-                                _finish_row_ok(log_block_name, row, url, eta_text)
-                                continue
+                    if (not is_scan_mode) and (not app.force_run_all.get()):
+                        drive_ready = False
+                        content_ready = False
+                        screenshot_ready = False
+                        if idx_drive and idx < len(results):
+                            drive_val = str(results[idx] or "").strip().lower()
+                            drive_ready = ("drive.google.com" in drive_val) or drive_val.startswith("http")
+                        if idx_content and idx < len(captions_existing):
+                            content_ready = bool(str(captions_existing[idx] or "").strip())
+                        if idx_screenshot and idx < len(screenshots_existing):
+                            shot_val = str(screenshots_existing[idx] or "").strip().lower()
+                            screenshot_ready = bool(shot_val) and (
+                                "drive.google.com" in shot_val
+                                or shot_val.startswith("http")
+                                or "image(" in shot_val
+                            )
+
+                        required_outputs_ready = True
+                        if idx_drive:
+                            required_outputs_ready = required_outputs_ready and drive_ready
+                        if idx_content:
+                            required_outputs_ready = required_outputs_ready and content_ready
+                        if idx_screenshot:
+                            required_outputs_ready = required_outputs_ready and screenshot_ready
+
+                        if required_outputs_ready:
+                            ui_call(
+                                ui_add_log,
+                                row,
+                                "INFO",
+                                "SKIP",
+                                f"{log_block_name}: Bỏ qua vì dòng đã có đủ output (Drive/Caption/Screenshot)",
+                                "start",
+                            )
+                            _finish_row_ok(log_block_name, row, url, eta_text)
+                            continue
 
                     try:
                         unavailable = False
