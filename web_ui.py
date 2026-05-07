@@ -11,6 +11,7 @@ import ssl
 import subprocess
 import threading
 import time
+import unicodedata
 import uuid
 from datetime import datetime
 from email.message import EmailMessage
@@ -2075,6 +2076,10 @@ def _resolve_worksheet(spreadsheet: Any, sheet_url: str, sheet_name: str):
 
     def _normalize_title(value: str) -> str:
         text = str(value or "").strip().lower()
+        text = "".join(
+            ch for ch in unicodedata.normalize("NFD", text)
+            if unicodedata.category(ch) != "Mn"
+        )
         text = re.sub(r"\s+", " ", text)
         return text
 
