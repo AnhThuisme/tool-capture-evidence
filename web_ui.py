@@ -2067,10 +2067,40 @@ def _open_spreadsheet(sheet_url: str, credentials_path: str):
 
 
 def _resolve_worksheet(spreadsheet: Any, sheet_url: str, sheet_name: str):
+    requested = str(sheet_name or "").strip()
     try:
-        return evidence.resolve_worksheet(spreadsheet, sheet_name=sheet_name, sheet_url=sheet_url)
+        return evidence.resolve_worksheet(spreadsheet, sheet_name=requested, sheet_url=sheet_url)
+    except Exception:
+        pass
+
+    def _normalize_title(value: str) -> str:
+        text = str(value or "").strip().lower()
+        text = re.sub(r"\s+", " ", text)
+        return text
+
+    try:
+        worksheets = list(spreadsheet.worksheets() or [])
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Không tìm thấy sheet: {sheet_name}") from exc
+        raise HTTPException(status_code=400, detail=f"Không đọc được danh sách sheet: {exc}") from exc
+
+    # Fallback 1: case-insensitive + compact spaces.
+    target_norm = _normalize_title(requested)
+    if target_norm:
+        for ws in worksheets:
+            title = str(getattr(ws, "title", "") or "").strip()
+            if title and _normalize_title(title) == target_norm:
+                return ws
+
+    available = [str(getattr(ws, "title", "") or "").strip() for ws in worksheets]
+    available = [name for name in available if name]
+    preview = ", ".join(available[:12])
+    suffix = "..." if len(available) > 12 else ""
+    if requested:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Không tìm thấy sheet: {requested}. Sheet hiện có: {preview}{suffix}",
+        )
+    raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
 
 
 def _worksheet_sheet_id(worksheet: Any) -> int:
