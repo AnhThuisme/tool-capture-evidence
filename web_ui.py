@@ -11,6 +11,7 @@ import ssl
 import subprocess
 import threading
 import time
+import traceback
 import unicodedata
 import uuid
 from datetime import datetime
@@ -406,6 +407,19 @@ class ActivityEventRequest(BaseModel):
 
 
 app = FastAPI(title="Tool Evidence", version="1.0.0")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    try:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        evidence.write_log(f"[UNHANDLED] {request.method} {request.url.path}: {exc}\n{tb}")
+    except Exception:
+        pass
+    return JSONResponse(
+        status_code=500,
+        content={"ok": False, "detail": f"Server error: {exc}"},
+    )
 
 
 def _session_secret_key() -> str:
@@ -1750,7 +1764,9 @@ def _write_saved_settings(user_email: str, patch: dict[str, Any]) -> dict[str, A
     if legacy_defaults:
         data["_legacy_defaults"] = legacy_defaults
     settings_path = _settings_storage_path()
-    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+    settings_dir = os.path.dirname(settings_path)
+    if settings_dir:
+        os.makedirs(settings_dir, exist_ok=True)
     with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return current
@@ -3791,8 +3807,8 @@ linear-gradient(to right, transparent, transparent)}
             <section class="card run-form">
               <div class="run-grid">
                 <div class="field"><label>Sheet URL</label><input id="sheet_url" /><div id="sheet_url_hint" class="settings-note"></div></div>
-                <div class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
-                <div class="field"><label>Drive Folder ID</label><input id="drive_id" /></div>
+                <div id="sheet_name_field" class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
+                <input id="drive_id" type="hidden" />
               </div>
               <div class="run-actions">
                 <label class="run-overwrite-card">
@@ -4497,6 +4513,7 @@ const I18N = {
     sheetLinkSuggestCountFmt: count => `Phát hiện ${count} cột có link`,
     sheetLinkBulkToggle: 'Chọn nhiều cột',
     sheetLinkBulkAdd: 'Tạo block',
+    sheetLinkFillBlocks: 'Điền vào block',
     sheetLinkQuickScan: 'Quét nhanh',
     sheetLinkQuickCreate: 'Tạo cột nhanh',
     sheetLinkBulkClear: 'Bỏ chọn',
@@ -4872,6 +4889,7 @@ const I18N = {
     sheetLinkSuggestCountFmt: count => `${count} link columns found`,
     sheetLinkBulkToggle: 'Select multiple columns',
     sheetLinkBulkAdd: 'Create blocks',
+    sheetLinkFillBlocks: 'Fill blocks',
     sheetLinkQuickScan: 'Quick scan',
     sheetLinkQuickCreate: 'Quick create',
     sheetLinkBulkClear: 'Clear',
@@ -5391,7 +5409,8 @@ function mappingFieldsForMode(mode) {
   }
   if (mode === 'seeding') {
     return [
-      { key: 'sheet_url', label: t('sheetUrl') },
+      { key: 'sheet_name', label: t('sheetName') },
+      { key: 'drive_id', label: t('driveFolder') },
       { key: 'col_air_date', label: t('airDate') },
       { key: 'col_url', label: t('linkUrl') },
       { key: 'col_drive', label: t('driveUrl') },
@@ -5586,6 +5605,33 @@ async function addBlocksFromSelectedLinkColumns() {
       return;
     }
     const blocks = ensureMappingBlocks(currentRunMode);
+    if (currentRunMode === 'seeding') {
+      const limit = Math.min(items.length, blocks.length);
+      for (let i = 0; i < limit; i += 1) {
+        const item = items[i] || {};
+        const block = blocks[i];
+        const linkCol = String(item.link_column || item.source_column || '').trim().toUpperCase();
+        if (!linkCol || !block) continue;
+        block.col_url = linkCol;
+        const next1 = shiftSheetColumn(linkCol, 1);
+        const next2 = shiftSheetColumn(linkCol, 2);
+        if (next1) block.col_drive = next1;
+        if (next2) block.col_screenshot = next2;
+      }
+      pendingMappingScrollMode = currentRunMode;
+      pendingMappingHighlightIndex = 0;
+      clearBulkSheetLinkSelections(currentRunMode);
+      bulkSheetLinkSelectionMode = false;
+      renderMappingEditor();
+      await fetchSheetLinkSuggestions(true);
+      setStatus(
+        items.length > blocks.length
+          ? `Đã điền ${blocks.length}/${items.length} cột vào ${blocks.length} block hiện có`
+          : `Đã điền ${limit} cột vào block`,
+        'done'
+      );
+      return;
+    }
     const template = blocks.length ? blocks[blocks.length - 1] : defaultMappingBlock(currentRunMode, 1);
     items.forEach(item => {
       const nextIndex = blocks.length + 1;
@@ -5786,12 +5832,13 @@ function renderSheetLinkSuggestions(payload = null) {
 
   const quickScanDisabled = loading;
   if (bulkSupported) {
+    const bulkAddLabel = modeKey === 'seeding' ? t('sheetLinkFillBlocks') : t('sheetLinkBulkAdd');
     actionsNode.innerHTML = loaded ? `
       <div class="sheet-link-suggest-action-group buttons">
         <button class="btn sheet-link-suggest-action-btn icon-only" type="button" title="${esc(t('sheetLinkReload'))}" aria-label="${esc(t('sheetLinkReload'))}" onclick="reloadSheetLinkSuggestions()" ${quickScanDisabled ? 'disabled' : ''}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
         </button>
-        <button class="btn blue sheet-link-suggest-action-btn" type="button" onclick="addBlocksFromSelectedLinkColumns()" ${quickScanDisabled ? 'disabled' : ''}>${esc(t('sheetLinkBulkAdd'))}</button>
+        <button class="btn blue sheet-link-suggest-action-btn" type="button" onclick="addBlocksFromSelectedLinkColumns()" ${quickScanDisabled ? 'disabled' : ''}>${esc(bulkAddLabel)}</button>
       </div>
     ` : `
       <div class="sheet-link-suggest-action-group buttons" style="width:100%;justify-content:center">
@@ -6052,7 +6099,7 @@ function scheduleSheetLinkCountSummary(force = false) {
   }, force ? 0 : SHEET_LINK_SUMMARY_DEBOUNCE_MS);
 }
 
-function applySuggestedSheetColumn(column) {
+async function applySuggestedSheetColumn(column) {
   const normalizedColumn = String(column || '').trim().toUpperCase();
   let target = activeSheetColumnTarget;
   const isScanMode = String(currentRunMode || '').toLowerCase() === 'scan';
@@ -6093,9 +6140,52 @@ function applySuggestedSheetColumn(column) {
     renderSheetLinkSuggestions();
     return;
   }
-  blocks[target.index][target.key] = normalizedColumn;
-  if (String(target.mode || '').toLowerCase() === 'scan' && String(target.key || '').toLowerCase() === 'col_url') {
-    const inferredContent = getScanContentColumnFromImageColumn(normalizedColumn);
+  const modeKey = String(target.mode || '').toLowerCase();
+  const keyKey = String(target.key || '').toLowerCase();
+  let resolvedColumn = normalizedColumn;
+  if (modeKey === 'seeding' && keyKey === 'col_url') {
+    const rawUrl = String(document.getElementById('sheet_url')?.value || '').trim();
+    const sheetNameInputId = getMappingFieldInputId('seeding', target.index, 'sheet_name');
+    const liveSheetName = String(document.getElementById(sheetNameInputId)?.value || '').trim();
+    const blockSheetName = liveSheetName || String(blocks[target.index]?.sheet_name || '').trim();
+    if (rawUrl && blockSheetName) {
+      try {
+        const out = await req('/api/sheets/quick-block-columns', {
+          method: 'POST',
+          body: JSON.stringify({
+            sheet_url: rawUrl,
+            sheet_name: blockSheetName,
+            mode: 'seeding',
+            columns: [normalizedColumn],
+          }),
+        });
+        const first = Array.isArray(out?.items) ? out.items[0] : null;
+        resolvedColumn = String(first?.link_column || normalizedColumn).trim().toUpperCase() || normalizedColumn;
+        const resolvedDrive = String(first?.drive_column || '').trim().toUpperCase();
+        const resolvedScreenshot = String(first?.screenshot_column || '').trim().toUpperCase();
+        if (resolvedDrive) blocks[target.index].col_drive = resolvedDrive;
+        if (resolvedScreenshot) blocks[target.index].col_screenshot = resolvedScreenshot;
+      } catch (e) {
+        alert(e.message || 'Không cộng được cột trên Sheet.');
+        return;
+      }
+    }
+  }
+  blocks[target.index][target.key] = resolvedColumn;
+  if (modeKey === 'seeding' && keyKey === 'col_url') {
+    const next1 = shiftSheetColumn(resolvedColumn, 1);
+    const next2 = shiftSheetColumn(resolvedColumn, 2);
+    if (next1) blocks[target.index].col_drive = next1;
+    if (next2) blocks[target.index].col_screenshot = next2;
+  }
+  if (modeKey === 'booking' && keyKey === 'col_url') {
+    const next1 = shiftSheetColumn(resolvedColumn, 1);
+    const next2 = shiftSheetColumn(resolvedColumn, 2);
+    if (next1) blocks[target.index].col_screenshot = next1;
+    if (next2) blocks[target.index].col_drive = next2;
+  }
+  if (modeKey === 'scan' && keyKey === 'col_url') {
+    const inferredContent = getScanContentColumnFromImageColumn(resolvedColumn);
     if (inferredContent) {
       blocks[target.index].col_content = inferredContent;
     }
@@ -6117,10 +6207,33 @@ function updateMappingBlock(mode, index, key, value) {
   const blocks = ensureMappingBlocks(mode);
   if (!blocks[index]) return;
   blocks[index][key] = key === 'start_line' ? Number(value || 4) : String(value || '');
+  if (String(mode || '').toLowerCase() === 'seeding' && String(key || '').toLowerCase() === 'sheet_name') {
+    const preferredName = String(blocks[index][key] || '').trim();
+    if (preferredName) blocks[index].name = preferredName;
+    if (Number(index) === 0) {
+      const sheetNameInput = document.getElementById('sheet_name');
+      if (sheetNameInput) sheetNameInput.value = preferredName;
+    }
+  }
   console.log(`[DEBUG] updateMappingBlock(${mode}, ${index}, ${key}): ${value} -> ${blocks[index][key]}`);
   if (String(mode || '').toLowerCase() === currentRunMode && String(key || '').toLowerCase() === 'start_line') {
     resetSheetLinkSuggestions();
   }
+}
+
+function syncSeedingBlocksDriveId(force = false) {
+  const blocks = ensureMappingBlocks('seeding');
+  const sharedDriveId = String(document.getElementById('drive_id')?.value || '').trim();
+  blocks.forEach(block => {
+    const current = String(block?.drive_id || '').trim();
+    if (force || !current) block.drive_id = sharedDriveId;
+  });
+}
+
+function handleSharedDriveIdInput() {
+  if (String(currentRunMode || '').toLowerCase() !== 'seeding') return;
+  syncSeedingBlocksDriveId(true);
+  renderMappingEditor();
 }
 
 function removeMappingBlock(index) {
@@ -6175,9 +6288,9 @@ async function scanSeedingBlockSheet(index) {
   const blocks = ensureMappingBlocks('seeding');
   const block = blocks[index];
   if (!block) return;
-  const rawSheetUrl = String(block.sheet_url || '').trim();
+  const rawSheetUrl = String(document.getElementById('sheet_url')?.value || '').trim();
   if (!rawSheetUrl) {
-    alert('Nhập link Sheet ở block này trước.');
+    alert('Nhập link Sheet chính bên trái trước.');
     return;
   }
   try {
@@ -6186,10 +6299,15 @@ async function scanSeedingBlockSheet(index) {
     const namesOut = await req('/api/sheets/names?' + qsNames.toString());
     const titles = Array.isArray(namesOut?.titles) ? namesOut.titles.filter(Boolean) : [];
     if (!titles.length) throw new Error('Sheet này không có tab nào khả dụng.');
-    let chosen = String(block.sheet_name || '').trim();
+    const sheetNameInputId = getMappingFieldInputId('seeding', index, 'sheet_name');
+    const liveSheetName = String(document.getElementById(sheetNameInputId)?.value || '').trim();
+    let chosen = liveSheetName || String(block.sheet_name || '').trim();
     if (!chosen || !titles.includes(chosen)) chosen = String(titles[0] || '').trim();
     block.sheet_name = chosen;
     block.name = chosen;
+    const sheetNameInput = document.getElementById('sheet_name');
+    if (sheetNameInput) sheetNameInput.value = chosen;
+    rememberResolvedSheetName(rawSheetUrl, chosen);
     block.drive_id = String(document.getElementById('drive_id')?.value || '').trim();
 
     const qsCols = new URLSearchParams({
@@ -6201,17 +6319,39 @@ async function scanSeedingBlockSheet(index) {
     if (currentSettingsCache.credentials_path) qsCols.set('credentials_path', currentSettingsCache.credentials_path);
     const colsOut = await req('/api/sheets/column-suggestions?' + qsCols.toString());
     const allCols = Array.isArray(colsOut?.columns) ? colsOut.columns : [];
-    const driveColsSet = new Set(Array.isArray(colsOut?.drive_columns) ? colsOut.drive_columns : []);
-    const pickedUrl = String(allCols.find(col => !driveColsSet.has(col)) || allCols[0] || '').trim().toUpperCase();
+    // Keep the exact same ranking as "quét cột có link": top by API suggestion.
+    const pickedUrl = String(allCols[0] || '').trim().toUpperCase();
     if (pickedUrl) {
       block.col_url = pickedUrl;
       const next1 = shiftSheetColumn(pickedUrl, 1);
       const next2 = shiftSheetColumn(pickedUrl, 2);
       if (next1) block.col_drive = next1;
       if (next2) block.col_screenshot = next2;
+      activeSheetColumnTarget = { mode: 'seeding', index: Number(index) || 0, key: 'col_url' };
+    } else {
+      block.col_url = '';
     }
-    setStatus(`Đã quét block ${index + 1}: ${chosen}`, 'done');
+    const payload = {
+      columns: allCols.map(col => String(col || '').trim().toUpperCase()).filter(Boolean),
+      counts: colsOut && typeof colsOut.counts === 'object' ? colsOut.counts : {},
+      drive_columns: Array.isArray(colsOut?.drive_columns) ? colsOut.drive_columns : [],
+      samples: colsOut && typeof colsOut.samples === 'object' ? colsOut.samples : {},
+    };
+    const startRow = Math.max(1, Number(block.start_line || 4) || 4);
+    const cacheKey = `${rawSheetUrl}|${chosen}|${startRow}`;
+    sheetColumnSuggestCache[cacheKey] = { ...payload, ts: Date.now() };
+    const modeKey = String(currentRunMode || 'seeding').toLowerCase();
+    sheetLinkSuggestLoadedByMode[modeKey] = true;
+    sheetLinkSuggestPayloadByMode[modeKey] = payload;
+    sheetLinkSuggestSourceKeyByMode[modeKey] = cacheKey;
+    setStatus(
+      pickedUrl
+        ? `Đã quét block ${index + 1}: ${chosen} · Link ${pickedUrl}`
+        : `Đã quét block ${index + 1}: ${chosen} · không tìm thấy cột link`,
+      pickedUrl ? 'done' : 'failed'
+    );
     renderMappingEditor();
+    renderSheetLinkSuggestions(payload);
   } catch (e) {
     alert(e.message);
   }
@@ -6367,6 +6507,8 @@ function renderMappingEditor() {
       if (currentRunMode === 'seeding') {
         const preferredName = String(block.sheet_name || block.name || '').trim();
         if (preferredName) block.name = preferredName;
+        const sharedDriveId = String(document.getElementById('drive_id')?.value || '').trim();
+        if (!String(block.drive_id || '').trim() && sharedDriveId) block.drive_id = sharedDriveId;
       }
       const rows = fields.map(field => {
         const value = block[field.key] ?? '';
@@ -6376,8 +6518,8 @@ function renderMappingEditor() {
         if (field.key === 'col_air_date') {
           return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" placeholder="${esc(getTodayLocalDateString())}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" onclick="openAirDatePicker('${currentRunMode}', ${index})">...</button><input id="air_date_picker_${currentRunMode}_${index}" type="date" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" onchange="applyAirDate('${currentRunMode}', ${index}, this.value)" /></div>`;
         }
-        if (currentRunMode === 'seeding' && field.key === 'sheet_url') {
-          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" placeholder="https://docs.google.com/spreadsheets/d/..." oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" title="Quét sheet & cột link" onclick="scanSeedingBlockSheet(${index})">🔎</button></div>`;
+        if (currentRunMode === 'seeding' && field.key === 'sheet_name') {
+          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" list="sheet_name_suggestions" placeholder="Tên tab (sheet)" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" title="Quét tab này & cột link" onclick="scanSeedingBlockSheet(${index})">🔎</button></div>`;
         }
         const inputType = field.type === 'number' ? 'number' : 'text';
         if (field.key === 'name') {
@@ -6386,8 +6528,15 @@ function renderMappingEditor() {
         return `<div class="mapping-label">${esc(field.label)}</div><div><input id="${esc(inputId)}" class="mapping-input" type="${inputType}" value="${esc(value)}"${listAttr}${focusAttr} oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /></div>`;
       }).join('');
       const chromePort = getChromePortForBlock(index, currentRunMode);
-        const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
-      return `<section class="${blockClass}"><div class="mapping-block-grid">${rows}${chromeRow}</div></section>`;
+      const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
+      const blockTitle = currentRunMode === 'seeding'
+        ? String(block?.sheet_name || block?.name || `Post ${index + 1}`)
+        : String(block?.name || `Post ${index + 1}`);
+      const blockHead = `<div class="mapping-block-head">
+        <div class="mapping-block-title">${esc(blockTitle)}</div>
+        ${blocks.length > 1 ? `<button class="btn red mapping-remove" type="button" onclick="removeMappingBlock(${index})">x</button>` : ''}
+      </div>`;
+      return `<section class="${blockClass}">${blockHead}<div class="mapping-block-grid">${rows}${chromeRow}</div></section>`;
     }).join('')}</div>`;
   }
   const addRow = document.querySelector('.mapping-add-row');
@@ -6443,6 +6592,16 @@ function applyRunModeUI() {
   });
   const runTitle = document.getElementById('runTitleText');
   if (runTitle) runTitle.textContent = formatRunTitle(currentRunMode);
+  const sheetNameField = document.getElementById('sheet_name_field');
+  if (sheetNameField) {
+    sheetNameField.style.display = currentRunMode === 'seeding' ? 'none' : '';
+  }
+  if (currentRunMode === 'seeding') {
+    const blocks = ensureMappingBlocks('seeding');
+    const firstBlockName = String(blocks?.[0]?.sheet_name || blocks?.[0]?.name || '').trim();
+    const sheetNameInput = document.getElementById('sheet_name');
+    if (sheetNameInput && firstBlockName) sheetNameInput.value = firstBlockName;
+  }
   const scanNegativeFilterCard = document.getElementById('scanNegativeFilterCard');
   if (scanNegativeFilterCard) scanNegativeFilterCard.style.display = 'none';
   renderBookingRunExtraToggles();
@@ -9904,16 +10063,16 @@ def start_job(request: Request, payload: JobStartRequest):
 
     multi_seeding_blocks: list[dict[str, Any]] = []
     if run_mode == "seeding":
-        candidate_blocks = [m for m in mapping_payload if str(m.get("sheet_url", "")).strip()]
+        candidate_blocks = [m for m in mapping_payload if str(m.get("sheet_name", "")).strip() or str(m.get("name", "")).strip()]
         if candidate_blocks:
             if len(candidate_blocks) > 3:
                 raise HTTPException(status_code=400, detail="Seeding hiện hỗ trợ tối đa 3 sheet / 1 lần chạy")
             for idx, block in enumerate(candidate_blocks, start=1):
-                block_sheet_url = evidence.normalize_sheet_input(str(block.get("sheet_url", "")).strip())
+                block_sheet_url = sheet_url
                 block_sheet_name = str(block.get("sheet_name", "")).strip() or str(block.get("name", "")).strip()
                 block_drive_id = evidence.normalize_drive_folder_input(str(block.get("drive_id", "")).strip() or drive_id)
                 if not block_sheet_url:
-                    raise HTTPException(status_code=400, detail=f"Block {idx}: thiếu link Sheet")
+                    raise HTTPException(status_code=400, detail="Thiếu Sheet URL chính")
                 if not block_sheet_name:
                     raise HTTPException(status_code=400, detail=f"Block {idx}: thiếu Sheet Name")
                 try:
