@@ -3374,6 +3374,11 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .monitor-progress-track{height:12px;border-radius:999px;background:#dbe4f0;overflow:hidden;margin-top:14px}
 .monitor-progress-track span{display:block;height:100%;width:0;background:linear-gradient(90deg,#6b63ff,#7d77ff);transition:width .35s ease}
 .monitor-progress-detail{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.45;min-height:18px}
+.monitor-block-progress{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.monitor-block-progress[hidden]{display:none}
+.monitor-block-progress-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.monitor-block-progress-name{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.monitor-block-progress-meta{font-size:11px;color:var(--muted);white-space:nowrap}
 .monitor-error-main{margin-top:10px}
 .monitor-error-stats{display:flex;flex-wrap:wrap;gap:8px}
 .monitor-error-stat{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:999px;border:1px solid rgba(91,147,211,.22);background:var(--blue-soft);color:var(--blue);font-size:12px;font-weight:700}
@@ -3870,6 +3875,7 @@ linear-gradient(to right, transparent, transparent)}
                 </div>
                 <div class="monitor-progress-track"><span id="runMonitorBar"></span></div>
                 <div id="runMonitorProgressMeta" class="monitor-progress-detail">-</div>
+                <div id="runMonitorBlockProgress" class="monitor-block-progress" hidden></div>
               </section>
               <section class="monitor-mini">
                 <div id="runMonitorErrorLabel" class="monitor-mini-label">Loi theo link sheet</div>
@@ -8031,6 +8037,7 @@ function renderRunMonitor(snapshot, logs) {
   document.getElementById('runMonitorProgressMeta').textContent = detailText
     ? `${detailText}${etaText ? ' · ' + etaText : ''}`
     : (etaText || '-');
+  renderRunMonitorBlockProgress(st, logItems);
   document.getElementById('runMonitorErrorMain').innerHTML = `
     <div class="monitor-error-stats">
       <span class="monitor-error-stat success">${esc(t('success'))} <strong>${esc(successCount)}</strong></span>
@@ -8831,6 +8838,79 @@ function scheduleSheetNameSuggestions(force = false) {
   sheetNameSuggestTimer = setTimeout(() => {
     fetchSheetNameSuggestions(force);
   }, force ? 0 : SHEET_NAME_SUGGEST_DEBOUNCE_MS);
+}
+
+function getMonitorRequestBlocks(snapshot) {
+  const request = snapshot?.request || {};
+  const multi = Array.isArray(request?.multi_seeding_blocks) ? request.multi_seeding_blocks : [];
+  if (multi.length) {
+    return multi.map((block, index) => ({
+      name: String(block?.name || '').trim() || `Post ${index + 1}`,
+    }));
+  }
+  const mapping = Array.isArray(request?.mapping) ? request.mapping : [];
+  if (mapping.length) {
+    return mapping.map((block, index) => ({
+      name: String(block?.name || '').trim() || `Post ${index + 1}`,
+    }));
+  }
+  return [];
+}
+
+function isDoneLikeLog(log) {
+  const state = String(log?.state || '').trim().toUpperCase();
+  const result = String(log?.result || '').trim().toUpperCase();
+  const tag = String(log?.tag || '').trim().toUpperCase();
+  if (['OK', 'ERROR', 'UNAVAILABLE'].includes(result)) return true;
+  if (['OK', 'ERROR', 'UNAVAILABLE'].includes(state)) return true;
+  if (['OK', 'ERROR', 'UNAVAILABLE'].includes(tag)) return true;
+  return false;
+}
+
+function renderRunMonitorBlockProgress(snapshot, logs) {
+  const host = document.getElementById('runMonitorBlockProgress');
+  if (!host) return;
+  const blocks = getMonitorRequestBlocks(snapshot);
+  if (!blocks.length) {
+    host.hidden = true;
+    host.innerHTML = '';
+    return;
+  }
+  const rowsByBlock = new Map();
+  blocks.forEach(block => {
+    const key = String(block.name || '').trim().toLowerCase();
+    rowsByBlock.set(key, {
+      name: block.name,
+      doneRows: new Set(),
+      okRows: new Set(),
+      failedRows: new Set(),
+      unavailableRows: new Set(),
+    });
+  });
+  (Array.isArray(logs) ? logs : []).forEach(item => {
+    const postName = getLogPostLabel(item);
+    const key = String(postName || '').trim().toLowerCase();
+    const bucket = rowsByBlock.get(key);
+    if (!bucket) return;
+    const row = Number(item?.row || 0);
+    const result = String(item?.result || item?.state || item?.tag || '').trim().toUpperCase();
+    if (isDoneLikeLog(item) && row > 0) bucket.doneRows.add(row);
+    if (result === 'OK' && row > 0) bucket.okRows.add(row);
+    if (result === 'ERROR' && row > 0) bucket.failedRows.add(row);
+    if (result === 'UNAVAILABLE' && row > 0) bucket.unavailableRows.add(row);
+  });
+  const rows = Array.from(rowsByBlock.values());
+  host.innerHTML = rows.map(item => {
+    const done = item.doneRows.size;
+    const ok = item.okRows.size;
+    const failed = item.failedRows.size;
+    const unavailable = item.unavailableRows.size;
+    return `<div class="monitor-block-progress-row">
+      <div class="monitor-block-progress-name">${esc(item.name)}</div>
+      <div class="monitor-block-progress-meta">${esc(`${done} done · OK ${ok} · Lỗi ${failed} · KKG ${unavailable}`)}</div>
+    </div>`;
+  }).join('');
+  host.hidden = false;
 }
 
 function bindSheetNameAutocomplete() {
