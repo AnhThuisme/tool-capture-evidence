@@ -7798,7 +7798,7 @@ function renderProjects() {
           <div class="project-item-side">
             ${statusBadge(job.status)}
             <span class="project-item-progress">${jobSummary.done || 0}/${jobSummary.total || 0}</span>
-            ${isAdminUser() && isJobOwnedByCurrentUser(job) ? `<button type="button" class="project-delete-btn" title="${esc(t('deleteLabel'))}" onclick="deleteProject('${job.id}', event)">
+            ${isAdminUser() ? `<button type="button" class="project-delete-btn" title="${esc(t('deleteLabel'))}" onclick="deleteProject('${job.id}', event)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 12h10l1-12"></path><path d="M9 7V4h6v3"></path></svg>
             </button>` : ''}
           </div>
@@ -10052,9 +10052,12 @@ def retry_job_errors(job_id: str, request: Request):
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str, request: Request):
     owner_email = _require_api_auth(request)
+    can_manage_all = _is_admin_email(owner_email)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-        if not job or _job_owner_email(job) != owner_email:
+        if not job:
+            raise HTTPException(status_code=404, detail="Không tìm thấy job")
+        if (not can_manage_all) and (_job_owner_email(job) != owner_email):
             raise HTTPException(status_code=404, detail="Không tìm thấy job")
         if str(job.get("status") or "").strip().lower() in {"running", "paused"}:
             raise HTTPException(status_code=409, detail="Không thể xóa job đang chạy hoặc đang tạm dừng")
