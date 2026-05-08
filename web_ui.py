@@ -4430,7 +4430,7 @@ const I18N = {
     linkUrl: 'Link URL',
     driveUrl: 'Drive URL',
     screenshotColumn: 'Screenshot',
-    airDate: 'Air Date',
+    airDate: 'Date',
     sheetUrl: 'Sheet URL',
     sheetName: 'Tên Sheet',
     driveFolder: 'Drive Folder ID',
@@ -4805,7 +4805,7 @@ const I18N = {
     linkUrl: 'Link URL',
     driveUrl: 'Drive URL',
     screenshotColumn: 'Screenshot',
-    airDate: 'Air Date',
+    airDate: 'Date',
     sheetUrl: 'Sheet URL',
     sheetName: 'Sheet Name',
     driveFolder: 'Drive Folder ID',
@@ -5171,7 +5171,9 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
   if (key === 'seeding') {
     next.col_profile = '';
     next.col_content = '';
+    if (!String(next.col_air_date || '').trim()) next.col_air_date = getTodayLocalDateString();
   } else if (key === 'booking') {
+    if (!String(next.col_air_date || '').trim()) next.col_air_date = getTodayLocalDateString();
   } else if (key === 'scan') {
     next.col_profile = '';
     next.col_screenshot = '';
@@ -5303,7 +5305,7 @@ function defaultMappingBlock(mode, index = 1) {
     col_url: 'K',
     col_drive: 'L',
     col_screenshot: 'J',
-    col_air_date: '',
+    col_air_date: getTodayLocalDateString(),
     fixed_air_date: '',
     manual_link: '',
     mode: isBooking ? 'booking' : 'seeding'
