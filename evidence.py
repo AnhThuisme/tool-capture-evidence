@@ -2609,6 +2609,50 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
     return False
 
 
+def is_tiktok_access_denied_page(driver, source_url: str = "") -> bool:
+    try:
+        txt_raw = (
+            driver.execute_script(
+                "return (document.body && document.body.innerText) ? document.body.innerText : ''"
+            )
+            or ""
+        )
+    except Exception:
+        txt_raw = ""
+    txt = str(txt_raw or "").lower()
+    txt_norm = normalize_match_text(txt_raw or "")
+    try:
+        cur = str(driver.current_url or "").lower()
+    except Exception:
+        cur = ""
+    try:
+        title = str(driver.title or "").lower()
+    except Exception:
+        title = ""
+    src = str(source_url or "").lower()
+    scope = f"{src} {cur} {title} {txt}"
+    if "tiktok.com" not in scope:
+        return False
+    markers_raw = [
+        "access to www.tiktok.com was denied",
+        "access to tiktok.com was denied",
+        "you don't have authorization to view this page",
+        "you do not have authorization to view this page",
+        "http error 403",
+        "error 403",
+        "access denied",
+        "reference #18.",
+    ]
+    markers_norm = [normalize_match_text(m) for m in markers_raw]
+    if any(m in txt for m in markers_raw):
+        return True
+    if any(m in title for m in ("access denied", "http error 403", "error 403", "forbidden")):
+        return True
+    if any(mn and mn in txt_norm for mn in markers_norm):
+        return True
+    return False
+
+
 def has_please_wait_overlay(driver) -> bool:
     try:
         txt_raw = (
@@ -6031,6 +6075,35 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         "ok",
                                     )
                                     time.sleep(TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC)
+
+                                # TikTok may randomly show "Access Denied" on first load but succeed after reload.
+                                max_denied_retry = 2
+                                denied_cleared = False
+                                for denied_attempt in range(max_denied_retry + 1):
+                                    if not is_tiktok_access_denied_page(worker_driver, url):
+                                        denied_cleared = True
+                                        break
+                                    if denied_attempt >= max_denied_retry:
+                                        break
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "RETRY",
+                                        (
+                                            f"{block_name}: TikTok tạm chặn Access Denied, "
+                                            f"đang thử tải lại ({denied_attempt + 1}/{max_denied_retry})..."
+                                        ),
+                                        "start",
+                                    )
+                                    try:
+                                        worker_driver.get(url)
+                                        wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
+                                        time.sleep(1.2)
+                                    except Exception:
+                                        pass
+                                if not denied_cleared and is_tiktok_access_denied_page(worker_driver, url):
+                                    raise Exception("TIKTOK_ACCESS_DENIED_PERSIST")
                                 try:
                                     current_tiktok_url = str(worker_driver.current_url or "").strip()
                                 except Exception:
