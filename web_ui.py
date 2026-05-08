@@ -2239,6 +2239,16 @@ def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows:
                     or evidence.normalize_scan_source_url(display_cell)
                     or ""
                 )
+            if not url and display_cell:
+                # Fallback: URL may be embedded in rich-text / prefixed text.
+                m = re.search(r"https?://[^\s)\"'>]+", display_cell, flags=re.IGNORECASE)
+                if m:
+                    raw_candidate = str(m.group(0) or "").strip().rstrip(".,;")
+                    url = (
+                        evidence.normalize_web_source_url(raw_candidate)
+                        or evidence.normalize_scan_source_url(raw_candidate)
+                        or raw_candidate
+                    )
             if not url:
                 continue
             col_letter = evidence.col_index_to_letter(col_idx + 1)
