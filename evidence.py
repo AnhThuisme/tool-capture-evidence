@@ -79,6 +79,9 @@ TIKTOK_CAPTCHA_POLL_SEC = 1.0
 TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC = 0.7
 TIKTOK_BRING_TO_FRONT_INTERVAL_SEC = 8.0
 TIKTOK_CAPTCHA_FORCE_FOCUS = True
+TIKTOK_ACCESS_DENIED_RETRY_MAX = 4
+TIKTOK_ACCESS_DENIED_RETRY_SLEEP_SEC = 1.6
+TIKTOK_REDIRECT_WAIT_SEC = 4.0
 PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = 2.0
 MULTI_CAPTURE_INTERVAL_SEC = 5.0
 FB_COMMENT_READY_WAIT = 4.0
@@ -2651,6 +2654,35 @@ def is_tiktok_access_denied_page(driver, source_url: str = "") -> bool:
     if any(mn and mn in txt_norm for mn in markers_norm):
         return True
     return False
+
+
+def wait_tiktok_redirect_ready(
+    driver,
+    requested_url: str,
+    timeout_sec: float = TIKTOK_REDIRECT_WAIT_SEC,
+) -> str:
+    deadline = time.time() + max(0.5, float(timeout_sec or TIKTOK_REDIRECT_WAIT_SEC))
+    last_url = ""
+    stable_hits = 0
+    while time.time() < deadline:
+        try:
+            cur = str(driver.current_url or "").strip()
+        except Exception:
+            cur = ""
+        if cur:
+            if cur == last_url:
+                stable_hits += 1
+            else:
+                stable_hits = 1
+                last_url = cur
+            # url stops changing for a short window => redirect likely completed
+            if stable_hits >= 2:
+                return cur
+            # if final page already matches expected video id, no need to wait more
+            if _is_expected_tiktok_page(requested_url, cur):
+                return cur
+        time.sleep(0.35)
+    return last_url
 
 
 def has_please_wait_overlay(driver) -> bool:
@@ -6043,6 +6075,12 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             url_lower = url.lower()
                             is_tiktok = "tiktok.com" in url_lower or "vt.tiktok.com" in url_lower
                             if is_tiktok:
+                                # Redirect chains (especially vt.tiktok.com) may need a short settle window.
+                                wait_tiktok_redirect_ready(
+                                    worker_driver,
+                                    requested_url=url,
+                                    timeout_sec=TIKTOK_REDIRECT_WAIT_SEC,
+                                )
                                 try:
                                     worker_driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                                     time.sleep(TIKTOK_SCROLL_WAIT_1)
@@ -6077,7 +6115,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     time.sleep(TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC)
 
                                 # TikTok may randomly show "Access Denied" on first load but succeed after reload.
-                                max_denied_retry = 2
+                                max_denied_retry = max(1, int(TIKTOK_ACCESS_DENIED_RETRY_MAX or 4))
                                 denied_cleared = False
                                 for denied_attempt in range(max_denied_retry + 1):
                                     if not is_tiktok_access_denied_page(worker_driver, url):
@@ -6099,13 +6137,22 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     try:
                                         worker_driver.get(url)
                                         wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
-                                        time.sleep(1.2)
+                                        wait_tiktok_redirect_ready(
+                                            worker_driver,
+                                            requested_url=url,
+                                            timeout_sec=TIKTOK_REDIRECT_WAIT_SEC,
+                                        )
+                                        time.sleep(max(0.6, float(TIKTOK_ACCESS_DENIED_RETRY_SLEEP_SEC or 1.6)))
                                     except Exception:
                                         pass
                                 if not denied_cleared and is_tiktok_access_denied_page(worker_driver, url):
                                     raise Exception("TIKTOK_ACCESS_DENIED_PERSIST")
                                 try:
-                                    current_tiktok_url = str(worker_driver.current_url or "").strip()
+                                    current_tiktok_url = wait_tiktok_redirect_ready(
+                                        worker_driver,
+                                        requested_url=url,
+                                        timeout_sec=TIKTOK_REDIRECT_WAIT_SEC,
+                                    )
                                 except Exception:
                                     current_tiktok_url = ""
                                 if current_tiktok_url and (not _is_expected_tiktok_page(url, current_tiktok_url)):
