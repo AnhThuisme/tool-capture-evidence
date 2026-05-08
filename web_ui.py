@@ -2212,7 +2212,13 @@ def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows:
     try:
         display_rows = worksheet.get(cell_range, value_render_option="UNFORMATTED_VALUE") or []
     except Exception:
-        display_rows = worksheet.get(cell_range) or []
+        try:
+            display_rows = worksheet.get(cell_range) or []
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Không đọc được dữ liệu sheet ở vùng {cell_range}: {exc}",
+            ) from exc
     try:
         formula_rows = worksheet.get(cell_range, value_render_option="FORMULA") or []
     except Exception:
@@ -9429,37 +9435,42 @@ def list_sheet_link_columns(
     start_row: int = 4,
     force: bool = False,
 ):
-    user_email = _require_api_auth(request)
-    saved = _read_saved_settings(user_email)
-    cred_path = str(credentials_path or "").strip() or str(saved.get("credentials_path", "")).strip()
-    name = str(sheet_name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
-    cache_key = _sheet_link_columns_cache_key(user_email, sheet_url, name, cred_path, start_row)
-    if force:
-        _clear_sheet_link_columns_cache(user_email, sheet_url, name, cred_path)
-        cached_payload = None
-    else:
-        cached_payload = _get_cached_sheet_link_columns(cache_key)
-    if cached_payload is not None:
+    try:
+        user_email = _require_api_auth(request)
+        saved = _read_saved_settings(user_email)
+        cred_path = str(credentials_path or "").strip() or str(saved.get("credentials_path", "")).strip()
+        name = str(sheet_name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
+        cache_key = _sheet_link_columns_cache_key(user_email, sheet_url, name, cred_path, start_row)
+        if force:
+            _clear_sheet_link_columns_cache(user_email, sheet_url, name, cred_path)
+            cached_payload = None
+        else:
+            cached_payload = _get_cached_sheet_link_columns(cache_key)
+        if cached_payload is not None:
+            return {
+                "ok": True,
+                "sheet_url": evidence.normalize_sheet_input(sheet_url),
+                "sheet_name": name,
+                "cached": True,
+                **cached_payload,
+            }
+        spreadsheet = _open_spreadsheet(sheet_url, cred_path)
+        worksheet = _resolve_worksheet(spreadsheet, sheet_url, name)
+        payload = _extract_sheet_link_columns(worksheet, start_row=start_row)
+        _store_cached_sheet_link_columns(cache_key, payload)
         return {
             "ok": True,
             "sheet_url": evidence.normalize_sheet_input(sheet_url),
-            "sheet_name": name,
-            "cached": True,
-            **cached_payload,
+            "sheet_name": str(getattr(worksheet, "title", name) or name),
+            "cached": False,
+            **payload,
         }
-    spreadsheet = _open_spreadsheet(sheet_url, cred_path)
-    worksheet = _resolve_worksheet(spreadsheet, sheet_url, name)
-    payload = _extract_sheet_link_columns(worksheet, start_row=start_row)
-    _store_cached_sheet_link_columns(cache_key, payload)
-    return {
-        "ok": True,
-        "sheet_url": evidence.normalize_sheet_input(sheet_url),
-        "sheet_name": str(getattr(worksheet, "title", name) or name),
-        "cached": False,
-        **payload,
-    }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Không quét được cột link: {exc}") from exc
 
 
 @app.post("/api/sheets/quick-block-columns")
