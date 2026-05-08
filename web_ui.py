@@ -361,7 +361,7 @@ class SettingsUpdateRequest(BaseModel):
     scan_keyword_terms: str = ""
     viewport_width: int = 1920
     viewport_height: int = 1400
-    page_timeout_ms: int = 3000
+    page_timeout_ms: int = 200
     tiktok_captcha_wait_sec: int = 15
     please_wait_delay_sec: float = 2.0
     tiktok_force_focus: bool = True
@@ -1937,7 +1937,7 @@ def _settings_defaults() -> dict[str, Any]:
 def _apply_runtime_settings(data: dict[str, Any]) -> None:
     width = max(320, int(data.get("viewport_width", 1920) or 1920))
     height = max(320, int(data.get("viewport_height", 1400) or 1400))
-    timeout_ms = max(500, int(data.get("page_timeout_ms", 3000) or 3000))
+    timeout_ms = max(200, int(data.get("page_timeout_ms", 200) or 200))
     tiktok_captcha_wait_sec = max(5, int(data.get("tiktok_captcha_wait_sec", 15) or 15))
     please_wait_delay_sec = max(0.0, float(data.get("please_wait_delay_sec", 2.0) or 2.0))
     tiktok_force_focus = bool(data.get("tiktok_force_focus", True))
@@ -4092,7 +4092,7 @@ linear-gradient(to right, transparent, transparent)}
               </div>
               <div class="field" style="margin-top:12px">
                 <label for="settings_page_timeout_ms">Page timeout (ms)</label>
-                <input id="settings_page_timeout_ms" type="number" min="500" step="100" />
+                <input id="settings_page_timeout_ms" type="number" min="200" step="50" />
               </div>
               <div class="list-row" style="margin-top:12px">
                 <div>
@@ -8861,7 +8861,7 @@ function buildSettingsSavePayload() {
     scan_keyword_terms: getScanKeywordTermsValue(),
     viewport_width: Number(document.getElementById('settings_viewport_width')?.value || 1920),
     viewport_height: Number(document.getElementById('settings_viewport_height')?.value || 1400),
-    page_timeout_ms: Number(document.getElementById('settings_page_timeout_ms')?.value || 3000),
+    page_timeout_ms: Number(document.getElementById('settings_page_timeout_ms')?.value || 200),
     // Code-managed runtime fields: persist from current settings/runtime only.
     tiktok_captcha_wait_sec: Number(currentSettingsCache.tiktok_captcha_wait_sec || 15),
     please_wait_delay_sec: Number(currentSettingsCache.please_wait_delay_sec ?? 2),
@@ -8919,7 +8919,7 @@ async function loadDefaults() {
   applyRunFlagsForMode(currentRunMode);
   document.getElementById('settings_viewport_width').value = s.viewport_width || 1920;
   document.getElementById('settings_viewport_height').value = s.viewport_height || 1400;
-  document.getElementById('settings_page_timeout_ms').value = s.page_timeout_ms || 3000;
+  document.getElementById('settings_page_timeout_ms').value = s.page_timeout_ms || 200;
   const tiktokWaitNode = document.getElementById('settings_tiktok_captcha_wait_sec');
   if (tiktokWaitNode) tiktokWaitNode.value = s.tiktok_captcha_wait_sec || 15;
   const pleaseWaitNode = document.getElementById('settings_please_wait_delay_sec');
@@ -9586,7 +9586,7 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
         "scan_keyword_terms": str(payload.scan_keyword_terms or ""),
         "viewport_width": max(320, int(payload.viewport_width or 1920)),
         "viewport_height": max(320, int(payload.viewport_height or 1400)),
-        "page_timeout_ms": max(500, int(payload.page_timeout_ms or 3000)),
+        "page_timeout_ms": max(200, int(payload.page_timeout_ms or 200)),
         # Force these values from code-level runtime constants (ignore UI payload).
         "tiktok_captcha_wait_sec": fixed_tiktok_wait,
         "please_wait_delay_sec": fixed_please_wait,
@@ -9732,7 +9732,7 @@ def start_job(request: Request, payload: JobStartRequest):
         "scan_keyword_terms": resolved_keyword_terms,
         "viewport_width": int(merged_settings.get("viewport_width", 1920) or 1920),
         "viewport_height": int(merged_settings.get("viewport_height", 1400) or 1400),
-        "page_timeout_ms": int(merged_settings.get("page_timeout_ms", 3000) or 3000),
+        "page_timeout_ms": int(merged_settings.get("page_timeout_ms", 200) or 200),
         "tiktok_captcha_wait_sec": int(merged_settings.get("tiktok_captcha_wait_sec", 15) or 15),
         "please_wait_delay_sec": float(merged_settings.get("please_wait_delay_sec", 2.0) or 2.0),
         "tiktok_force_focus": bool(merged_settings.get("tiktok_force_focus", True)),
