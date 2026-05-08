@@ -301,6 +301,9 @@ class WebAppAdapter:
 class MappingBlock(BaseModel):
     name: str = "Post 1"
     start_line: int = 4
+    sheet_url: str = ""
+    sheet_name: str = ""
+    drive_id: str = ""
     col_url: str = ""
     col_profile: str = ""
     col_content: str = ""
@@ -701,6 +704,9 @@ def _normalize_saved_mapping_block(raw: Any, mode: str, index: int) -> dict[str,
     evidence.write_log(f"[DEBUG] _normalize_saved_mapping_block(mode={mode_key}, index={index}): raw['start_line']={raw.get('start_line') if isinstance(raw, dict) else None}, result['start_line']={base['start_line']}")
     text_keys = (
         "name",
+        "sheet_url",
+        "sheet_name",
+        "drive_id",
         "col_url",
         "col_profile",
         "col_content",
@@ -2652,6 +2658,9 @@ def _default_mapping(start_line: int, run_mode: str = "seeding") -> dict[str, An
         return {
             "name": "Scan 1",
             "start_line": int(start_line),
+            "sheet_url": "",
+            "sheet_name": "",
+            "drive_id": "",
             "col_url": "F",
             "col_profile": "",
             "col_content": "E",
@@ -2665,6 +2674,9 @@ def _default_mapping(start_line: int, run_mode: str = "seeding") -> dict[str, An
         return {
             "name": "Post 1",
             "start_line": int(start_line),
+            "sheet_url": "",
+            "sheet_name": "",
+            "drive_id": "",
             "col_url": "K",
             "col_profile": "B",
             "col_content": "I",
@@ -2677,6 +2689,9 @@ def _default_mapping(start_line: int, run_mode: str = "seeding") -> dict[str, An
     return {
         "name": "Post 1",
         "start_line": int(start_line),
+        "sheet_url": "",
+        "sheet_name": "",
+        "drive_id": "",
         "col_url": "K",
         "col_profile": "",
         "col_content": "",
@@ -2778,18 +2793,41 @@ def _run_job(job_id: str):
             restore_focus_hook = _install_tiktok_focus_boost_hook(
                 bool(runtime_settings.get("tiktok_force_focus", True))
             )
-        evidence.main_logic(
-            app_adapter,
-            req["drive_id"],
-            req["sheet_url"],
-            req["sheet_name"],
-            start_line=req["start_line"],
-            browser_port=req["browser_port"],
-            mappings=req["mappings"],
-            primary_profile_path=req.get("profile_path"),
-            target_rows=req.get("target_rows"),
-            target_block_name=req.get("target_block_name"),
-        )
+        multi_seeding_blocks = list(req.get("multi_seeding_blocks") or [])
+        if multi_seeding_blocks and _normalize_run_mode(req.get("mode")) == "seeding":
+            total_multi = len(multi_seeding_blocks)
+            for idx, block in enumerate(multi_seeding_blocks, start=1):
+                with JOBS_LOCK:
+                    live_job = JOBS.get(job_id)
+                    if live_job:
+                        live_job["detail"] = f"Sheet {idx}/{total_multi}: {str(block.get('sheet_name') or '').strip() or '...'}"
+                _persist_jobs(force=False)
+                block_mapping = dict(block.get("mapping") or {})
+                evidence.main_logic(
+                    app_adapter,
+                    str(block.get("drive_id", req.get("drive_id", ""))),
+                    str(block.get("sheet_url", req.get("sheet_url", ""))),
+                    str(block.get("sheet_name", req.get("sheet_name", ""))),
+                    start_line=int(block_mapping.get("start_line") or req.get("start_line") or 4),
+                    browser_port=req["browser_port"],
+                    mappings=[block_mapping] if block_mapping else req["mappings"],
+                    primary_profile_path=req.get("profile_path"),
+                    target_rows=req.get("target_rows"),
+                    target_block_name=req.get("target_block_name"),
+                )
+        else:
+            evidence.main_logic(
+                app_adapter,
+                req["drive_id"],
+                req["sheet_url"],
+                req["sheet_name"],
+                start_line=req["start_line"],
+                browser_port=req["browser_port"],
+                mappings=req["mappings"],
+                primary_profile_path=req.get("profile_path"),
+                target_rows=req.get("target_rows"),
+                target_block_name=req.get("target_block_name"),
+            )
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if job:
@@ -5171,13 +5209,22 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
   if (key === 'seeding') {
     next.col_profile = '';
     next.col_content = '';
+    next.sheet_url = String(next.sheet_url || '').trim();
+    next.sheet_name = String(next.sheet_name || '').trim();
+    next.drive_id = String(next.drive_id || '').trim();
     if (!String(next.col_air_date || '').trim()) next.col_air_date = getTodayLocalDateString();
   } else if (key === 'booking') {
+    next.sheet_url = '';
+    next.sheet_name = '';
+    next.drive_id = '';
     if (!String(next.col_air_date || '').trim()) next.col_air_date = getTodayLocalDateString();
   } else if (key === 'scan') {
     next.col_profile = '';
     next.col_screenshot = '';
     next.col_air_date = '';
+    next.sheet_url = '';
+    next.sheet_name = '';
+    next.drive_id = '';
   }
   return next;
 }
@@ -5300,6 +5347,9 @@ function defaultMappingBlock(mode, index = 1) {
   return {
     name: `Post ${blockIndex}`,
     start_line: 4,
+    sheet_url: '',
+    sheet_name: '',
+    drive_id: '',
     col_profile: isBooking ? 'B' : '',
     col_content: isBooking ? 'I' : '',
     col_url: 'K',
@@ -5335,7 +5385,7 @@ function mappingFieldsForMode(mode) {
   }
   if (mode === 'seeding') {
     return [
-      { key: 'name', label: t('postName') },
+      { key: 'sheet_url', label: t('sheetUrl') },
       { key: 'col_air_date', label: t('airDate') },
       { key: 'col_url', label: t('linkUrl') },
       { key: 'col_drive', label: t('driveUrl') },
@@ -6076,6 +6126,10 @@ function removeMappingBlock(index) {
 
 function addMappingBlock() {
   const blocks = ensureMappingBlocks(currentRunMode);
+  if (currentRunMode === 'seeding' && blocks.length >= 3) {
+    alert('Seeding hiện hỗ trợ tối đa 3 block.');
+    return;
+  }
   blocks.push(defaultMappingBlock(currentRunMode, blocks.length + 1));
   pendingMappingScrollMode = currentRunMode;
   pendingMappingHighlightIndex = blocks.length - 1;
@@ -6108,6 +6162,53 @@ function openAirDatePicker(mode, index) {
 function applyAirDate(mode, index, value) {
   updateMappingBlock(mode, index, 'col_air_date', value || '');
   renderMappingEditor();
+}
+
+async function scanSeedingBlockSheet(index) {
+  if (currentRunMode !== 'seeding') return;
+  const blocks = ensureMappingBlocks('seeding');
+  const block = blocks[index];
+  if (!block) return;
+  const rawSheetUrl = String(block.sheet_url || '').trim();
+  if (!rawSheetUrl) {
+    alert('Nhập link Sheet ở block này trước.');
+    return;
+  }
+  try {
+    const qsNames = new URLSearchParams({ sheet_url: rawSheetUrl });
+    if (currentSettingsCache.credentials_path) qsNames.set('credentials_path', currentSettingsCache.credentials_path);
+    const namesOut = await req('/api/sheets/names?' + qsNames.toString());
+    const titles = Array.isArray(namesOut?.titles) ? namesOut.titles.filter(Boolean) : [];
+    if (!titles.length) throw new Error('Sheet này không có tab nào khả dụng.');
+    let chosen = String(block.sheet_name || '').trim();
+    if (!chosen || !titles.includes(chosen)) chosen = String(titles[0] || '').trim();
+    block.sheet_name = chosen;
+    block.name = chosen;
+    block.drive_id = String(document.getElementById('drive_id')?.value || '').trim();
+
+    const qsCols = new URLSearchParams({
+      sheet_url: rawSheetUrl,
+      sheet_name: chosen,
+      start_row: String(Number(block.start_line || 4) || 4),
+      force: '1',
+    });
+    if (currentSettingsCache.credentials_path) qsCols.set('credentials_path', currentSettingsCache.credentials_path);
+    const colsOut = await req('/api/sheets/column-suggestions?' + qsCols.toString());
+    const allCols = Array.isArray(colsOut?.columns) ? colsOut.columns : [];
+    const driveColsSet = new Set(Array.isArray(colsOut?.drive_columns) ? colsOut.drive_columns : []);
+    const pickedUrl = String(allCols.find(col => !driveColsSet.has(col)) || allCols[0] || '').trim().toUpperCase();
+    if (pickedUrl) {
+      block.col_url = pickedUrl;
+      const next1 = shiftSheetColumn(pickedUrl, 1);
+      const next2 = shiftSheetColumn(pickedUrl, 2);
+      if (next1) block.col_drive = next1;
+      if (next2) block.col_screenshot = next2;
+    }
+    setStatus(`Đã quét block ${index + 1}: ${chosen}`, 'done');
+    renderMappingEditor();
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 function isLocalWebHost() {
@@ -6257,6 +6358,10 @@ function renderMappingEditor() {
       const blockClass = pendingMappingScrollMode === currentRunMode && pendingMappingHighlightIndex === index
         ? 'mapping-block mapping-block-new'
         : 'mapping-block';
+      if (currentRunMode === 'seeding') {
+        const preferredName = String(block.sheet_name || block.name || '').trim();
+        if (preferredName) block.name = preferredName;
+      }
       const rows = fields.map(field => {
         const value = block[field.key] ?? '';
         const inputId = getMappingFieldInputId(currentRunMode, index, field.key);
@@ -6264,6 +6369,9 @@ function renderMappingEditor() {
         const focusAttr = isLinkSuggestionField(currentRunMode, field.key) ? ` onfocus="setSheetColumnTarget('${currentRunMode}', ${index}, '${field.key}')"` : '';
         if (field.key === 'col_air_date') {
           return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" placeholder="${esc(getTodayLocalDateString())}" oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" onclick="openAirDatePicker('${currentRunMode}', ${index})">...</button><input id="air_date_picker_${currentRunMode}_${index}" type="date" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px" onchange="applyAirDate('${currentRunMode}', ${index}, this.value)" /></div>`;
+        }
+        if (currentRunMode === 'seeding' && field.key === 'sheet_url') {
+          return `<div class="mapping-label">${esc(field.label)}</div><div class="mapping-field-combo"><input id="${esc(inputId)}" class="mapping-input" type="text" value="${esc(value)}" placeholder="https://docs.google.com/spreadsheets/d/..." oninput="updateMappingBlock('${currentRunMode}', ${index}, '${field.key}', this.value)" /><button class="btn mapping-icon-btn" type="button" title="Quét sheet & cột link" onclick="scanSeedingBlockSheet(${index})">🔎</button></div>`;
         }
         const inputType = field.type === 'number' ? 'number' : 'text';
         if (field.key === 'name') {
@@ -9708,8 +9816,51 @@ def start_job(request: Request, payload: JobStartRequest):
     credentials_input = str(payload.credentials_input or "").strip() or str(saved_settings.get("credentials_path", "")).strip()
     credentials_path = _resolve_credentials_input(credentials_input, owner_email)
 
+    mapping_payload = [m.model_dump() for m in payload.mappings] or [_default_mapping(payload.start_line, payload.run_mode)]
+    run_mode = _infer_job_mode(mapping_payload, fallback=run_mode)
     sheet_url = evidence.normalize_sheet_input(payload.sheet_url)
     raw_sheet_name = str(payload.sheet_name or "").strip()
+    drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
+
+    multi_seeding_blocks: list[dict[str, Any]] = []
+    if run_mode == "seeding":
+        candidate_blocks = [m for m in mapping_payload if str(m.get("sheet_url", "")).strip()]
+        if candidate_blocks:
+            if len(candidate_blocks) > 3:
+                raise HTTPException(status_code=400, detail="Seeding hiện hỗ trợ tối đa 3 sheet / 1 lần chạy")
+            for idx, block in enumerate(candidate_blocks, start=1):
+                block_sheet_url = evidence.normalize_sheet_input(str(block.get("sheet_url", "")).strip())
+                block_sheet_name = str(block.get("sheet_name", "")).strip() or str(block.get("name", "")).strip()
+                block_drive_id = evidence.normalize_drive_folder_input(str(block.get("drive_id", "")).strip() or drive_id)
+                if not block_sheet_url:
+                    raise HTTPException(status_code=400, detail=f"Block {idx}: thiếu link Sheet")
+                if not block_sheet_name:
+                    raise HTTPException(status_code=400, detail=f"Block {idx}: thiếu Sheet Name")
+                try:
+                    block_spreadsheet = _open_spreadsheet(block_sheet_url, credentials_path)
+                    block_worksheet = _resolve_worksheet(block_spreadsheet, block_sheet_url, block_sheet_name)
+                    resolved_block_sheet_name = str(getattr(block_worksheet, "title", block_sheet_name) or block_sheet_name).strip() or block_sheet_name
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(status_code=400, detail=f"Block {idx}: không mở được sheet: {exc}") from exc
+                block_mapping = dict(block)
+                block_mapping["name"] = resolved_block_sheet_name
+                block_mapping["sheet_name"] = resolved_block_sheet_name
+                block_mapping["sheet_url"] = block_sheet_url
+                block_mapping["drive_id"] = block_drive_id
+                multi_seeding_blocks.append(
+                    {
+                        "sheet_url": block_sheet_url,
+                        "sheet_name": resolved_block_sheet_name,
+                        "drive_id": block_drive_id,
+                        "mapping": block_mapping,
+                    }
+                )
+            sheet_url = multi_seeding_blocks[0]["sheet_url"]
+            raw_sheet_name = multi_seeding_blocks[0]["sheet_name"]
+            drive_id = multi_seeding_blocks[0]["drive_id"]
+
     if not raw_sheet_name:
         raise HTTPException(status_code=400, detail="Thiếu Sheet Name")
     # Validate target worksheet before starting runtime to avoid "running but no write"
@@ -9722,9 +9873,6 @@ def start_job(request: Request, payload: JobStartRequest):
         raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Không mở được sheet trước khi chạy: {exc}") from exc
-    drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
-    mapping_payload = [m.model_dump() for m in payload.mappings] or [_default_mapping(payload.start_line, payload.run_mode)]
-    run_mode = _infer_job_mode(mapping_payload, fallback=run_mode)
     merged_settings = _build_settings_payload(saved_settings)
     resolved_negative_terms = str(payload.scan_negative_terms or merged_settings.get("scan_negative_terms", "") or "")
     resolved_keyword_terms = str(payload.scan_keyword_terms or merged_settings.get("scan_keyword_terms", "") or "")
@@ -9807,6 +9955,8 @@ def start_job(request: Request, payload: JobStartRequest):
         "target_block_name": "",
         "mappings": mapping_payload,
     }
+    if multi_seeding_blocks:
+        request_snapshot["multi_seeding_blocks"] = multi_seeding_blocks
     try:
         resolved_cols = ", ".join(
             sorted(
