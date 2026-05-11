@@ -3808,7 +3808,7 @@ linear-gradient(to right, transparent, transparent)}
               <div class="run-grid">
                 <div class="field"><label>Sheet URL</label><input id="sheet_url" /><div id="sheet_url_hint" class="settings-note"></div></div>
                 <div id="sheet_name_field" class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
-                <input id="drive_id" type="hidden" />
+                <div id="drive_id_field" class="field"><label for="drive_id">Drive Folder ID</label><input id="drive_id" oninput="handleSharedDriveIdInput()" /></div>
               </div>
               <div class="run-actions">
                 <label class="run-overwrite-card">
@@ -6596,6 +6596,10 @@ function applyRunModeUI() {
   if (sheetNameField) {
     sheetNameField.style.display = currentRunMode === 'seeding' ? 'none' : '';
   }
+  const driveIdField = document.getElementById('drive_id_field');
+  if (driveIdField) {
+    driveIdField.style.display = currentRunMode === 'scan' ? 'none' : '';
+  }
   if (currentRunMode === 'seeding') {
     const blocks = ensureMappingBlocks('seeding');
     const firstBlockName = String(blocks?.[0]?.sheet_name || blocks?.[0]?.name || '').trim();
@@ -7928,7 +7932,7 @@ function renderOverview() {
 }
 
 function switchView(name, tabEl = null) {
-  if ((name === 'settings' || name === 'access') && !isAdminUser()) {
+  if (name === 'access' && !isAdminUser()) {
     setStatus(t('adminOnly'), 'failed');
     name = 'runs';
     tabEl = document.querySelector('.side-btn[data-view="runs"]');
