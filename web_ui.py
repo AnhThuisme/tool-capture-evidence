@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import html
 import json
 import os
@@ -9,6 +10,7 @@ import secrets
 import smtplib
 import ssl
 import subprocess
+import tempfile
 import threading
 import time
 import traceback
@@ -27,6 +29,11 @@ from starlette.middleware.sessions import SessionMiddleware
 import requests
 
 import evidence
+
+# Web mode must not open Tk native dialogs from evidence.py worker threads.
+# Those dialogs can initialize Tcl/Tk off the main UI loop and crash Python on macOS.
+evidence.messagebox = None
+evidence.filedialog = None
 
 
 def _load_dotenv_file(path: str) -> None:
@@ -55,6 +62,10 @@ BRAND_MASCOT_PATH = os.path.join(os.path.dirname(__file__), "Fanscom mascot-05.p
 
 def _utc_now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _today_local_date_string() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _normalize_hostname(value: Any) -> str:
@@ -132,11 +143,17 @@ class WebAppAdapter:
         job_store: dict[str, Any],
         persist_callback=None,
         log_limit: int = 0,
-        reuse_single_browser_session: bool = False,
         attach_only_existing_browser: bool = False,
+        shared_run_state: dict[str, Any] | None = None,
     ):
-        self.is_running = True
-        self.is_paused = False
+        self._shared_run_state = shared_run_state if isinstance(shared_run_state, dict) else None
+        self._is_running = True
+        self._is_paused = False
+        if self._shared_run_state is not None:
+            self._shared_run_state.setdefault("is_running", True)
+            self._shared_run_state.setdefault("is_paused", False)
+            self._is_running = bool(self._shared_run_state.get("is_running", True))
+            self._is_paused = bool(self._shared_run_state.get("is_paused", False))
         self.driver = None
         self.start_line = int(start_line)
         self.force_run_all = _Flag(force_run_all)
@@ -150,11 +167,36 @@ class WebAppAdapter:
         self._job_store = job_store
         self._log_limit = max(int(log_limit or 0), 0)
         self._persist_callback = persist_callback or (lambda force=False: None)
-        self.reuse_single_browser_session = bool(reuse_single_browser_session)
         self.attach_only_existing_browser = bool(attach_only_existing_browser)
 
         self.label_detail = _LabelProxy(self._on_detail)
         self.label_status = _LabelProxy(self._on_status)
+
+    @property
+    def is_running(self) -> bool:
+        if self._shared_run_state is not None:
+            return bool(self._shared_run_state.get("is_running", self._is_running))
+        return bool(self._is_running)
+
+    @is_running.setter
+    def is_running(self, value: bool):
+        next_value = bool(value)
+        self._is_running = next_value
+        if self._shared_run_state is not None:
+            self._shared_run_state["is_running"] = next_value
+
+    @property
+    def is_paused(self) -> bool:
+        if self._shared_run_state is not None:
+            return bool(self._shared_run_state.get("is_paused", self._is_paused))
+        return bool(self._is_paused)
+
+    @is_paused.setter
+    def is_paused(self, value: bool):
+        next_value = bool(value)
+        self._is_paused = next_value
+        if self._shared_run_state is not None:
+            self._shared_run_state["is_paused"] = next_value
 
     def _persist(self, force: bool = False):
         try:
@@ -445,10 +487,13 @@ JOB_HISTORY_PATH = os.path.join(evidence.BASE_DIR, "web_job_history.json")
 ACTIVITY_HISTORY_PATH = os.path.join(evidence.BASE_DIR, "web_activity_history.json")
 AUTH_POLICY_PATH = os.path.join(evidence.BASE_DIR, "web_auth_policy.json")
 MAIL_CONFIG_PATH = os.path.join(evidence.BASE_DIR, "web_mail_config.json")
-JOB_PERSIST_MIN_INTERVAL_SEC = 0.5
+# Avoid persisting a multi-MB job history file too frequently while workers
+# are appending logs in parallel.
+JOB_PERSIST_MIN_INTERVAL_SEC = 2.0
 JOB_LIST_RECENT_LOG_LIMIT_DEFAULT = 40
 JOB_LIST_RECENT_LOG_LIMIT_MAX = 200
 _LAST_JOB_PERSIST_TS = 0.0
+JOB_PERSIST_LOCK = threading.Lock()
 RUN_MODES = ("seeding", "booking", "scan")
 OTP_STORE_LOCK = threading.Lock()
 OTP_STORE: dict[str, dict[str, Any]] = {}
@@ -715,7 +760,6 @@ def _normalize_saved_mapping_block(raw: Any, mode: str, index: int) -> dict[str,
         base["start_line"] = max(1, int(str(base.get("start_line", 4)).strip() or 4))
     except Exception:
         base["start_line"] = 4
-    evidence.write_log(f"[DEBUG] _normalize_saved_mapping_block(mode={mode_key}, index={index}): raw['start_line']={raw.get('start_line') if isinstance(raw, dict) else None}, result['start_line']={base['start_line']}")
     text_keys = (
         "name",
         "sheet_url",
@@ -733,6 +777,14 @@ def _normalize_saved_mapping_block(raw: Any, mode: str, index: int) -> dict[str,
         base[key] = str(base.get(key, "") or "").strip()
     for key in ("col_url", "col_profile", "col_content", "col_screenshot", "col_drive", "col_air_date"):
         base[key] = base[key].upper()
+    if mode_key == "scan":
+        base["col_air_date"] = ""
+    else:
+        air_date = str(base.get("col_air_date", "") or "").strip()
+        if re.fullmatch(r"[A-Z]{1,3}", air_date):
+            base["col_air_date"] = air_date
+        else:
+            base["col_air_date"] = _today_local_date_string()
     base["name"] = base["name"] or f"{'Scan' if mode_key == 'scan' else 'Post'} {index}"
     return base
 
@@ -2225,66 +2277,81 @@ def _clear_sheet_link_columns_cache(user_email: str, sheet_url: str, sheet_name:
 
 def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows: int = 120, max_columns: int = 100) -> dict[str, Any]:
     first_row = max(1, int(start_row or 1))
-    rows_to_scan = max(10, min(int(sample_rows or 120), 400))
+    # Booking sheets may place URLs far below headers/summary blocks,
+    # so keep a deeper default scan window than before.
+    rows_to_scan = max(60, min(int(sample_rows or 120), 700))
     cols_to_scan = max(8, min(int(max_columns or 100), 182))
     last_col_letter = evidence.col_index_to_letter(cols_to_scan)
-    last_row = first_row + rows_to_scan - 1
-    cell_range = f"A{first_row}:{last_col_letter}{last_row}"
-
-    try:
-        display_rows = worksheet.get(cell_range, value_render_option="UNFORMATTED_VALUE") or []
-    except Exception:
-        try:
-            display_rows = worksheet.get(cell_range) or []
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Không đọc được dữ liệu sheet ở vùng {cell_range}: {exc}",
-            ) from exc
-    try:
-        formula_rows = worksheet.get(cell_range, value_render_option="FORMULA") or []
-    except Exception:
-        formula_rows = []
 
     counts: dict[str, int] = {}
     drive_counts: dict[str, int] = {}
     samples: dict[str, str] = {}
+    scanned_ranges: list[str] = []
 
-    total_rows = max(len(display_rows), len(formula_rows))
-    for row_idx in range(total_rows):
-        display_row = display_rows[row_idx] if row_idx < len(display_rows) and isinstance(display_rows[row_idx], list) else []
-        formula_row = formula_rows[row_idx] if row_idx < len(formula_rows) and isinstance(formula_rows[row_idx], list) else []
-        total_cols = min(cols_to_scan, max(len(display_row), len(formula_row)))
-        for col_idx in range(total_cols):
-            display_cell = str(display_row[col_idx] if col_idx < len(display_row) else "").strip()
-            formula_cell = str(formula_row[col_idx] if col_idx < len(formula_row) else "").strip()
-            url = ""
-            if formula_cell:
-                url = evidence.extract_url_from_hyperlink_formula(formula_cell) or ""
-            if not url and display_cell:
-                url = (
-                    evidence.normalize_web_source_url(display_cell)
-                    or evidence.normalize_scan_source_url(display_cell)
-                    or ""
-                )
-            if not url and display_cell:
-                # Fallback: URL may be embedded in rich-text / prefixed text.
-                m = re.search(r"https?://[^\s)\"'>]+", display_cell, flags=re.IGNORECASE)
-                if m:
-                    raw_candidate = str(m.group(0) or "").strip().rstrip(".,;")
+    def _scan_range(scan_start_row: int, scan_rows: int) -> None:
+        scan_first = max(1, int(scan_start_row or 1))
+        scan_len = max(10, int(scan_rows or 10))
+        scan_last = scan_first + scan_len - 1
+        cell_range = f"A{scan_first}:{last_col_letter}{scan_last}"
+        scanned_ranges.append(cell_range)
+
+        try:
+            display_rows = worksheet.get(cell_range, value_render_option="UNFORMATTED_VALUE") or []
+        except Exception:
+            try:
+                display_rows = worksheet.get(cell_range) or []
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Không đọc được dữ liệu sheet ở vùng {cell_range}: {exc}",
+                ) from exc
+        try:
+            formula_rows = worksheet.get(cell_range, value_render_option="FORMULA") or []
+        except Exception:
+            formula_rows = []
+
+        total_rows = max(len(display_rows), len(formula_rows))
+        for row_idx in range(total_rows):
+            display_row = display_rows[row_idx] if row_idx < len(display_rows) and isinstance(display_rows[row_idx], list) else []
+            formula_row = formula_rows[row_idx] if row_idx < len(formula_rows) and isinstance(formula_rows[row_idx], list) else []
+            total_cols = min(cols_to_scan, max(len(display_row), len(formula_row)))
+            for col_idx in range(total_cols):
+                display_cell = str(display_row[col_idx] if col_idx < len(display_row) else "").strip()
+                formula_cell = str(formula_row[col_idx] if col_idx < len(formula_row) else "").strip()
+                url = ""
+                if formula_cell:
+                    url = evidence.extract_url_from_hyperlink_formula(formula_cell) or ""
+                if not url and display_cell:
                     url = (
-                        evidence.normalize_web_source_url(raw_candidate)
-                        or evidence.normalize_scan_source_url(raw_candidate)
-                        or raw_candidate
+                        evidence.normalize_web_source_url(display_cell)
+                        or evidence.normalize_scan_source_url(display_cell)
+                        or ""
                     )
-            if not url:
-                continue
-            col_letter = evidence.col_index_to_letter(col_idx + 1)
-            counts[col_letter] = counts.get(col_letter, 0) + 1
-            if "drive.google.com" in url.lower() or "docs.google.com" in url.lower():
-                drive_counts[col_letter] = drive_counts.get(col_letter, 0) + 1
-            if col_letter not in samples:
-                samples[col_letter] = url
+                if not url and display_cell:
+                    m = re.search(r"https?://[^\s)\"'>]+", display_cell, flags=re.IGNORECASE)
+                    if m:
+                        raw_candidate = str(m.group(0) or "").strip().rstrip(".,;")
+                        url = (
+                            evidence.normalize_web_source_url(raw_candidate)
+                            or evidence.normalize_scan_source_url(raw_candidate)
+                            or raw_candidate
+                        )
+                if not url:
+                    continue
+                col_letter = evidence.col_index_to_letter(col_idx + 1)
+                counts[col_letter] = counts.get(col_letter, 0) + 1
+                if "drive.google.com" in url.lower() or "docs.google.com" in url.lower():
+                    drive_counts[col_letter] = drive_counts.get(col_letter, 0) + 1
+                if col_letter not in samples:
+                    samples[col_letter] = url
+
+    # Pass 1: scan from selected start row.
+    _scan_range(first_row, rows_to_scan)
+    # Pass 2 fallback: still empty -> scan deeper windows (common in booking sheets).
+    if not counts:
+        _scan_range(first_row + rows_to_scan, 500)
+    if not counts:
+        _scan_range(first_row + rows_to_scan + 500, 500)
 
     ordered_columns = sorted(counts.keys(), key=lambda col: (-counts[col], evidence.col_letter_to_index(col) or 9999))
     drive_columns = sorted(drive_counts.keys(), key=lambda col: (-drive_counts[col], evidence.col_letter_to_index(col) or 9999))
@@ -2294,7 +2361,7 @@ def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows:
         "counts": counts,
         "samples": samples,
         "start_row": first_row,
-        "range": cell_range,
+        "range": ", ".join(scanned_ranges),
     }
 
 
@@ -2389,13 +2456,19 @@ def _any_running_job_for_mode(run_mode: str | None = None, owner_email: str | No
 
 
 def _get_mode_base_port(run_mode: str | None) -> int:
-    # Use one shared Chrome debug session across all modes/blocks.
+    # Keep one base port per mode; worker blocks derive from get_post_port.
     return int(DEFAULT_SHARED_BROWSER_PORT)
 
 
 def _get_mode_profile(run_mode: str | None, block_index: int = 0, browser_port: int | None = None) -> str:
-    # Force one shared profile for all modes/blocks so login state is consistent.
-    return SHARED_DEBUG_PROFILE_PATH
+    # Use isolated browser profile per block/port so each block can run
+    # its own Chrome debug session (e.g. 9223, 9324, 9325) in parallel.
+    mode_name = _normalize_run_mode(run_mode)
+    raw = evidence.get_block_profile(block_index, mode_name, browser_port=browser_port)
+    try:
+        return evidence._resolve_writable_profile_dir(raw, browser_port=int(browser_port or _get_mode_base_port(mode_name)), log_prefix="web_ui: ")
+    except Exception:
+        return raw
 
 
 def _safe_filename_part(value: str) -> str:
@@ -2603,26 +2676,47 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolved_job_history_path() -> str:
+    return os.path.abspath(str(JOB_HISTORY_PATH or "web_job_history.json"))
+
+
 def _persist_jobs(force: bool = False) -> None:
     global _LAST_JOB_PERSIST_TS
     now = time.time()
-    if not force and (now - _LAST_JOB_PERSIST_TS) < JOB_PERSIST_MIN_INTERVAL_SEC:
-        return
-    with JOBS_LOCK:
-        payload = [_serialize_job(job) for job in JOBS.values()]
-    payload.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
-    temp_path = JOB_HISTORY_PATH + ".tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(temp_path, JOB_HISTORY_PATH)
-    _LAST_JOB_PERSIST_TS = now
+    with JOB_PERSIST_LOCK:
+        if not force and (now - _LAST_JOB_PERSIST_TS) < JOB_PERSIST_MIN_INTERVAL_SEC:
+            return
+        with JOBS_LOCK:
+            payload = [_serialize_job(job) for job in JOBS.values()]
+        payload.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
+        history_path = _resolved_job_history_path()
+        history_dir = os.path.dirname(history_path)
+        os.makedirs(history_dir, exist_ok=True)
+        tmp_fd, temp_path = tempfile.mkstemp(
+            prefix=os.path.basename(history_path) + ".",
+            suffix=".tmp",
+            dir=history_dir,
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, history_path)
+            _LAST_JOB_PERSIST_TS = now
+        finally:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
 
 
 def _load_persisted_jobs() -> None:
-    if not os.path.exists(JOB_HISTORY_PATH):
+    history_path = _resolved_job_history_path()
+    if not os.path.exists(history_path):
         return
     try:
-        with open(JOB_HISTORY_PATH, "r", encoding="utf-8") as f:
+        with open(history_path, "r", encoding="utf-8") as f:
             raw = json.load(f) or []
     except Exception:
         return
@@ -2737,6 +2831,7 @@ def _enqueue_job(
     detail: str = "Chờ chạy",
 ) -> dict[str, Any]:
     job_id = str(uuid.uuid4())
+    shared_run_state = {"is_running": True, "is_paused": False}
     adapter = WebAppAdapter(
         start_line=int(start_line),
         force_run_all=force_run_all,
@@ -2747,8 +2842,8 @@ def _enqueue_job(
         scan_keyword_filter=scan_keyword_filter,
         job_store={},
         persist_callback=_persist_jobs,
-        reuse_single_browser_session=True,
         attach_only_existing_browser=False,
+        shared_run_state=shared_run_state,
     )
 
     job = {
@@ -2792,6 +2887,7 @@ def _run_job(job_id: str):
             return
         req = dict(job["request"])
         app_adapter: WebAppAdapter = job["adapter"]
+        app_adapter.attach_only_existing_browser = False
         job["status"] = "running"
         job["started_at"] = _utc_now_iso()
     _persist_jobs(force=True)
@@ -2811,26 +2907,100 @@ def _run_job(job_id: str):
             )
         multi_seeding_blocks = list(req.get("multi_seeding_blocks") or [])
         if multi_seeding_blocks and _normalize_run_mode(req.get("mode")) == "seeding":
-            total_multi = len(multi_seeding_blocks)
-            for idx, block in enumerate(multi_seeding_blocks, start=1):
+            normalized_triplets = {
+                (
+                    str(block.get("sheet_url", req.get("sheet_url", ""))).strip(),
+                    str(block.get("sheet_name", req.get("sheet_name", ""))).strip(),
+                    str(block.get("drive_id", req.get("drive_id", ""))).strip(),
+                )
+                for block in multi_seeding_blocks
+            }
+            if len(normalized_triplets) == 1:
+                # Same sheet + same drive across blocks: run once so evidence.main_logic
+                # can execute block workers in parallel.
+                merged = next(iter(normalized_triplets))
+                merged_mappings = []
+                for block in multi_seeding_blocks:
+                    block_mapping = dict(block.get("mapping") or {})
+                    if block_mapping:
+                        merged_mappings.append(block_mapping)
                 with JOBS_LOCK:
                     live_job = JOBS.get(job_id)
                     if live_job:
-                        live_job["detail"] = f"Sheet {idx}/{total_multi}: {str(block.get('sheet_name') or '').strip() or '...'}"
+                        live_job["detail"] = f"Song song {len(merged_mappings)} block trên 1 sheet"
                 _persist_jobs(force=False)
-                block_mapping = dict(block.get("mapping") or {})
                 evidence.main_logic(
                     app_adapter,
-                    str(block.get("drive_id", req.get("drive_id", ""))),
-                    str(block.get("sheet_url", req.get("sheet_url", ""))),
-                    str(block.get("sheet_name", req.get("sheet_name", ""))),
-                    start_line=int(block_mapping.get("start_line") or req.get("start_line") or 4),
+                    merged[2] or req["drive_id"],
+                    merged[0] or req["sheet_url"],
+                    merged[1] or req["sheet_name"],
+                    start_line=req["start_line"],
                     browser_port=req["browser_port"],
-                    mappings=[block_mapping] if block_mapping else req["mappings"],
+                    mappings=merged_mappings or req["mappings"],
                     primary_profile_path=req.get("profile_path"),
                     target_rows=req.get("target_rows"),
                     target_block_name=req.get("target_block_name"),
                 )
+            else:
+                total_multi = len(multi_seeding_blocks)
+                with JOBS_LOCK:
+                    live_job = JOBS.get(job_id)
+                    if live_job:
+                        live_job["detail"] = f"Song song {total_multi} block nhiều sheet"
+                _persist_jobs(force=False)
+                evidence.write_log(f"[DEBUG] Multi-sheet parallel dispatch: {total_multi} block(s)")
+
+                def _run_multi_sheet_block(block_idx: int, block_payload: dict[str, Any]):
+                    with JOBS_LOCK:
+                        live_job = JOBS.get(job_id)
+                        if live_job:
+                            live_job["detail"] = (
+                                f"Sheet {block_idx}/{total_multi}: "
+                                f"{str(block_payload.get('sheet_name') or '').strip() or '...'}"
+                            )
+                    _persist_jobs(force=False)
+                    block_mapping = dict(block_payload.get("mapping") or {})
+                    per_block_port = evidence.get_post_port(
+                        max(0, int(block_idx) - 1),
+                        int(req.get("browser_port") or _get_mode_base_port("seeding")),
+                    )
+                    # Use an isolated adapter per block so Chrome driver/session state
+                    # is never shared across concurrent multi-sheet workers.
+                    block_adapter = WebAppAdapter(
+                        start_line=int(block_mapping.get("start_line") or req.get("start_line") or 4),
+                        force_run_all=bool(req.get("force_run_all", False)),
+                        only_run_error_rows=bool(req.get("only_run_error_rows", False)),
+                        capture_five_per_link=bool(req.get("capture_five_per_link", False)),
+                        highlight_sheet_errors=bool(req.get("highlight_sheet_errors", True)),
+                        scan_negative_filter=bool(req.get("scan_negative_filter", False)),
+                        scan_keyword_filter=bool(req.get("scan_keyword_filter", False)),
+                        job_store=app_adapter._job_store,
+                        persist_callback=_persist_jobs,
+                        log_limit=int(getattr(app_adapter, "_log_limit", 0) or 0),
+                        attach_only_existing_browser=False,
+                        shared_run_state=getattr(app_adapter, "_shared_run_state", None),
+                    )
+                    evidence.main_logic(
+                        block_adapter,
+                        str(block_payload.get("drive_id", req.get("drive_id", ""))),
+                        str(block_payload.get("sheet_url", req.get("sheet_url", ""))),
+                        str(block_payload.get("sheet_name", req.get("sheet_name", ""))),
+                        start_line=int(block_mapping.get("start_line") or req.get("start_line") or 4),
+                        browser_port=per_block_port,
+                        mappings=[block_mapping] if block_mapping else req["mappings"],
+                        primary_profile_path=req.get("profile_path"),
+                        target_rows=req.get("target_rows"),
+                        target_block_name=req.get("target_block_name"),
+                    )
+
+                worker_count = max(1, total_multi)
+                with ThreadPoolExecutor(max_workers=worker_count) as ex:
+                    futures = [
+                        ex.submit(_run_multi_sheet_block, idx, block)
+                        for idx, block in enumerate(multi_seeding_blocks, start=1)
+                    ]
+                    for future in as_completed(futures):
+                        future.result()
         else:
             evidence.main_logic(
                 app_adapter,
@@ -2906,7 +3076,15 @@ def _run_job(job_id: str):
             job = JOBS.get(job_id)
             if job:
                 job["status"] = "failed"
-                job["error"] = str(exc)
+                error_text = str(exc).strip() or "Unknown error"
+                job["error"] = error_text
+                if not str(job.get("detail") or "").strip():
+                    job["detail"] = error_text
+                summary = dict(job.get("summary") or {})
+                summary["eta"] = "---"
+                job["summary"] = summary
+                job["ui_status"] = "FAILED"
+                job["ui_color"] = "#ef4444"
                 job["finished_at"] = _utc_now_iso()
         _persist_jobs(force=True)
     finally:
@@ -3016,8 +3194,8 @@ def home_page(request: Request):
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));font-family:Segoe UI,Arial,sans-serif;color:var(--text);overflow-x:hidden}
 .shell{width:100%;max-width:100vw;min-height:100vh;padding:10px;overflow-x:hidden}
-.board{width:100%;max-width:calc(100vw - 20px);min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:236px minmax(0,1fr);overflow:hidden}
-.sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
+.board{width:100%;max-width:calc(100vw - 20px);min-height:calc(100vh - 20px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);display:grid;grid-template-columns:216px minmax(0,1fr);overflow:hidden}
+.sidebar{background:var(--panel-soft);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;gap:12px}
 .dot{position:relative;width:68px;height:68px;border-radius:20px;background:#ffffff url('/assets/brand-mascot') center/92% no-repeat;box-shadow:0 14px 30px rgba(59,130,246,.2);border:1px solid rgba(191,219,254,.34);flex:0 0 auto;overflow:hidden}
 .dot::before,.dot::after{display:none}
 .brand-row{position:relative;display:flex;align-items:center;gap:14px;min-height:94px;padding:16px 16px;border:1px solid rgba(123,168,255,.14);border-radius:20px;background:linear-gradient(135deg,rgba(76,110,196,.18),rgba(255,255,255,.02) 48%,rgba(37,99,235,.08));overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
@@ -3028,18 +3206,18 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 [data-theme="light"] .brand-row{background:linear-gradient(135deg,rgba(91,147,211,.12),rgba(255,255,255,.92) 48%,rgba(239,244,255,.86));border-color:rgba(91,147,211,.18)}
 [data-theme="light"] .brand-copy strong{color:#0f172a}
 [data-theme="light"] .brand-copy span{color:#51627f}
-.side-nav{display:flex;flex-direction:column;gap:8px;margin-top:4px}
-.side-group{display:flex;flex-direction:column;gap:8px}
-.side-btn{width:100%;min-height:42px;border-radius:14px;border:1px solid transparent;display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;background:var(--panel);padding:0 14px;cursor:pointer;text-align:left}
-.side-icon{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:8px;background:var(--soft);color:var(--muted)}
-.side-icon svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.side-nav{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.side-group{display:flex;flex-direction:column;gap:6px}
+.side-btn{width:100%;min-height:34px;border-radius:11px;border:1px solid transparent;display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px;background:var(--panel);padding:0 10px;cursor:pointer;text-align:left}
+.side-icon{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:6px;background:var(--soft);color:var(--muted)}
+.side-icon svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .side-btn.active{border-color:#dbeafe;background:#eef4ff;color:#12315f}
 .side-btn.active .side-icon{background:#2f80ed;color:#fff}
 [data-theme="dark"] .side-btn.active{border-color:#355072;background:#1a2940;color:#dbe6f5}
 [data-theme="dark"] .side-btn.active .side-icon{background:#5b93d3;color:#fff}
-.side-subnav{display:none;flex-direction:column;gap:6px;margin:-2px 0 2px 34px}
+.side-subnav{display:none;flex-direction:column;gap:4px;margin:-2px 0 2px 28px}
 .side-group.open .side-subnav{display:flex}
-.side-subbtn{border:1px solid transparent;border-radius:10px;background:transparent;color:var(--muted);padding:8px 10px;font-size:12px;text-align:left;cursor:pointer}
+.side-subbtn{border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);padding:6px 8px;font-size:10px;text-align:left;cursor:pointer}
 .side-subbtn:hover{background:var(--soft)}
 .side-subbtn.active{background:var(--blue-soft);border-color:#bfdbfe;color:var(--blue);font-weight:600}
 [data-theme="dark"] .side-subbtn.active{border-color:#355072;color:#dbe6f5}
@@ -3176,7 +3354,8 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .btn.red{background:#fff1f2;border-color:#fecdd3;color:#be123c}
 [data-theme="dark"] .btn.red{background:#2a1620;border-color:#5b2435;color:#fda4af}
 .headline{display:flex;justify-content:space-between;align-items:center;padding:14px 0 10px}
-.h1{font-size:34px;font-weight:700;letter-spacing:-.01em}
+.h1{font-size:24px;font-weight:700;letter-spacing:-.01em}
+.runs-head .h1{font-size:19px;line-height:1.2}
 .state{font-size:12px;padding:6px 10px;border-radius:999px;background:var(--soft);color:var(--text)}
 .headline .state,.s{display:none}
 #view-overview aside .right-top > div:nth-child(2),
@@ -3240,14 +3419,14 @@ body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-grad-1
 .run-layout{display:grid;grid-template-columns:minmax(360px,.9fr) minmax(0,1.1fr);gap:12px;align-items:stretch}
 .run-form{padding:12px 14px;height:100%}
 .run-grid{display:grid;grid-template-columns:1fr;gap:10px}
-.run-share-note{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center;gap:12px}
+.run-share-note{margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:center;gap:10px}
 .run-share-top{margin:0 0 0 auto;max-width:720px;min-width:0}
-.run-share-title{font-size:12px;font-weight:700;color:#2d6df6;letter-spacing:.02em;white-space:nowrap}
-.run-share-email{margin-top:0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);font-size:13px;color:var(--input-fg);word-break:break-all}
+.run-share-title{font-size:11px;font-weight:700;color:#2d6df6;letter-spacing:.01em;white-space:nowrap}
+.run-share-email{margin-top:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);font-size:12px;color:var(--input-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;word-break:normal}
 .sheet-link-suggest{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:10px 12px;border:1px dashed rgba(91,147,211,.24);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015)),var(--panel-soft);width:min(100%,460px);align-self:flex-start}
 .sheet-link-suggest.open{display:flex;width:100%;max-width:none}
 .sheet-link-suggest.idle{min-height:68px;justify-content:flex-start;padding:10px 12px}
-.sheet-link-suggest.mode-booking.idle{min-height:148px;padding:14px 16px}
+.sheet-link-suggest.mode-booking.idle{min-height:92px;padding:10px 12px}
 .sheet-link-suggest.idle .sheet-link-suggest-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .sheet-link-suggest.idle .sheet-link-suggest-meta{display:none}
 .sheet-link-suggest.idle .sheet-link-suggest-actions{width:auto;justify-content:flex-end;margin-left:auto}
@@ -3531,21 +3710,24 @@ linear-gradient(to right, transparent, transparent)}
 .list{display:flex;flex-direction:column;gap:8px}
 #projectsList{max-height:min(72vh,980px);overflow-y:auto;padding-right:4px}
 .list-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-soft);font-size:12px}
-.project-item{width:100%;text-align:left;cursor:pointer;gap:12px;background:var(--panel-soft)}
+.project-item{width:100%;text-align:left;cursor:pointer;gap:8px;background:var(--panel-soft);min-height:56px;align-items:center}
+.project-item.list-row{padding:6px 9px;border-radius:9px}
 .project-item.active{border-color:#bfdbfe;background:var(--blue-soft)}
 [data-theme="dark"] .project-item.active{border-color:#355072;background:#1a2940}
 .project-list-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
 .project-filter-stack{display:flex;justify-content:flex-end;align-items:center;gap:10px 14px;flex-wrap:wrap;min-width:0}
 .project-mode-filters,.project-status-filters{min-width:0}
 .project-filter-select{display:flex;align-items:center;gap:8px;min-width:0}
-.project-filter-select span{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap;flex:0 0 auto}
-.project-filter-input{width:190px;min-width:0;height:36px;padding:0 34px 0 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-soft);color:var(--text);font-size:12px;font-weight:700;outline:none;cursor:pointer;appearance:auto;-webkit-appearance:menulist}
+.project-filter-select span{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);white-space:nowrap;flex:0 0 auto}
+.project-filter-input{width:170px;min-width:0;height:32px;padding:0 30px 0 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-soft);color:var(--text);font-size:11px;font-weight:700;outline:none;cursor:pointer;appearance:auto;-webkit-appearance:menulist}
 .project-filter-input:focus{outline:none;border-color:#60a5fa;box-shadow:0 0 0 3px rgba(96,165,250,.14)}
 [data-theme="dark"] .project-filter-input{background:#162033}
 [data-theme="dark"] .project-filter-input option{background:#162033;color:#dbe6f5}
-.project-item-main{display:flex;flex-direction:column;gap:4px;min-width:0}
-.project-item-title{font-size:13px;font-weight:700;line-height:1.35}
-.project-item-meta{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.project-item-main{display:flex;flex-direction:column;gap:3px;min-width:0}
+.project-item-title{font-size:11px;font-weight:700;line-height:1.2;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.project-item-meta{font-size:9.5px;color:var(--muted);display:flex;align-items:center;gap:5px;flex-wrap:nowrap;overflow:hidden}
+.project-item-meta span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.project-item .mode-pill{min-height:17px;padding:0 6px;font-size:8.5px}
 .mode-pill{display:inline-flex;align-items:center;justify-content:center;min-height:20px;padding:0 8px;border-radius:999px;border:1px solid transparent;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
 .mode-pill.mode-seeding{background:#ecfdf3;color:#166534;border-color:#bbf7d0}
 .mode-pill.mode-booking{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
@@ -3553,8 +3735,10 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .mode-pill.mode-seeding{background:#153527;color:#9be6be;border-color:#25573d}
 [data-theme="dark"] .mode-pill.mode-booking{background:#3a2a18;color:#f3c58e;border-color:#6f502e}
 [data-theme="dark"] .mode-pill.mode-scan{background:#1a2940;color:#dbe6f5;border-color:#355072}
-.project-item-side{display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
-.project-item-progress{font-size:12px;font-weight:700;color:var(--text)}
+.project-item-side{display:grid;grid-template-columns:98px 48px 26px;align-items:center;justify-items:end;column-gap:7px;flex-shrink:0}
+.project-item-progress{font-size:10px;font-weight:700;color:var(--text)}
+.project-item-side .project-status-badge{width:98px}
+.project-item .project-status-badge{min-height:18px;padding:0 8px;font-size:9.5px}
 .project-status-badge{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 10px;border-radius:999px;border:1px solid transparent;font-size:11px;font-weight:700;letter-spacing:.01em}
 .project-status-badge.status-queued{background:#f8fafc;color:#475569;border-color:#cbd5e1}
 .project-status-badge.status-running{background:#ede9fe;color:#6d28d9;border-color:#c4b5fd}
@@ -3568,16 +3752,16 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .project-status-badge.status-stopped{background:#182338;color:#cbd5e1;border-color:#475467}
 [data-theme="dark"] .project-status-badge.status-completed{background:#1a2940;color:#b7d2f3;border-color:#355072}
 [data-theme="dark"] .project-status-badge.status-failed{background:#2a1620;color:#fda4af;border-color:#5b2435}
-.project-delete-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #fecaca;border-radius:10px;background:#fff1f2;color:#be123c;cursor:pointer}
-.project-delete-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.project-delete-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid #fecaca;border-radius:8px;background:#fff1f2;color:#be123c;cursor:pointer}
+.project-delete-btn svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .project-delete-btn:hover{background:#ffe4e6}
 [data-theme="dark"] .project-delete-btn{background:#2a1620;border-color:#5b2435;color:#fda4af}
 [data-theme="dark"] .project-delete-btn:hover{background:#351a24}
-.project-card-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
-.project-detail-actions{margin-top:10px;display:flex;justify-content:flex-end}
+.project-card-head{display:flex;justify-content:flex-start;align-items:center;gap:10px}
+.project-detail-actions{margin-top:10px;display:flex;justify-content:flex-start}
 .project-card-head .project-detail-actions{margin-top:0}
-.project-nav-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:1px solid #bfdbfe;border-radius:999px;background:#eef4ff;color:#1d4ed8;cursor:pointer}
-.project-nav-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.project-nav-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid #bfdbfe;border-radius:999px;background:#eef4ff;color:#1d4ed8;cursor:pointer}
+.project-nav-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .project-nav-btn:hover{background:#dbeafe}
 [data-theme="dark"] .project-nav-btn{background:#1a2940;border-color:#355072;color:#dbe6f5}
 [data-theme="dark"] .project-nav-btn:hover{background:#223149}
@@ -3597,6 +3781,19 @@ linear-gradient(to right, transparent, transparent)}
 [data-theme="dark"] .project-log-list::-webkit-scrollbar-thumb{background:#41516d;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
 .timeline{display:flex;flex-direction:column;gap:10px}
 .timeline-item{padding:10px 12px;border-left:3px solid var(--blue);background:var(--panel-soft);border-radius:0 10px 10px 0}
+#projectsSnapshot{margin-top:6px !important;gap:6px}
+#projectsSnapshot .timeline-item{padding:7px 10px;border-left-width:2px;border-radius:0 8px 8px 0}
+#projectsSnapshot .timeline-item strong{display:block;font-size:9.5px;line-height:1.1;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+#projectsSnapshot .timeline-item > div{font-size:13px;line-height:1.24}
+#projectsSnapshot .snapshot-pair{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,.85fr);gap:6px}
+#projectsSnapshot .snapshot-pair .timeline-item{margin:0}
+#projectsSnapshot .project-log-panel{margin-top:8px;border-radius:10px}
+#projectsSnapshot .project-log-head{padding:8px 10px}
+#projectsSnapshot .project-log-item{padding:8px 10px;gap:4px}
+#projectsSnapshot .project-log-title{font-size:12px}
+#projectsSnapshot .project-log-meta{font-size:10px;gap:6px}
+#projectsSnapshot .project-log-message{font-size:11px;line-height:1.35}
+@media (max-width:760px){#projectsSnapshot .snapshot-pair{grid-template-columns:1fr}}
 #activitiesTimeline{max-height:min(74vh,960px);overflow-y:auto;padding-right:4px}
 .settings-layout{display:grid;grid-template-columns:1.1fr .9fr;gap:12px}
 .badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;border:1px solid transparent}
@@ -3637,7 +3834,8 @@ linear-gradient(to right, transparent, transparent)}
 @keyframes completion-alert-in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes completion-alert-pulse{0%,100%{box-shadow:0 18px 40px rgba(0,0,0,.34),0 0 0 1px rgba(52,195,143,.08)}50%{box-shadow:0 18px 40px rgba(0,0,0,.34),0 0 0 1px rgba(52,195,143,.16),0 0 0 6px rgba(52,195,143,.06)}}
 @media (max-width:980px){.board{grid-template-columns:1fr}.layout,.bottom{grid-template-columns:1fr}.search{display:none}}
-@media (max-width:980px){.run-layout,.run-grid,.cards-3,.cards-4,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid,.scan-filter-grid,.scan-filter-block-body{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}.overview-note{flex-direction:column;align-items:stretch}.overview-cta{justify-content:center}.project-filter-stack{min-width:0;align-items:stretch}.project-filter-select{width:100%}.project-filter-input{width:100%;min-width:0}.completion-alert-host{top:12px;width:calc(100vw - 20px)}.completion-alert{padding:11px 12px;gap:10px}.completion-alert-title{font-size:14px}.completion-alert-message{font-size:11px}.completion-alert-chip{font-size:10px}.completion-alert-close{width:30px;height:30px}}
+@media (max-width:980px){.run-layout,.run-grid,.cards-3,.cards-4,.settings-layout,.monitor-grid,.mapping-scan-grid,.admin-access-grid,.access-layout,.access-mail-grid,.access-entry-grid,.overview-top-grid,.scan-filter-grid,.scan-filter-block-body{grid-template-columns:1fr}.access-entry-editor.open{grid-template-columns:1fr;grid-template-areas:"head" "meta" "form" "actions"}.sidebar{border-right:0;border-bottom:1px solid var(--line)}.runs-head{flex-direction:column;align-items:stretch}.runs-head .headline{padding:14px 0 0}.run-share-top{max-width:none;min-width:0;margin:0}.run-share-note{grid-template-columns:1fr;align-items:stretch}.run-share-title{white-space:normal}.access-directory-actions,.access-filter-row,.access-filter-group,.access-mail-foot,.access-entry-foot{align-items:stretch}.access-search{min-width:0;max-width:none;width:100%}.access-row-actions{justify-content:flex-start}.access-entry-editor.open>.access-entry-foot{align-items:stretch}.access-entry-editor.open>.access-entry-foot .settings-note{text-align:left}.overview-note{flex-direction:column;align-items:stretch}.overview-cta{justify-content:center}.project-filter-stack{min-width:0;align-items:stretch}.project-filter-select{width:100%}.project-filter-input{width:100%;min-width:0}.project-item{min-height:0;align-items:flex-start}.project-item-side{grid-template-columns:1fr;justify-items:flex-start;row-gap:6px}.project-item-side .project-status-badge{width:auto}.completion-alert-host{top:12px;width:calc(100vw - 20px)}.completion-alert{padding:11px 12px;gap:10px}.completion-alert-title{font-size:14px}.completion-alert-message{font-size:11px}.completion-alert-chip{font-size:10px}.completion-alert-close{width:30px;height:30px}}
+@media (max-width:980px){.run-share-note{grid-template-columns:max-content minmax(0,1fr);align-items:center}.run-share-title{white-space:nowrap}}
 </style>
 </head>
 <body>
@@ -3808,7 +4006,7 @@ linear-gradient(to right, transparent, transparent)}
               <div class="run-grid">
                 <div class="field"><label>Sheet URL</label><input id="sheet_url" /><div id="sheet_url_hint" class="settings-note"></div></div>
                 <div id="sheet_name_field" class="field"><label>Sheet Name</label><input id="sheet_name" list="sheet_name_suggestions" autocomplete="off" /><datalist id="sheet_name_suggestions"></datalist><div id="sheet_name_hint" class="settings-note"></div></div>
-                <div id="drive_id_field" class="field"><label for="drive_id">Drive Folder ID</label><input id="drive_id" oninput="handleSharedDriveIdInput()" /></div>
+                <div id="drive_id_field" class="field"><label for="drive_id">Drive Folder ID</label><input id="drive_id" /></div>
               </div>
               <div class="run-actions">
                 <label class="run-overwrite-card">
@@ -3990,7 +4188,6 @@ linear-gradient(to right, transparent, transparent)}
         <section id="view-access" class="view" style="__ADMIN_SECTION_STYLE__">
           <div class="headline access-headline">
             <div>
-              <div class="access-kicker">Admin Control</div>
               <div class="h1">Access</div>
             </div>
             <div class="state">Admin manages user access</div>
@@ -4221,6 +4418,8 @@ let currentJobIdByMode = { seeding: null, booking: null, scan: null };
 let currentProjectJobId = null;
 let currentProjectModeFilter = 'all';
 let currentProjectStatusFilter = 'all';
+let projectLogsCacheByJobId = {};
+let projectLogsInflightByJobId = {};
 let currentSettingsCache = {};
 let currentRunMode = 'seeding';
 let currentMappingBlocksByMode = {};
@@ -4269,13 +4468,15 @@ let jobStatusMemory = {};
 let notifiedCompletedJobKeys = new Set();
 let pollInFlight = false;
 let jobsRefreshInFlight = false;
+let startJobInFlight = false;
+let launchChromeInFlightByKey = {};
 const BROWSER_PORT_BY_MODE = { seeding: 9223, booking: 9223, scan: 9223 };
 const DEFAULT_SHARED_BROWSER_PORT = 9223;
 const DEFAULT_AUTO_LAUNCH_CHROME = true;
 const MAX_MONITOR_LOG_CACHE = 1200;
 const JOBS_REFRESH_ACTIVITY_LIMIT = 120;
-const JOB_POLL_INTERVAL_MS = 1200;
-const JOBS_LIST_REFRESH_INTERVAL_MS = 5000;
+const JOB_POLL_INTERVAL_MS = 1500;
+const JOBS_LIST_REFRESH_INTERVAL_MS = 12000;
 let currentLang = localStorage.getItem('ui_lang') || 'vi';
 let currentTheme = localStorage.getItem('ui_theme') || 'light';
 const authState = {
@@ -4332,6 +4533,37 @@ function updateRuntimeBadge() {
   node.style.color = useLocal ? '#166534' : '#334155';
 }
 
+function timeoutError(url, timeoutMs) {
+  const seconds = Math.max(1, Math.round((Number(timeoutMs) || 0) / 1000));
+  return new Error(`Yêu cầu bị quá thời gian ${seconds}s: ${url}`);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 0) {
+  const resolvedTimeout = Math.max(0, Number(timeoutMs) || 0);
+  if (!resolvedTimeout || typeof AbortController === 'undefined' || options.signal) {
+    return fetch(url, options);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), resolvedTimeout);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw timeoutError(url, resolvedTimeout);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function resolveRequestTimeoutMs(url, opts = {}) {
+  const requested = Number(opts.timeout_ms || 0);
+  if (Number.isFinite(requested) && requested > 0) return requested;
+  const raw = String(url || '').toLowerCase();
+  if (raw.includes('/api/chrome/')) return 20000;
+  if (raw.includes('/api/jobs/start')) return 35000;
+  return 45000;
+}
+
 async function detectLocalAgent() {
   if (isLocalBrowserOrigin()) {
     localAgentState.enabled = false;
@@ -4341,10 +4573,10 @@ async function detectLocalAgent() {
     return false;
   }
   try {
-    const res = await fetch(`${localAgentState.origin}/health`, {
+    const res = await fetchWithTimeout(`${localAgentState.origin}/health`, {
       method: 'GET',
       cache: 'no-store',
-    });
+    }, 2500);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.ok) throw new Error(data.detail || ('HTTP ' + res.status));
     localAgentState.enabled = true;
@@ -4363,17 +4595,23 @@ async function detectLocalAgent() {
 
 async function agentReq(url, opts = {}) {
   if (!authState.email) throw new Error('Thiếu email đăng nhập để gọi local agent');
+  const timeoutMs = resolveRequestTimeoutMs(url, opts);
+  const fetchOptions = { ...opts };
+  delete fetchOptions.timeout_ms;
   const headers = {
     'Content-Type': 'application/json',
     'X-Tool-Evidence-User': authState.email,
-    ...(opts.headers || {}),
+    ...(fetchOptions.headers || {}),
   };
   let res = null;
   try {
-    res = await fetch(`${localAgentState.origin}${url}`, { ...opts, headers });
+    res = await fetchWithTimeout(`${localAgentState.origin}${url}`, { ...fetchOptions, headers }, timeoutMs);
   } catch (e) {
     localAgentState.enabled = false;
     localAgentState.lastError = String(e?.message || e || 'Local agent unavailable');
+    if (String(e?.message || '').includes('Yêu cầu bị quá thời gian')) {
+      throw e;
+    }
     throw new Error('Không kết nối được local agent trên máy này');
   }
   const data = await res.json().catch(() => ({}));
@@ -4513,7 +4751,7 @@ const I18N = {
     sheetLinkSuggestCountFmt: count => `Phát hiện ${count} cột có link`,
     sheetLinkBulkToggle: 'Chọn nhiều cột',
     sheetLinkBulkAdd: 'Tạo block',
-    sheetLinkFillBlocks: 'Điền vào block',
+    sheetLinkFillBlocks: 'Tạo block',
     sheetLinkQuickScan: 'Quét nhanh',
     sheetLinkQuickCreate: 'Tạo cột nhanh',
     sheetLinkBulkClear: 'Bỏ chọn',
@@ -4596,6 +4834,7 @@ const I18N = {
     projectStatusFailed: 'Lỗi',
     projectOwner: 'Người chạy',
     noProjectsInFilter: 'Chưa có dự án trong nhóm này',
+    projectLogsLoading: 'Đang tải log dự án...',
     projectNoLogs: 'Chưa có log cho dự án này',
     tasksState: 'Phân rã khối lượng xử lý',
     done: 'Hoàn thành',
@@ -4889,7 +5128,7 @@ const I18N = {
     sheetLinkSuggestCountFmt: count => `${count} link columns found`,
     sheetLinkBulkToggle: 'Select multiple columns',
     sheetLinkBulkAdd: 'Create blocks',
-    sheetLinkFillBlocks: 'Fill blocks',
+    sheetLinkFillBlocks: 'Create blocks',
     sheetLinkQuickScan: 'Quick scan',
     sheetLinkQuickCreate: 'Quick create',
     sheetLinkBulkClear: 'Clear',
@@ -4972,6 +5211,7 @@ const I18N = {
     projectStatusFailed: 'Failed',
     projectOwner: 'Owner',
     noProjectsInFilter: 'No projects in this category',
+    projectLogsLoading: 'Loading project logs...',
     projectNoLogs: 'No logs for this project yet',
     tasksState: 'Workload breakdown',
     done: 'Done',
@@ -5221,6 +5461,19 @@ function getTodayLocalDateString() {
   return `${y}-${m}-${d}`;
 }
 
+function isSheetColumnRef(value) {
+  const raw = String(value || '').trim();
+  return /^[A-Za-z]{1,3}$/.test(raw);
+}
+
+function resolveAirDateForMode(mode, rawValue) {
+  const key = String(mode || '').toLowerCase();
+  if (key === 'scan') return '';
+  const raw = String(rawValue || '').trim();
+  if (isSheetColumnRef(raw)) return raw.toUpperCase();
+  return getTodayLocalDateString();
+}
+
 function sanitizeMappingBlockForMode(mode, block, index = 1) {
   const key = String(mode || 'seeding').toLowerCase();
   const next = {
@@ -5236,16 +5489,16 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
     next.sheet_url = String(next.sheet_url || '').trim();
     next.sheet_name = String(next.sheet_name || '').trim();
     next.drive_id = String(next.drive_id || '').trim();
-    if (!String(next.col_air_date || '').trim()) next.col_air_date = getTodayLocalDateString();
+    next.col_air_date = resolveAirDateForMode(key, next.col_air_date);
   } else if (key === 'booking') {
     next.sheet_url = '';
     next.sheet_name = '';
     next.drive_id = '';
-    if (!String(next.col_air_date || '').trim()) next.col_air_date = getTodayLocalDateString();
+    next.col_air_date = resolveAirDateForMode(key, next.col_air_date);
   } else if (key === 'scan') {
     next.col_profile = '';
     next.col_screenshot = '';
-    next.col_air_date = '';
+    next.col_air_date = resolveAirDateForMode(key, next.col_air_date);
     next.sheet_url = '';
     next.sheet_name = '';
     next.drive_id = '';
@@ -5605,33 +5858,6 @@ async function addBlocksFromSelectedLinkColumns() {
       return;
     }
     const blocks = ensureMappingBlocks(currentRunMode);
-    if (currentRunMode === 'seeding') {
-      const limit = Math.min(items.length, blocks.length);
-      for (let i = 0; i < limit; i += 1) {
-        const item = items[i] || {};
-        const block = blocks[i];
-        const linkCol = String(item.link_column || item.source_column || '').trim().toUpperCase();
-        if (!linkCol || !block) continue;
-        block.col_url = linkCol;
-        const next1 = shiftSheetColumn(linkCol, 1);
-        const next2 = shiftSheetColumn(linkCol, 2);
-        if (next1) block.col_drive = next1;
-        if (next2) block.col_screenshot = next2;
-      }
-      pendingMappingScrollMode = currentRunMode;
-      pendingMappingHighlightIndex = 0;
-      clearBulkSheetLinkSelections(currentRunMode);
-      bulkSheetLinkSelectionMode = false;
-      renderMappingEditor();
-      await fetchSheetLinkSuggestions(true);
-      setStatus(
-        items.length > blocks.length
-          ? `Đã điền ${blocks.length}/${items.length} cột vào ${blocks.length} block hiện có`
-          : `Đã điền ${limit} cột vào block`,
-        'done'
-      );
-      return;
-    }
     const template = blocks.length ? blocks[blocks.length - 1] : defaultMappingBlock(currentRunMode, 1);
     items.forEach(item => {
       const nextIndex = blocks.length + 1;
@@ -5648,6 +5874,7 @@ async function addBlocksFromSelectedLinkColumns() {
     });
     pendingMappingScrollMode = currentRunMode;
     pendingMappingHighlightIndex = Math.max(0, blocks.length - items.length);
+    activeSheetColumnTarget = null;
     clearBulkSheetLinkSelections(currentRunMode);
     bulkSheetLinkSelectionMode = false;
     renderMappingEditor();
@@ -6221,21 +6448,6 @@ function updateMappingBlock(mode, index, key, value) {
   }
 }
 
-function syncSeedingBlocksDriveId(force = false) {
-  const blocks = ensureMappingBlocks('seeding');
-  const sharedDriveId = String(document.getElementById('drive_id')?.value || '').trim();
-  blocks.forEach(block => {
-    const current = String(block?.drive_id || '').trim();
-    if (force || !current) block.drive_id = sharedDriveId;
-  });
-}
-
-function handleSharedDriveIdInput() {
-  if (String(currentRunMode || '').toLowerCase() !== 'seeding') return;
-  syncSeedingBlocksDriveId(true);
-  renderMappingEditor();
-}
-
 function removeMappingBlock(index) {
   const blocks = ensureMappingBlocks(currentRunMode);
   if (blocks.length <= 1) return;
@@ -6265,7 +6477,10 @@ function getModeBasePort(mode = currentRunMode) {
 }
 
 function getChromePortForBlock(index, mode = currentRunMode) {
-  return Number(DEFAULT_SHARED_BROWSER_PORT);
+  const basePort = Number(getModeBasePort(mode)) || Number(DEFAULT_SHARED_BROWSER_PORT) || 9223;
+  const blockIndex = Math.max(0, Number(index) || 0);
+  if (blockIndex <= 0) return basePort;
+  return basePort + 100 + blockIndex;
 }
 
 function openAirDatePicker(mode, index) {
@@ -6361,32 +6576,15 @@ function isLocalWebHost() {
   return isConfiguredLocalBrowserHost(window.location.hostname);
 }
 
-function launchChromeViaLocalProtocol(mode, index, port) {
-  const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
-  const blockIndex = Number(index) || 0;
-  const resolvedPort = Number(port) || getChromePortForBlock(blockIndex, runMode);
-  const href = `tool-evidence://launch?mode=${encodeURIComponent(runMode)}&block=${blockIndex}&port=${resolvedPort}`;
-  const frame = document.createElement('iframe');
-  frame.style.display = 'none';
-  frame.src = href;
-  document.body.appendChild(frame);
-  window.setTimeout(() => frame.remove(), 1500);
-  return { href, port: resolvedPort };
-}
-
 async function launchChromeBlock(index, mode = currentRunMode, explicitPort = null) {
+  const runModeKey = String(mode || currentRunMode || 'seeding').toLowerCase();
+  const actionKey = `${runModeKey}:${Number(index) || 0}`;
+  if (launchChromeInFlightByKey[actionKey]) return;
+  launchChromeInFlightByKey[actionKey] = true;
   try {
-    const runMode = String(mode || currentRunMode || 'seeding').toLowerCase();
+    const runMode = runModeKey;
     const blockIndex = Number(index) || 0;
     const port = Number(explicitPort) || getChromePortForBlock(blockIndex, runMode);
-    const localDebugUrl = `http://127.0.0.1:${port}`;
-    const popup = window.open(localDebugUrl, '_blank', 'noopener,noreferrer,width=1280,height=820');
-    if (!popup) {
-      setStatus(
-        `Trình duyệt đang chặn popup. Hãy cho phép popup cho site hiện tại rồi bấm lại (Chrome ${port}).`,
-        'failed'
-      );
-    }
     const previousMode = currentRunMode;
     currentRunMode = runMode;
     const blockName = getBlockActivityName(blockIndex);
@@ -6413,25 +6611,14 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
       }
       if (isMac) {
         setStatus(
-          `Mac chưa có local agent/handler nên chưa mở được Chrome ${port}. Hãy chạy local agent trên Mac (127.0.0.1:8765).`,
+          `Mac chưa kết nối local agent. Hãy chạy file run_local_agent.command, giữ cửa sổ đó mở, rồi tải lại trang và bấm lại Chrome ${port}.`,
           'failed'
         );
         return;
       }
-      try {
-        await logActivityEvent({
-          kind: 'login',
-          level: 'info',
-          run_mode: runMode,
-          block_name: blockName,
-          browser_port: port,
-          message: `${blockName}: đã gửi lệnh mở Chrome ${port} trên máy cục bộ`,
-        });
-      } catch (_) {}
-      const local = launchChromeViaLocalProtocol(runMode, blockIndex, port);
       setStatus(
-        `Đã gửi lệnh mở Chrome ${local.port} tới máy của bạn`,
-        'running'
+        `Chưa kết nối local agent. Hãy chạy local agent trên máy này rồi bấm lại Chrome ${port}.`,
+        'failed'
       );
       return;
     }
@@ -6450,10 +6637,11 @@ async function launchChromeBlock(index, mode = currentRunMode, explicitPort = nu
   } catch (e) {
     try {
       const maybePort = Number(explicitPort) || getChromePortForBlock(Number(index) || 0, String(mode || currentRunMode || 'seeding').toLowerCase());
-      const popup = window.open('about:blank', '_blank', 'noopener,noreferrer,width=1280,height=820');
-      if (popup) popup.document.body.innerHTML = `<div style="font-family:system-ui;padding:20px;color:#b91c1c">Không mở được Chrome ${maybePort}: ${String(e?.message || e || 'Unknown error')}</div>`;
+      setStatus(`Không mở được Chrome ${maybePort}: ${String(e?.message || e || 'Unknown error')}`, 'failed');
     } catch (_) {}
     alert(e.message);
+  } finally {
+    launchChromeInFlightByKey[actionKey] = false;
   }
 }
 
@@ -6594,11 +6782,11 @@ function applyRunModeUI() {
   if (runTitle) runTitle.textContent = formatRunTitle(currentRunMode);
   const sheetNameField = document.getElementById('sheet_name_field');
   if (sheetNameField) {
-    sheetNameField.style.display = currentRunMode === 'seeding' ? 'none' : '';
+    sheetNameField.style.display = currentRunMode === 'booking' ? '' : 'none';
   }
   const driveIdField = document.getElementById('drive_id_field');
   if (driveIdField) {
-    driveIdField.style.display = currentRunMode === 'scan' ? 'none' : '';
+    driveIdField.style.display = currentRunMode === 'booking' ? '' : 'none';
   }
   if (currentRunMode === 'seeding') {
     const blocks = ensureMappingBlocks('seeding');
@@ -6700,7 +6888,6 @@ function applyLanguage() {
   applyRunModeUI();
   setText('label[for="sheet_url"]', t('sheetUrl'));
   setText('label[for="sheet_name"]', t('sheetName'));
-  setText('label[for="drive_id"]', t('driveFolder'));
   setText('#startJobLabel', t('startJob'));
   setText('#pauseJobLabel', t('stopJob'));
   setText('#continueJobLabel', t('continueJob'));
@@ -6907,11 +7094,18 @@ function toggleLanguage() {
   setLanguage(currentLang === 'vi' ? 'en' : 'vi');
 }
 
+function isViewActive(name) {
+  return !!document.getElementById('view-' + String(name || '').trim())?.classList.contains('active');
+}
+
 async function req(url, opts = {}) {
   const useLocalAgent = shouldUseLocalAgent(url);
   if (useLocalAgent) return agentReq(url, opts);
-  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  const res = await fetch(url, { ...opts, headers });
+  const timeoutMs = resolveRequestTimeoutMs(url, opts);
+  const fetchOptions = { ...opts };
+  delete fetchOptions.timeout_ms;
+  const headers = { 'Content-Type': 'application/json', ...(fetchOptions.headers || {}) };
+  const res = await fetchWithTimeout(url, { ...fetchOptions, headers }, timeoutMs);
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
     window.location.href = '/login';
@@ -7084,7 +7278,12 @@ function getJobSummary(job) {
   });
   const done = Math.max(Number(base.done || 0), touchedRows.size);
   const success = Math.max(Number(base.success || 0), successRows.size);
-  const failed = Math.max(Number(base.failed || 0), failedRows.size, Object.keys(job?.error_rows || {}).length);
+  const failed = Math.max(
+    Number(base.failed || 0),
+    failedRows.size,
+    Number(job?.error_row_count || 0),
+    Object.keys(job?.error_rows || {}).length
+  );
   const unavailable = Math.max(Number(base.unavailable || 0), unavailableRows.size);
   const total = Math.max(
     Number(base.total || 0),
@@ -7145,17 +7344,69 @@ function getJobLineageJobs(job) {
     });
 }
 
+function hasProjectLogsCacheEntry(jobId) {
+  const key = String(jobId || '').trim();
+  if (!key) return false;
+  return Object.prototype.hasOwnProperty.call(projectLogsCacheByJobId, key);
+}
+
+function getCachedProjectLogs(jobId) {
+  const key = String(jobId || '').trim();
+  if (!key) return [];
+  return Array.isArray(projectLogsCacheByJobId[key]) ? projectLogsCacheByJobId[key] : [];
+}
+
+async function ensureProjectLineageLogs(snapshot) {
+  if (!snapshot) return;
+  const lineageJobs = getJobLineageJobs(snapshot);
+  if (!lineageJobs.length) return;
+  const waits = [];
+  lineageJobs.forEach(job => {
+    const jobId = String(job?.id || '').trim();
+    if (!jobId) return;
+    if (projectLogsInflightByJobId[jobId]) {
+      waits.push(projectLogsInflightByJobId[jobId]);
+      return;
+    }
+    const inlineLogs = Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : []);
+    if (inlineLogs.length > 0 && !hasProjectLogsCacheEntry(jobId)) {
+      projectLogsCacheByJobId[jobId] = inlineLogs.slice(-1000);
+      return;
+    }
+    if (hasProjectLogsCacheEntry(jobId)) return;
+    const promise = req('/api/jobs/' + jobId + '/logs?limit=1000&since=0')
+      .then(out => {
+        const fetched = Array.isArray(out?.logs) ? out.logs : [];
+        projectLogsCacheByJobId[jobId] = fetched;
+      })
+      .catch(() => {
+        projectLogsCacheByJobId[jobId] = [];
+      })
+      .finally(() => {
+        delete projectLogsInflightByJobId[jobId];
+      });
+    projectLogsInflightByJobId[jobId] = promise;
+    waits.push(promise);
+  });
+  if (!waits.length) return;
+  await Promise.all(waits);
+  if (!isViewActive('projects')) return;
+  if (String(currentProjectJobId || '').trim() !== String(snapshot?.id || '').trim()) return;
+  renderProjects();
+}
+
 function getLineageDisplayLogs(snapshot, logs) {
   const currentLogs = Array.isArray(logs) ? logs : [];
   if (!snapshot) return currentLogs;
   const lineageJobs = getJobLineageJobs(snapshot);
-  if (lineageJobs.length <= 1) return currentLogs;
+  if (!lineageJobs.length) return currentLogs;
   const out = [];
   const seen = new Set();
   lineageJobs.forEach(job => {
+    const cachedLogs = getCachedProjectLogs(job?.id);
     const sourceLogs = job?.id === snapshot?.id
-      ? currentLogs
-      : (Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : []));
+      ? currentLogs.concat(cachedLogs)
+      : (Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : [])).concat(cachedLogs);
     sourceLogs.forEach(item => {
       const key = [
         String(job?.id || ''),
@@ -7304,6 +7555,8 @@ function getSelectedProjectJob() {
 
 function selectProject(jobId) {
   currentProjectJobId = jobId || null;
+  const selected = getSelectedProjectJob();
+  if (selected) ensureProjectLineageLogs(selected);
   renderProjects();
 }
 
@@ -7413,6 +7666,8 @@ async function deleteProject(jobId, ev = null) {
   if (!confirm(t('deleteProjectConfirm'))) return;
   try {
     await req('/api/jobs/' + jobId, { method: 'DELETE' });
+    delete projectLogsCacheByJobId[String(jobId || '').trim()];
+    delete projectLogsInflightByJobId[String(jobId || '').trim()];
     if (currentProjectJobId === jobId) currentProjectJobId = null;
     if (currentJobId === jobId) currentJobId = null;
     await refreshJobs();
@@ -7946,6 +8201,9 @@ function switchView(name, tabEl = null) {
   const runsGroup = document.getElementById('runs_group');
   if (runsGroup) runsGroup.classList.toggle('open', name === 'runs');
   if (name === 'access' && isAdminUser()) Promise.all([loadAccessPolicy(), loadMailConfig()]);
+  if (name === 'projects') renderProjects();
+  if (name === 'activities') renderActivities(getCombinedActivities());
+  if (name === 'runs' || name === 'overview') renderOverview();
 }
 
 function setStatus(text, status) {
@@ -7980,9 +8238,11 @@ function renderProjects() {
   const modeFiltered = getProjectJobsForModeFilter();
   const saved = getFilteredProjectJobs();
   const selected = getSelectedProjectJob();
+  if (selected) ensureProjectLineageLogs(selected);
+  const selectedLineageJobs = selected ? getJobLineageJobs(selected) : [];
+  const projectLogsLoading = selectedLineageJobs.some(job => !!projectLogsInflightByJobId[String(job?.id || '').trim()]);
   const uniqueSheets = new Set(saved.map(job => getJobSheetLabel(job))).size;
   const summary = getJobSummary(selected);
-  const completionText = String(selected?.completion?.summary || '').trim();
   const request = selected?.request || {};
   const projectLogs = selected
     ? getLineageDisplayLogs(
@@ -8018,7 +8278,7 @@ function renderProjects() {
                     <div class="project-log-message">${esc(item.message || `${item.state}/${item.result}`)}</div>
                   </div>`;
               }).join('')
-            : `<div class="project-log-empty">${esc(t('projectNoLogs'))}</div>`}
+            : `<div class="project-log-empty">${esc(projectLogsLoading ? t('projectLogsLoading') : t('projectNoLogs'))}</div>`}
         </div>
       </div>`
     : '';
@@ -8086,14 +8346,17 @@ function renderProjects() {
     : `<div class="list-row"><span>${allSaved.length ? t('noProjectsInFilter') : t('noGroupsYet')}</span><span>-</span></div>`;
   document.getElementById('projectsSnapshot').innerHTML = selected
     ? [
-        `<div class="timeline-item"><strong>${t('group')}</strong><div>${esc(getJobSheetLabel(selected))}</div></div>`,
-        `<div class="timeline-item"><strong>${t('state')}</strong><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusBadge(selected.status)}<span class="mode-pill mode-${getJobMode(selected)}">${esc(prettyWord(getJobMode(selected)))}</span></div></div>`,
+        `<div class="snapshot-pair">
+          <div class="timeline-item"><strong>${t('group')}</strong><div>${esc(getJobSheetLabel(selected))}</div></div>
+          <div class="timeline-item"><strong>${t('state')}</strong><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusBadge(selected.status)}<span class="mode-pill mode-${getJobMode(selected)}">${esc(prettyWord(getJobMode(selected)))}</span></div></div>
+        </div>`,
         ...(getJobOwnerBadge(selected) ? [`<div class="timeline-item"><strong>${t('projectOwner')}</strong><div>${esc(getJobOwnerBadge(selected))}</div></div>`] : []),
-        `<div class="timeline-item"><strong>${t('latestUpdate')}</strong><div>${esc(toLocalStamp(selected.finished_at || selected.created_at))}</div></div>`,
-        `<div class="timeline-item"><strong>${t('jobs')}</strong><div>${summary.done || 0}/${summary.total || 0} · ${summary.success || 0} ${t('success').toLowerCase()} · ${summary.failed || 0} ${t('failedLabel').toLowerCase()}</div></div>`,
+        `<div class="snapshot-pair">
+          <div class="timeline-item"><strong>${t('latestUpdate')}</strong><div>${esc(toLocalStamp(selected.finished_at || selected.created_at))}</div></div>
+          <div class="timeline-item"><strong>${t('jobs')}</strong><div>${summary.done || 0}/${summary.total || 0} · ${summary.success || 0} ${t('success').toLowerCase()} · ${summary.failed || 0} ${t('failedLabel').toLowerCase()}</div></div>
+        </div>`,
         `<div class="timeline-item"><strong>${t('driveFolder')}</strong><div>${esc(request.drive_id || '-')}</div></div>`,
         `<div class="timeline-item"><strong>${t('detailLabel')}</strong><div>${esc(selected.detail || '-')}</div></div>`,
-        `<div class="timeline-item"><strong>${t('summaryLabel')}</strong><div style="white-space:pre-line">${esc(completionText || '-')}</div></div>`,
         projectLogsHtml,
       ].join('')
     : `<div class="timeline-item"><strong>${t('noProjectGroup')}</strong><div>${t('startOrSelect')}</div></div>`;
@@ -9262,32 +9525,48 @@ function scheduleScanFilterSettingsSave() {
 }
 
 async function loadDefaults() {
-  const [d, s] = await Promise.all([req('/api/default-config'), req('/api/settings')]);
+  let d = {};
+  let s = {};
+  try {
+    const [defaultsOut, settingsOut] = await Promise.all([req('/api/default-config'), req('/api/settings')]);
+    d = defaultsOut || {};
+    s = settingsOut || {};
+  } catch (e) {
+    setStatus('Load defaults warning: ' + String(e?.message || e || 'unknown error'), 'failed');
+  }
+
   currentSettingsCache = s || {};
   currentMappingBlocksByMode = normalizeMappingsByModeForClient(currentSettingsCache.mappings_by_mode || {});
   currentRunFlagsByMode = normalizeRunFlagsByModeForClient(currentSettingsCache.run_flags_by_mode || {});
-  sheet_url.value = s.sheet_url || d.sheet_url || '';
-  sheet_name.value = s.sheet_name || d.sheet_name || '';
-  drive_id.value = s.drive_id || d.drive_id || '';
+  if (sheet_url) sheet_url.value = s.sheet_url || d.sheet_url || '';
+  if (sheet_name) sheet_name.value = s.sheet_name || d.sheet_name || '';
+  if (drive_id) drive_id.value = s.drive_id || d.drive_id || '';
   applyRunFlagsForMode(currentRunMode);
-  document.getElementById('settings_viewport_width').value = s.viewport_width || 1920;
-  document.getElementById('settings_viewport_height').value = s.viewport_height || 1400;
-  document.getElementById('settings_page_timeout_ms').value = s.page_timeout_ms || 200;
+
+  const viewportWidthNode = document.getElementById('settings_viewport_width');
+  if (viewportWidthNode) viewportWidthNode.value = s.viewport_width || 1920;
+  const viewportHeightNode = document.getElementById('settings_viewport_height');
+  if (viewportHeightNode) viewportHeightNode.value = s.viewport_height || 1400;
+  const pageTimeoutNode = document.getElementById('settings_page_timeout_ms');
+  if (pageTimeoutNode) pageTimeoutNode.value = s.page_timeout_ms || 200;
   const tiktokWaitNode = document.getElementById('settings_tiktok_captcha_wait_sec');
   if (tiktokWaitNode) tiktokWaitNode.value = s.tiktok_captcha_wait_sec || 15;
   const pleaseWaitNode = document.getElementById('settings_please_wait_delay_sec');
   if (pleaseWaitNode) pleaseWaitNode.value = s.please_wait_delay_sec ?? 2;
-  document.getElementById('settings_tiktok_force_focus').checked = !!s.tiktok_force_focus;
+  const focusNode = document.getElementById('settings_tiktok_force_focus');
+  if (focusNode) focusNode.checked = !!s.tiktok_force_focus;
   const settingsNegativeTerms = document.getElementById('settings_scan_negative_terms');
   if (settingsNegativeTerms) settingsNegativeTerms.value = s.scan_negative_terms || '';
   const settingsKeywordTerms = document.getElementById('settings_scan_keyword_terms');
   if (settingsKeywordTerms) settingsKeywordTerms.value = s.scan_keyword_terms || '';
-  document.getElementById('settings_full_page_capture').checked = !!s.full_page_capture;
+  const fullPageNode = document.getElementById('settings_full_page_capture');
+  if (fullPageNode) fullPageNode.checked = !!s.full_page_capture;
   renderSettingsSummary(s);
   if (isAdminUser()) await Promise.all([loadAccessPolicy(), loadMailConfig()]);
-  if (String(sheet_url.value || '').trim()) {
+  renderMappingEditor();
+  if (String(sheet_url?.value || '').trim()) {
     scheduleSheetNameSuggestions(false);
-    if (String(sheet_name.value || '').trim()) scheduleSheetLinkCountSummary(false);
+    if (String(sheet_name?.value || '').trim()) scheduleSheetLinkCountSummary(false);
   } else {
     setSheetUrlHint('');
     setSheetNameHint('');
@@ -9395,6 +9674,8 @@ function buildMappingsForCurrentMode() {
 }
 
 async function startJob() {
+  if (startJobInFlight) return;
+  startJobInFlight = true;
   try {
     primeCompletionNotifications();
     console.log('[DEBUG] currentMappingBlocksByMode:', currentMappingBlocksByMode);
@@ -9440,6 +9721,8 @@ async function startJob() {
   } catch (e) {
     if (await focusBlockingModeJob(e, currentRunMode)) return;
     alert(e.message);
+  } finally {
+    startJobInFlight = false;
   }
 }
 
@@ -9527,7 +9810,7 @@ async function refreshJobs() {
   try {
     const previousJobId = currentJobId;
     const [out, activityOut] = await Promise.all([
-      req('/api/jobs?recent_log_limit=40'),
+      req('/api/jobs?jobs_limit=120&recent_log_limit=8&include_recent_logs=0&include_issue_details=0'),
       req('/api/activity?limit=' + JOBS_REFRESH_ACTIVITY_LIMIT),
     ]);
     const jobs = out.jobs || [];
@@ -9558,9 +9841,9 @@ async function refreshJobs() {
       return `<tr class="${active}" onclick="selectJob('${j.id}')"><td>${statusBadge(j.status)}</td><td title="${esc(getJobMode(j))} · ${esc(j.id)}">${esc(modeLabel)} · ${esc(j.id.slice(0,8))}${ownerLabel ? `<div class="muted" style="font-size:11px;margin-top:2px">${esc(ownerLabel)}</div>` : ''}</td><td>${s.done}/${s.total}</td></tr>`;
     }).join('');
     document.getElementById('jobsBody').innerHTML = rows;
-    renderOverview();
-    renderProjects();
-    renderActivities(getCombinedActivities());
+    if (isViewActive('runs') || isViewActive('overview')) renderOverview();
+    if (isViewActive('projects')) renderProjects();
+    if (isViewActive('activities')) renderActivities(getCombinedActivities());
     return true;
   } catch (e) {
     setStatus('Load jobs error: ' + e.message, 'failed');
@@ -9667,25 +9950,31 @@ function ensureTimers() {
 }
 
 async function init() {
-  await loadAuthState();
-  await detectLocalAgent();
-  syncAuthUI();
-  switchView('runs', document.querySelector('.side-btn[data-view="runs"]'));
-  bindSheetNameAutocomplete();
-  await loadDefaults();
-  await refreshJobs();
-  if (currentJobId) {
-    await pollCurrent();
-  } else {
-    renderRunMonitor(null, []);
+  try {
+    await loadAuthState();
+    await detectLocalAgent();
+    syncAuthUI();
+    switchView('runs', document.querySelector('.side-btn[data-view="runs"]'));
+    bindSheetNameAutocomplete();
+    await loadDefaults();
+    await refreshJobs();
+    if (currentJobId) {
+      await pollCurrent();
+    } else {
+      renderRunMonitor(null, []);
+    }
+    renderOverview();
+    renderActivities(getCombinedActivities());
+    renderAccessPolicySummary(currentAccessPolicy);
+    ensureTimers();
+    applyTheme();
+    applyLanguage();
+    setStatus('ready', 'idle');
+  } catch (e) {
+    setStatus('Init error: ' + String(e?.message || e || 'unknown error'), 'failed');
+    try { renderMappingEditor(); } catch (_) {}
+    try { renderRunMonitor(null, []); } catch (_) {}
   }
-  renderOverview();
-  renderActivities(getCombinedActivities());
-  renderAccessPolicySummary(currentAccessPolicy);
-  ensureTimers();
-  applyTheme();
-  applyLanguage();
-  setStatus('ready', 'idle');
 }
 
 init().catch(e => setStatus('Init error: ' + e.message, 'failed'));
@@ -10162,20 +10451,26 @@ def start_job(request: Request, payload: JobStartRequest):
     profile_path = _get_mode_profile(run_mode, 0, browser_port=browser_port)
 
     if payload.auto_launch_chrome and run_mode != "scan":
-        for idx, mapping in enumerate(mapping_payload):
-            block_mode = _normalize_run_mode(str((mapping or {}).get("mode", run_mode)))
-            if block_mode == "scan":
-                continue
-            block_port = evidence.get_post_port(idx, _get_mode_base_port(block_mode))
-            block_profile = _get_mode_profile(block_mode, idx, browser_port=block_port)
-            ok, info = evidence.launch_chrome_for_login(
-                browser_port=block_port,
-                profile_path=block_profile,
-            )
-            if not ok:
-                evidence.write_log(
-                    f"[WARN] Auto launch Chrome failed ({block_mode} block {idx + 1}, port {block_port}): {info}"
+        mapped_blocks = list(mapping_payload)
+        run_mode_hint = run_mode
+
+        def _auto_launch_chrome_background():
+            for idx, mapping in enumerate(mapped_blocks):
+                block_mode = _normalize_run_mode(str((mapping or {}).get("mode", run_mode_hint)))
+                if block_mode == "scan":
+                    continue
+                block_port = evidence.get_post_port(idx, _get_mode_base_port(block_mode))
+                block_profile = _get_mode_profile(block_mode, idx, browser_port=block_port)
+                ok, info = evidence.launch_chrome_for_login(
+                    browser_port=block_port,
+                    profile_path=block_profile,
                 )
+                if not ok:
+                    evidence.write_log(
+                        f"[WARN] Auto launch Chrome failed ({block_mode} block {idx + 1}, port {block_port}): {info}"
+                    )
+
+        threading.Thread(target=_auto_launch_chrome_background, daemon=True).start()
 
     request_snapshot = {
         "owner_email": owner_email,
@@ -10518,17 +10813,28 @@ def pause_toggle_job(job_id: str, request: Request):
 
 
 @app.get("/api/jobs")
-def list_jobs(request: Request, recent_log_limit: int = JOB_LIST_RECENT_LOG_LIMIT_DEFAULT):
+def list_jobs(
+    request: Request,
+    recent_log_limit: int = JOB_LIST_RECENT_LOG_LIMIT_DEFAULT,
+    jobs_limit: int = 0,
+    include_recent_logs: int = 1,
+    include_issue_details: int = 1,
+):
     owner_email = _require_api_auth(request)
     can_view_all = _is_admin_email(owner_email)
     log_limit = max(0, min(int(recent_log_limit), JOB_LIST_RECENT_LOG_LIMIT_MAX))
+    max_jobs = max(0, min(int(jobs_limit or 0), 1000))
+    want_recent_logs = bool(int(include_recent_logs or 0))
+    want_issue_details = bool(int(include_issue_details or 0))
     out = []
     with JOBS_LOCK:
         for job in JOBS.values():
             if not can_view_all and _job_owner_email(job) != owner_email:
                 continue
             logs_ref = job.get("logs") or []
-            recent_logs = list(logs_ref[-log_limit:]) if log_limit > 0 else []
+            recent_logs = list(logs_ref[-log_limit:]) if (want_recent_logs and log_limit > 0) else []
+            issue_rows_ref = job.get("error_rows") or {}
+            issue_cells_ref = job.get("issue_cells") or []
             out.append(
                 {
                     "id": job["id"],
@@ -10542,13 +10848,17 @@ def list_jobs(request: Request, recent_log_limit: int = JOB_LIST_RECENT_LOG_LIMI
                     "detail": job.get("detail"),
                     "request": _compact_request_for_client(job.get("request")),
                     "completion": job.get("completion"),
-                    "error_rows": job.get("error_rows"),
-                    "issue_cells": job.get("issue_cells"),
+                    "error_rows": issue_rows_ref if want_issue_details else {},
+                    "issue_cells": issue_cells_ref if want_issue_details else [],
                     "error": job.get("error"),
                     "recent_logs": recent_logs,
+                    "error_row_count": len(issue_rows_ref),
+                    "issue_cell_count": len(issue_cells_ref),
                 }
             )
     out.sort(key=lambda x: x["created_at"], reverse=True)
+    if max_jobs > 0:
+        out = out[:max_jobs]
     return {"jobs": out}
 
 

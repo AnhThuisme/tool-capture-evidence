@@ -187,7 +187,7 @@ def launch_chrome_block(block_index: int, request: Request, run_mode: str = "see
     idx = int(block_index)
     base_port = web_ui._get_mode_base_port(run_mode)
     port = int(browser_port or evidence.get_post_port(idx, base_port))
-    profile = web_ui._get_mode_profile(run_mode, idx)
+    profile = web_ui._get_mode_profile(run_mode, idx, browser_port=port)
     ok, info = evidence.launch_chrome_for_login(browser_port=port, profile_path=profile)
     if not ok:
         raise HTTPException(status_code=500, detail=info)
@@ -241,7 +241,7 @@ def start_job(request: Request, payload: web_ui.JobStartRequest):
     mapping_payload = [m.model_dump() for m in payload.mappings] or [web_ui._default_mapping(payload.start_line, payload.run_mode)]
     run_mode = web_ui._infer_job_mode(mapping_payload, fallback=run_mode)
     browser_port = web_ui._get_mode_base_port(run_mode)
-    profile_path = web_ui._get_mode_profile(run_mode, 0)
+    profile_path = web_ui._get_mode_profile(run_mode, 0, browser_port=browser_port)
 
     if payload.auto_launch_chrome and run_mode != "scan":
         for idx, mapping in enumerate(mapping_payload):
@@ -249,7 +249,7 @@ def start_job(request: Request, payload: web_ui.JobStartRequest):
             if block_mode == "scan":
                 continue
             block_port = evidence.get_post_port(idx, web_ui._get_mode_base_port(block_mode))
-            block_profile = web_ui._get_mode_profile(block_mode, idx)
+            block_profile = web_ui._get_mode_profile(block_mode, idx, browser_port=block_port)
             ok, info = evidence.launch_chrome_for_login(browser_port=block_port, profile_path=block_profile)
             if not ok:
                 web_ui._append_activity_event(

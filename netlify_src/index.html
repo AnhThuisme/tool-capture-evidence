@@ -881,7 +881,6 @@ linear-gradient(to right, transparent, transparent)}
         <section id="view-access" class="view" style="display:none">
           <div class="headline access-headline">
             <div>
-              <div class="access-kicker">Admin Control</div>
               <div class="h1">Access</div>
             </div>
             <div class="state">Admin manages user access</div>
@@ -1910,6 +1909,27 @@ function formatRunConfigTitle(mode = currentRunMode) {
   return t('runConfig');
 }
 
+function getTodayLocalDateString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function isSheetColumnRef(value) {
+  const raw = String(value || '').trim();
+  return /^[A-Za-z]{1,3}$/.test(raw);
+}
+
+function resolveAirDateForMode(mode, rawValue) {
+  const key = String(mode || '').toLowerCase();
+  if (key === 'scan') return '';
+  const raw = String(rawValue || '').trim();
+  if (isSheetColumnRef(raw)) return raw.toUpperCase();
+  return getTodayLocalDateString();
+}
+
 function sanitizeMappingBlockForMode(mode, block, index = 1) {
   const key = String(mode || 'seeding').toLowerCase();
   const next = {
@@ -1921,10 +1941,13 @@ function sanitizeMappingBlockForMode(mode, block, index = 1) {
   if (key === 'seeding') {
     next.col_profile = '';
     next.col_content = '';
+    next.col_air_date = resolveAirDateForMode(key, next.col_air_date);
+  } else if (key === 'booking') {
+    next.col_air_date = resolveAirDateForMode(key, next.col_air_date);
   } else if (key === 'scan') {
     next.col_profile = '';
     next.col_screenshot = '';
-    next.col_air_date = '';
+    next.col_air_date = resolveAirDateForMode(key, next.col_air_date);
   }
   return next;
 }
@@ -1983,7 +2006,7 @@ function defaultMappingBlock(mode, index = 1) {
     col_url: 'K',
     col_drive: 'L',
     col_screenshot: 'J',
-    col_air_date: '',
+    col_air_date: getTodayLocalDateString(),
     fixed_air_date: '',
     manual_link: '',
     mode: isBooking ? 'booking' : 'seeding'

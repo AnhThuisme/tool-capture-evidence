@@ -1,0 +1,12 @@
+1653:     viewportWidth: 'Viewport width',
+1654:     viewportHeight: 'Viewport height',
+1655:     pageTimeout: 'Timeout t\u1ea3i trang (ms)',
+1656:     scanNegativeTermsLabel: 'T\u1eeb ng\u1eef ti\xeau c\u1ef1c cho Scan',
+1657:     scanNegativeTermsHelp: 'M\u1ed7i d\xf2ng m\u1ed9t t\u1eeb ho\u1eb7c c\u1ee5m t\u1eeb. Khi Scan b\u1eadt l\u1ecdc t\u1eeb ti\xeau c\u1ef1c, row ch\u1ee9a t\u1eeb n\xe0y s\u1ebd b\u1ecb \u0111\xe1nh d\u1ea5u l\u1ed7i.',
+1658:     scanNegativeTermsPlaceholder: 'spam
+1659: l\u1eeba \u0111\u1ea3o
+1660: ch\u1eedi b\u1edbi',
+1661:     waitReadyState: 'Ch\u1edd trang \u1edf tr\u1ea1ng th\xe1i',
+1662:     fullPageCapture: 'Ch\u1ee5p full page',
+1663:     fullPageHelp: 'B\u1eadt n\u1ebfu b\u1ea1n mu\u1ed1n gi\u1eef to\xe0n b\u1ed9 chi\u1ec1u d\xe0i trang thay v\xec ch\u1ec9 ph\u1ea7n \u0111ang th\u1ea5y.',
+1664:     jsonServiceAccount: 'JSON service account',

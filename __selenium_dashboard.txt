@@ -1,0 +1,54 @@
+TITLE: Tool Evidence
+URL: http://127.0.0.1:8012/
+BODY_TEXT_START
+Tool Evidence
+Runs
+Projects
+Activities
+Access
+Settings
+ADMIN
+thu.phannguyenanh@fanscom.vn
+Đăng xuất
+VN
+Seeding
+Chia sẻ Sheet & Drive folder cho (quyền Editor):
+Chưa có email service account
+Sheet URL
+Sheet Name
+Drive Folder ID
+Overwrite
+Always rerun and replace previous results
+Highlight Sheet Errors
+Color output cells on the sheet when a row is unavailable or fails
+Start Job
+Stop
++ Thêm Block
+CỘT CÓ LINK
+Quét nhanh
+4. RESULT & MONITOR
+Sẵn sàng
+JOB
+Chua chon job
+-
+PROGRESS
+0 / 0
+0%
+-
+LOI THEO LINK SHEET
+Khong co loi
+Success 0 - Failed 0
+Bang log xu ly
+Continue
+Chạy lỗi
+Xuất log Excel
+Time Post # Result Message Replay
+No data
+BODY_TEXT_END
+ACTIVE_VIEW_RUNS True
+RUN_TITLE Seeding
+BROWSER_LOGS_START
+{"level": "SEVERE", "message": "http://127.0.0.1:8012/favicon.ico - Failed to load resource: the server responded with a status of 404 (Not Found)", "source": "network", "timestamp": 1775112050657}
+{"level": "SEVERE", "message": "http://127.0.0.1:8012/ 1657:34 Uncaught SyntaxError: Invalid or unexpected token", "source": "javascript", "timestamp": 1775112050677}
+{"level": "DEBUG", "message": "http://127.0.0.1:8012/ - [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o", "source": "recommendation", "timestamp": 1775112050695}
+BROWSER_LOGS_END

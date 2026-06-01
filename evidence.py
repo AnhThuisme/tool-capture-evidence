@@ -83,10 +83,74 @@ TIKTOK_ACCESS_DENIED_RETRY_MAX = 4
 TIKTOK_ACCESS_DENIED_RETRY_SLEEP_SEC = 1.6
 TIKTOK_REDIRECT_WAIT_SEC = 4.0
 PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = 2.0
+PLEASE_WAIT_MAX_WAIT_SEC = 8.0
+PLEASE_WAIT_POLL_SEC = 1.0
+BLANK_SCREEN_RETRY_DELAY_SEC = 2.0
+BLANK_SCREEN_MAX_RETRIES = 1
 MULTI_CAPTURE_INTERVAL_SEC = 5.0
 FB_COMMENT_READY_WAIT = 4.0
 UI_CLICK_SETTLE_SLEEP = 0.15
 UI_SCROLL_SETTLE_SLEEP = 0.1
+TIKTOK_OEMBED_TIMEOUT_SEC = 10.0
+
+
+def _normalize_profile_dir(path_value: str | None) -> str:
+    raw = str(path_value or "").strip()
+    if not raw:
+        raw = LOCAL_PROFILE_PATH
+    if not os.path.isabs(raw):
+        raw = os.path.join(BASE_DIR, raw)
+    return os.path.abspath(raw)
+
+
+def _fallback_profile_dir(browser_port: int = 9223) -> str:
+    if os.name == "nt":
+        root = os.path.join(os.environ.get("LOCALAPPDATA", BASE_DIR), "ToolEvidence")
+    elif sys.platform == "darwin":
+        root = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "ToolEvidence")
+    else:
+        root = os.path.join(os.path.expanduser("~"), ".local", "share", "ToolEvidence")
+    return os.path.abspath(os.path.join(root, "profiles", f"chrome_port_{int(browser_port)}"))
+
+
+def _ensure_profile_dir_writable(profile_dir: str) -> tuple[bool, str]:
+    try:
+        os.makedirs(profile_dir, exist_ok=True)
+        probe = os.path.join(profile_dir, ".evidence_profile_write_test")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("ok")
+        try:
+            os.remove(probe)
+        except Exception:
+            pass
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _resolve_writable_profile_dir(
+    profile_path: str | None,
+    *,
+    browser_port: int = 9223,
+    log_prefix: str = "",
+) -> str:
+    profile = _normalize_profile_dir(profile_path)
+    ok, reason = _ensure_profile_dir_writable(profile)
+    if ok:
+        return profile
+    fallback = _fallback_profile_dir(browser_port)
+    ok_fb, reason_fb = _ensure_profile_dir_writable(fallback)
+    if ok_fb:
+        write_log(
+            f"[WARN] {log_prefix}Profile dir not writable: '{profile}' ({reason}). "
+            f"Use fallback profile: '{fallback}'."
+        )
+        return fallback
+    raise RuntimeError(
+        f"{log_prefix}Không ghi được thư mục profile Chrome.\n"
+        f"- Primary: {profile} ({reason})\n"
+        f"- Fallback: {fallback} ({reason_fb})"
+    )
 
 
 def get_post_port(post_index: int, base_port: int = 9223) -> int:
@@ -107,14 +171,150 @@ def get_block_profile(block_index: int, mode: str = "seeding", browser_port: int
             port = int(browser_port)
             if port > 0:
                 if mode_name == "seeding" and port == 9223:
-                    return LOCAL_PROFILE_PATH
-                return os.path.join(TEMP_DIR, f"chrome_profile_{mode_name}_port_{port}")
+                    return _normalize_profile_dir(LOCAL_PROFILE_PATH)
+                return _normalize_profile_dir(os.path.join(TEMP_DIR, f"chrome_profile_{mode_name}_port_{port}"))
         except Exception:
             pass
     if mode_name == "seeding":
-        return LOCAL_PROFILE_PATH if idx <= 0 else os.path.join(TEMP_DIR, f"chrome_profile_worker_{idx}")
+        if idx <= 0:
+            return _normalize_profile_dir(LOCAL_PROFILE_PATH)
+        return _normalize_profile_dir(os.path.join(TEMP_DIR, f"chrome_profile_worker_{idx}"))
     suffix = f"{mode_name}_{idx}" if idx > 0 else f"{mode_name}_main"
-    return os.path.join(TEMP_DIR, f"chrome_profile_{suffix}")
+    return _normalize_profile_dir(os.path.join(TEMP_DIR, f"chrome_profile_{suffix}"))
+
+
+_BROWSER_BINARY_CHECK_CACHE: dict[str, tuple[bool, str]] = {}
+_BROWSER_BINARY_CHECK_LOCK = threading.Lock()
+
+
+def _iter_browser_binary_candidates() -> list[str]:
+    candidates: list[str] = []
+    env_overrides = [
+        os.environ.get("EVIDENCE_CHROME_BINARY", "").strip(),
+        os.environ.get("EVIDENCE_BROWSER_BINARY", "").strip(),
+    ]
+    for item in env_overrides:
+        if item:
+            candidates.append(item)
+
+    if os.name == "nt":
+        candidates.extend(
+            [
+                os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Chromium", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Chromium", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Microsoft", "Edge", "Application", "msedge.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+            ]
+        )
+    elif sys.platform == "darwin":
+        candidates.extend(
+            [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+                "/Applications/Arc.app/Contents/MacOS/Arc",
+                "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
+                "/Applications/Opera.app/Contents/MacOS/Opera",
+            ]
+        )
+    else:
+        for cmd in [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "microsoft-edge",
+            "microsoft-edge-stable",
+            "brave-browser",
+            "vivaldi",
+            "opera",
+        ]:
+            p = shutil.which(cmd)
+            if p:
+                candidates.append(p)
+
+    for cmd in [
+        "chrome",
+        "chrome.exe",
+        "google-chrome",
+        "chromium",
+        "msedge",
+        "msedge.exe",
+        "brave",
+        "brave-browser",
+        "vivaldi",
+        "opera",
+    ]:
+        p = shutil.which(cmd)
+        if p:
+            candidates.append(p)
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for p in candidates:
+        norm = os.path.normpath(str(p or "").strip())
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        ordered.append(norm)
+    return ordered
+
+
+def _check_browser_binary_runtime(path: str) -> tuple[bool, str]:
+    normalized = os.path.normpath(str(path or "").strip())
+    if not normalized:
+        return False, "empty path"
+    with _BROWSER_BINARY_CHECK_LOCK:
+        cached = _BROWSER_BINARY_CHECK_CACHE.get(normalized)
+    if cached is not None:
+        return cached
+    if not os.path.exists(normalized):
+        result = (False, "not found")
+        with _BROWSER_BINARY_CHECK_LOCK:
+            _BROWSER_BINARY_CHECK_CACHE[normalized] = result
+        return result
+    if sys.platform != "darwin":
+        result = (True, "")
+        with _BROWSER_BINARY_CHECK_LOCK:
+            _BROWSER_BINARY_CHECK_CACHE[normalized] = result
+        return result
+    try:
+        probe = subprocess.run(
+            [normalized, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+        combined = "\n".join([str(probe.stdout or "").strip(), str(probe.stderr or "").strip()]).strip()
+        lowered = combined.lower()
+        if ("or later required" in lowered) and ("have instead" in lowered):
+            reason = combined.splitlines()[0].strip() if combined else "binary requires newer macOS"
+            result = (False, reason)
+        else:
+            result = (True, "")
+    except Exception as exc:
+        result = (True, f"probe skipped: {exc}")
+    with _BROWSER_BINARY_CHECK_LOCK:
+        _BROWSER_BINARY_CHECK_CACHE[normalized] = result
+    return result
+
+
+def find_compatible_browser_binary() -> tuple[str | None, list[str]]:
+    skipped: list[str] = []
+    for path in _iter_browser_binary_candidates():
+        ok, reason = _check_browser_binary_runtime(path)
+        if ok:
+            return path, skipped
+        skipped.append(f"{path} ({reason})")
+    return None, skipped
 
 
 def _bootstrap_env_credentials_path() -> str:
@@ -705,6 +905,65 @@ def download_image_bytes_for_scan(url: str, timeout: int = 20, drive_service=Non
     return b""
 
 
+def fetch_tiktok_oembed_data(url: str, timeout_sec: float = TIKTOK_OEMBED_TIMEOUT_SEC) -> dict:
+    """
+    Fetch TikTok public oEmbed payload for a video URL.
+    Useful when normal browser navigation is blocked by Access Denied.
+    """
+    src = normalize_web_source_url(url)
+    if not src:
+        src = str(url or "").strip()
+    if not src:
+        return {}
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    candidates = [src]
+    if "vt.tiktok.com" in src.lower():
+        try:
+            if requests is not None:
+                r = requests.get(src, timeout=max(3, int(timeout_sec)), headers=headers, allow_redirects=True)
+                final_url = str(getattr(r, "url", "") or "").strip()
+            else:
+                from urllib.request import Request, urlopen
+                req = Request(src, headers=headers)
+                with urlopen(req, timeout=max(3, float(timeout_sec or 10.0))) as resp:
+                    final_url = str(getattr(resp, "url", "") or "").strip()
+            if final_url and final_url not in candidates:
+                candidates.insert(0, final_url)
+        except Exception:
+            pass
+
+    seen = set()
+    for cand in candidates:
+        c = str(cand or "").strip()
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        endpoint = f"https://www.tiktok.com/oembed?url={quote(c, safe='')}"
+        try:
+            if requests is not None:
+                resp = requests.get(
+                    endpoint,
+                    timeout=max(3, int(timeout_sec)),
+                    headers=headers,
+                    allow_redirects=True,
+                )
+                if int(getattr(resp, "status_code", 0) or 0) >= 400:
+                    continue
+                payload = resp.json() if hasattr(resp, "json") else {}
+            else:
+                from urllib.request import Request, urlopen
+                req = Request(endpoint, headers=headers)
+                with urlopen(req, timeout=max(3, float(timeout_sec or 10.0))) as r2:
+                    payload = json.loads((r2.read() or b"").decode("utf-8", errors="ignore") or "{}")
+            if isinstance(payload, dict) and payload:
+                payload["_source_url"] = c
+                return payload
+        except Exception:
+            continue
+    return {}
+
+
 def ocr_text_from_image_bytes(image_bytes: bytes, expected_text: str = "") -> str:
     if not image_bytes:
         return ""
@@ -812,6 +1071,53 @@ def build_collage_png(image_bytes_list: list[bytes]) -> bytes:
     out_buf = io.BytesIO()
     canvas.save(out_buf, format="PNG")
     return out_buf.getvalue()
+
+
+def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
+    """
+    Heuristic for blank/placeholder screenshots (white/black/near-solid canvas).
+    Returns True when frame has very low visual variance or one dominant color.
+    """
+    if not image_bytes:
+        return True
+    try:
+        from PIL import Image, ImageStat
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception:
+        return False
+
+    try:
+        sample = img.resize((160, 90))
+        stat = ImageStat.Stat(sample)
+        std_vals = list(stat.stddev or [0.0, 0.0, 0.0])
+        mean_std = sum(float(v) for v in std_vals) / max(1, len(std_vals))
+
+        pixels = sample.getdata()
+        total = max(1, len(pixels))
+        bright = 0
+        dark = 0
+        for r, g, b in pixels:
+            if r >= 245 and g >= 245 and b >= 245:
+                bright += 1
+            if r <= 14 and g <= 14 and b <= 14:
+                dark += 1
+        bright_ratio = bright / total
+        dark_ratio = dark / total
+
+        counts = sample.quantize(colors=8, method=2).getcolors() or []
+        dominant_ratio = 0.0
+        if counts:
+            dominant_ratio = max(c for c, _ in counts) / total
+
+        if bright_ratio >= 0.93 or dark_ratio >= 0.93:
+            return True
+        if dominant_ratio >= 0.90 and mean_std <= 12.0:
+            return True
+        if mean_std <= 5.0:
+            return True
+        return False
+    except Exception:
+        return False
 
 
 def check_ocr_dependencies() -> tuple[bool, str]:
@@ -1601,6 +1907,47 @@ def set_error_rows_for_sheet(
     else:
         db.pop(key, None)
     save_error_history(db)
+
+
+def parse_target_rows_text(raw_text: str) -> tuple[list[int], str]:
+    """
+    Parse manual row selection text.
+    Supported formats: "7", "7,8,9", "7-12", "7, 10-15; 20".
+    Returns (sorted_unique_rows, error_message).
+    """
+    raw = str(raw_text or "").strip()
+    if not raw:
+        return [], ""
+    tokens = [t.strip() for t in re.split(r"[,\n;]+", raw) if str(t).strip()]
+    if not tokens:
+        return [], ""
+    selected: set[int] = set()
+    for token in tokens:
+        normalized = re.sub(r"\s*-\s*", "-", token.strip())
+        if re.fullmatch(r"\d+", normalized):
+            row_num = int(normalized)
+            if row_num < 1:
+                return [], f"Hàng không hợp lệ: '{token}' (phải >= 1)."
+            selected.add(row_num)
+            continue
+        range_match = re.fullmatch(r"(\d+)-(\d+)", normalized)
+        if range_match:
+            left = int(range_match.group(1))
+            right = int(range_match.group(2))
+            if left < 1 or right < 1:
+                return [], f"Khoảng hàng không hợp lệ: '{token}' (phải >= 1)."
+            if left > right:
+                return [], f"Khoảng hàng không hợp lệ: '{token}' (đầu <= cuối)."
+            if (right - left) > 50000:
+                return [], f"Khoảng hàng quá lớn: '{token}'."
+            for row_num in range(left, right + 1):
+                selected.add(row_num)
+            continue
+        return [], f"Định dạng không hợp lệ: '{token}'. Dùng ví dụ: 7,8,10-15"
+    rows = sorted(selected)
+    if len(rows) > 100000:
+        return [], "Danh sách hàng quá dài (tối đa 100000 hàng)."
+    return rows, ""
 
 
 def list_saved_error_sheets() -> list[dict]:
@@ -2553,6 +2900,70 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
         title = ""
     url = (source_url or "").lower()
 
+    # Facebook login gate popup (e.g. "See more on Facebook") should be treated
+    # as unavailable for this workflow to avoid false "success" screenshots.
+    fb_scope = "facebook.com" in (url + cur)
+    if fb_scope:
+        fb_login_markers_raw = [
+            "see more on facebook",
+            "xem them tren facebook",
+            "email address or phone number",
+            "forgotten password",
+            "create new account",
+            "scan the qr code and confirm",
+            "confirm that the codes match to log in",
+            "dang nhap",
+            "log in",
+            "login",
+        ]
+        fb_login_markers_norm = [normalize_match_text(m) for m in fb_login_markers_raw]
+        marker_hits = 0
+        for marker_raw, marker_norm in zip(fb_login_markers_raw, fb_login_markers_norm):
+            if marker_raw in txt or (marker_norm and marker_norm in txt_norm):
+                marker_hits += 1
+        has_password_field = False
+        try:
+            has_password_field = bool(
+                driver.execute_script(
+                    "return !!document.querySelector(\"input[type='password'], input[name='pass'], input#pass\");"
+                )
+            )
+        except Exception:
+            has_password_field = False
+        if marker_hits >= 2 and has_password_field:
+            return True
+
+    # TikTok onboarding/login interest modal should be treated as unavailable
+    # because it blocks post content extraction/screenshot quality.
+    tiktok_scope = "tiktok.com" in (url + cur)
+    if tiktok_scope:
+        if is_tiktok_shop_app_only_notice(driver, source_url):
+            return True
+        tiktok_gate_markers_raw = [
+            "what would you like to watch on tiktok",
+            "what would you like to watch",
+            "continue (0/3)",
+            "continue 0/3",
+            "continue ( 0/3 )",
+            "by continuing with an account located in",
+        ]
+        tiktok_gate_markers_norm = [normalize_match_text(m) for m in tiktok_gate_markers_raw]
+        marker_hits = 0
+        for marker_raw, marker_norm in zip(tiktok_gate_markers_raw, tiktok_gate_markers_norm):
+            if marker_raw in txt or (marker_norm and marker_norm in txt_norm):
+                marker_hits += 1
+        has_gate_overlay = False
+        try:
+            has_gate_overlay = bool(
+                driver.execute_script(
+                    "return !!document.querySelector(\"[role='dialog'], div[class*='Modal'], div[class*='modal'], div[data-e2e*='modal']\");"
+                )
+            )
+        except Exception:
+            has_gate_overlay = False
+        if marker_hits >= 2 or (marker_hits >= 1 and has_gate_overlay):
+            return True
+
     markers_raw = [
         "bạn hiện không xem được nội dung này",
         "không xem được nội dung này",
@@ -2607,11 +3018,49 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
             return True
 
     # Common Facebook dead-end routes.
-    if "facebook.com" in (url + cur):
-        dead_routes = ["/checkpoint/", "/login/", "/recover/"]
+    if fb_scope:
+        dead_routes = ["/checkpoint/", "/login/", "/login.php", "/recover/"]
         if any(r in cur for r in dead_routes):
             return True
 
+    return False
+
+
+def is_tiktok_shop_app_only_notice(driver, source_url: str = "") -> bool:
+    """
+    Detect TikTok Shop pages that can only be viewed in TikTok app.
+    These pages should be treated as unavailable for web screenshot workflow.
+    """
+    try:
+        txt_raw = (
+            driver.execute_script(
+                "return (document.body && document.body.innerText) ? document.body.innerText : ''"
+            )
+            or ""
+        )
+    except Exception:
+        txt_raw = ""
+    txt = str(txt_raw or "").lower()
+    txt_norm = normalize_match_text(txt_raw or "")
+    try:
+        cur = str(driver.current_url or "").lower()
+    except Exception:
+        cur = ""
+    src = str(source_url or "").lower()
+    scope = f"{src} {cur} {txt}"
+    if "tiktok.com" not in scope:
+        return False
+    markers_raw = [
+        "view tiktok shop videos in the tiktok app",
+        "view tiktok shop videos in the app",
+        "xem video tiktok shop tren ung dung tiktok",
+        "xem video tiktok shop trong ung dung tiktok",
+    ]
+    markers_norm = [normalize_match_text(m) for m in markers_raw]
+    if any(m in txt for m in markers_raw):
+        return True
+    if any(mn and mn in txt_norm for mn in markers_norm):
+        return True
     return False
 
 
@@ -2708,6 +3157,23 @@ def has_please_wait_overlay(driver) -> bool:
         "vui lòng chờ...",
     ]
     return any(normalize_match_text(marker) in txt_norm for marker in markers)
+
+
+def wait_for_please_wait_clear(
+    driver,
+    timeout_sec: float = PLEASE_WAIT_MAX_WAIT_SEC,
+    poll_sec: float = PLEASE_WAIT_POLL_SEC,
+) -> tuple[bool, float]:
+    if not has_please_wait_overlay(driver):
+        return True, 0.0
+    start_ts = time.time()
+    deadline = start_ts + max(0.5, float(timeout_sec or PLEASE_WAIT_MAX_WAIT_SEC))
+    interval = max(0.2, float(poll_sec or PLEASE_WAIT_POLL_SEC))
+    while time.time() < deadline:
+        time.sleep(interval)
+        if not has_please_wait_overlay(driver):
+            return True, max(0.0, time.time() - start_ts)
+    return False, max(0.0, time.time() - start_ts)
 
 
 def bring_current_tab_to_front(driver):
@@ -2979,6 +3445,7 @@ class ProgressApp:
 
         self.force_run_all = tk.BooleanVar(value=False)
         self.only_run_error_rows = tk.BooleanVar(value=False)
+        self.target_rows_var = tk.StringVar(value="")
         self.auto_launch_chrome = tk.BooleanVar(value=True)
         self.capture_five_per_link = tk.BooleanVar(value=False)
         self.mapping_mode_var = tk.StringVar(value="Seeding")
@@ -3053,9 +3520,29 @@ class ProgressApp:
 
         left_card.grid_columnconfigure(1, weight=1)
         self.entry_sheet_url = add_source_row(left_card, 0, "Sheet URL", self.sheet_url_var, "btn_paste_sheet_url")
-        self.entry_sheet_name = add_source_row(left_card, 1, "Sheet Name", self.sheet_name_var, "btn_paste_sheet_name")
-        self.entry_drive_id = add_source_row(left_card, 2, "Drive Folder", self.drive_id_var, "btn_paste_drive_id")
-        self.entry_credentials_path = add_source_row(left_card, 3, "Credentials", self.credentials_path_var, None)
+        tk.Label(left_card, text="Rows to rerun", bg="#f7f7fa", anchor="w", width=12).grid(row=1, column=0, sticky="w", pady=2)
+        rows_filter_source_row = tk.Frame(left_card, bg="#f7f7fa")
+        rows_filter_source_row.grid(row=1, column=1, columnspan=2, sticky="ew", padx=4, pady=2)
+        self.entry_target_rows = tk.Entry(rows_filter_source_row, textvariable=self.target_rows_var, width=34)
+        self.entry_target_rows.pack(side="left", fill="x", expand=True)
+        self.btn_clear_target_rows = tk.Button(
+            rows_filter_source_row,
+            text="Clear",
+            width=6,
+            command=lambda: self.target_rows_var.set(""),
+        )
+        self.btn_clear_target_rows.pack(side="left", padx=(4, 0))
+        tk.Label(
+            left_card,
+            text="Ví dụ: 7,8,10-15 (để trống = chạy toàn bộ)",
+            bg="#f7f7fa",
+            fg="#6b7280",
+            anchor="w",
+            font=("Arial", 9),
+        ).grid(row=2, column=1, columnspan=2, sticky="w", padx=4, pady=(0, 2))
+        self.entry_sheet_name = add_source_row(left_card, 3, "Sheet Name", self.sheet_name_var, "btn_paste_sheet_name")
+        self.entry_drive_id = add_source_row(left_card, 4, "Drive Folder", self.drive_id_var, "btn_paste_drive_id")
+        self.entry_credentials_path = add_source_row(left_card, 5, "Credentials", self.credentials_path_var, None)
 
         mode_row = tk.Frame(right_card, bg="#f7f7fa")
         mode_row.pack(fill="x", pady=(0, 4))
@@ -3087,7 +3574,6 @@ class ProgressApp:
             bg="#f7f7fa", anchor="w"
         )
         self.checkbox_errors_only.pack(anchor="w")
-
         self.action_row = tk.Frame(run_mode, bg="#f7f7fa")
         self.action_row.pack(fill="x", pady=(8, 0))
 
@@ -4109,6 +4595,7 @@ class ProgressApp:
             "sheet_name": self.sheet_name_var.get().strip(),
             "drive_id": self.drive_id_var.get().strip(),
             "credentials_path": self.credentials_path_var.get().strip(),
+            "target_rows_input": self.target_rows_var.get().strip(),
             "mapping_mode": mode_key,
             "mapping_blocks": self.mapping_blocks_by_mode.get(mode_key, self.get_mapping_configs()),
             "mapping_blocks_by_mode": self.mapping_blocks_by_mode,
@@ -4164,6 +4651,7 @@ class ProgressApp:
             self.sheet_url_var.set(str(data.get("sheet_url", self.sheet_url_var.get())).strip())
             self.sheet_name_var.set(str(data.get("sheet_name", self.sheet_name_var.get())).strip())
             self.drive_id_var.set(str(data.get("drive_id", self.drive_id_var.get())).strip())
+            self.target_rows_var.set(str(data.get("target_rows_input", self.target_rows_var.get())).strip())
             saved_credentials_path = str(data.get("credentials_path", self.credentials_path_var.get())).strip()
             if saved_credentials_path:
                 # Keep compatibility with older configs where folder text might be mangled,
@@ -4272,6 +4760,10 @@ class ProgressApp:
         self.reload_btn.config(state=state)
         self.checkbox.config(state=state)
         self.checkbox_errors_only.config(state=state)
+        if hasattr(self, "entry_target_rows"):
+            self.entry_target_rows.config(state=state)
+        if hasattr(self, "btn_clear_target_rows"):
+            self.btn_clear_target_rows.config(state=state)
         if hasattr(self, "chk_capture5"):
             try:
                 if self.chk_capture5:
@@ -4301,6 +4793,10 @@ class ProgressApp:
             self.export_log_btn.config(state="normal")
             self.checkbox.config(state="normal")
             self.checkbox_errors_only.config(state="normal")
+            if hasattr(self, "entry_target_rows"):
+                self.entry_target_rows.config(state="normal")
+            if hasattr(self, "btn_clear_target_rows"):
+                self.btn_clear_target_rows.config(state="normal")
             if hasattr(self, "chk_capture5"):
                 try:
                     if self.chk_capture5:
@@ -4338,6 +4834,10 @@ class ProgressApp:
             self.export_log_btn.config(state="disabled")
             self.checkbox.config(state="disabled")
             self.checkbox_errors_only.config(state="disabled")
+            if hasattr(self, "entry_target_rows"):
+                self.entry_target_rows.config(state="disabled")
+            if hasattr(self, "btn_clear_target_rows"):
+                self.btn_clear_target_rows.config(state="disabled")
             if hasattr(self, "chk_capture5"):
                 try:
                     if self.chk_capture5:
@@ -4720,6 +5220,19 @@ class ProgressApp:
             self.share_email_var.set(str(data.get("client_email", "")).strip() or "link-verification@hazel-tea-485816-u3.iam.gserviceaccount.com")
 
         block_configs = self.get_mapping_configs()
+        target_rows_text = (self.target_rows_var.get() or "").strip()
+        target_rows: list[int] = []
+        if target_rows_text:
+            target_rows, target_rows_err = parse_target_rows_text(target_rows_text)
+            if target_rows_err:
+                messagebox.showerror("Rows to rerun không hợp lệ", target_rows_err)
+                return
+            if not target_rows:
+                messagebox.showerror("Rows to rerun trống", "Bạn đã nhập lọc hàng nhưng không parse được hàng hợp lệ.")
+                return
+            if self.only_run_error_rows.get():
+                self.only_run_error_rows.set(False)
+                write_log("[INFO] Manual row filter is set -> tắt 'Retry Failed Only' để chỉ chạy đúng danh sách hàng đã nhập.")
 
         mappings = []
         for i, block in enumerate(block_configs):
@@ -4822,7 +5335,15 @@ class ProgressApp:
         self.reset_live_log()
 
         threading.Thread(
-            target=lambda: main_logic(self, drive_id, sheet_url, sheet_name, mappings=mappings, browser_port=browser_port),
+            target=lambda: main_logic(
+                self,
+                drive_id,
+                sheet_url,
+                sheet_name,
+                mappings=mappings,
+                browser_port=browser_port,
+                target_rows=target_rows,
+            ),
             daemon=True
         ).start()
 
@@ -4868,6 +5389,16 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 fn(*args, **kwargs)
         except Exception as e:
             write_log(f"[WARN] UI call failed: {e}")
+
+    def can_show_native_dialog() -> bool:
+        """
+        Only allow Tk native dialogs when running real desktop GUI mode.
+        Web/headless workers must never call messagebox to avoid Tcl/Tk crashes.
+        """
+        if messagebox is None:
+            return False
+        root = getattr(app, "root", None)
+        return bool(root is not None and hasattr(root, "tk"))
 
     def ui_set_progress(value: int):
         app.progress["value"] = value
@@ -5031,15 +5562,25 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             files_by_name = {}
             page_token = None
             while True:
-                resp = drive_service.files().list(
-                    q=f"'{drive_id}' in parents and trashed = false",
-                    fields="nextPageToken, files(id,name)",
-                    supportsAllDrives=True,
-                    includeItemsFromAllDrives=True,
-                    corpora="allDrives",
-                    pageSize=1000,
-                    pageToken=page_token,
-                ).execute()
+                try:
+                    resp = drive_service.files().list(
+                        q=f"'{drive_id}' in parents and trashed = false",
+                        fields="nextPageToken, files(id,name)",
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True,
+                        corpora="allDrives",
+                        pageSize=1000,
+                        pageToken=page_token,
+                    ).execute()
+                except Exception as drive_exc:
+                    msg = str(drive_exc)
+                    msg_lower = msg.lower()
+                    if ("file not found" in msg_lower) or ("404" in msg_lower) or ("notfound" in msg_lower):
+                        raise RuntimeError(
+                            "Drive Folder ID không tồn tại hoặc service account chưa có quyền truy cập.\n"
+                            f"Drive ID hiện tại: {drive_id}"
+                        ) from drive_exc
+                    raise
                 for f in resp.get("files", []):
                     n = f.get("name")
                     fid = f.get("id")
@@ -5052,8 +5593,13 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
         def build_chrome_options(user_data_dir: str, headless: bool, debug_port: int) -> Options:
             options = Options()
-            if user_data_dir:
-                options.add_argument(f"--user-data-dir={user_data_dir}")
+            normalized_profile = _resolve_writable_profile_dir(
+                user_data_dir or LOCAL_PROFILE_PATH,
+                browser_port=debug_port,
+                log_prefix="WebDriver: ",
+            )
+            if normalized_profile:
+                options.add_argument(f"--user-data-dir={normalized_profile}")
             options.add_argument(f"--window-size={CAPTURE_WINDOW_SIZE}")
             options.add_argument("--disable-gpu")
             options.add_argument("--no-sandbox")
@@ -5085,21 +5631,27 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             if not target_profile:
                 return
             try:
-                os.makedirs(target_profile, exist_ok=True)
-                if os.path.isdir(os.path.join(target_profile, "Default")):
+                normalized_target = _resolve_writable_profile_dir(
+                    target_profile,
+                    browser_port=browser_port,
+                    log_prefix="Seed: ",
+                )
+                os.makedirs(normalized_target, exist_ok=True)
+                if os.path.isdir(os.path.join(normalized_target, "Default")):
                     return
                 seed_profile = ""
-                if target_profile != LOCAL_PROFILE_PATH and os.path.isdir(LOCAL_PROFILE_PATH):
-                    seed_profile = LOCAL_PROFILE_PATH
+                normalized_local_profile = _normalize_profile_dir(LOCAL_PROFILE_PATH)
+                if os.path.abspath(normalized_target) != os.path.abspath(normalized_local_profile) and os.path.isdir(normalized_local_profile):
+                    seed_profile = normalized_local_profile
                 if not seed_profile and os.path.isdir(FB_PROFILE_PATH):
                     seed_profile = FB_PROFILE_PATH
                 if not seed_profile and os.path.isdir(FB_PROFILE_PATH_ALT):
                     seed_profile = FB_PROFILE_PATH_ALT
-                if not seed_profile or os.path.abspath(seed_profile) == os.path.abspath(target_profile):
+                if not seed_profile or os.path.abspath(seed_profile) == os.path.abspath(normalized_target):
                     return
                 shutil.copytree(
                     seed_profile,
-                    target_profile,
+                    normalized_target,
                     dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns(
                         "Cache",
@@ -5113,7 +5665,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                         "*.tmp",
                     ),
                 )
-                write_log(f"[INFO] Seeded profile '{target_profile}' from '{seed_profile}'")
+                write_log(f"[INFO] Seeded profile '{normalized_target}' from '{seed_profile}'")
             except Exception as e:
                 write_log(f"[WARN] Profile seed failed ({target_profile}): {e}")
 
@@ -5128,54 +5680,14 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             cand = str(cand or "").strip()
             if cand and cand not in profile_candidates:
                 profile_candidates.append(cand)
+        browser_resolve_issues: list[str] = []
         def find_chrome_binary() -> str | None:
-            candidates = []
-            if os.name == "nt":
-                candidates.extend(
-                    [
-                        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Chromium", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Chromium", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Microsoft", "Edge", "Application", "msedge.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
-                    ]
-                )
-            elif sys.platform == "darwin":
-                candidates.extend(
-                    [
-                        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-                    ]
-                )
-            else:
-                for cmd in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "microsoft-edge-stable"]:
-                    p = shutil.which(cmd)
-                    if p:
-                        candidates.append(p)
-
-            for cmd in ["chrome", "chrome.exe", "google-chrome", "chromium", "msedge", "msedge.exe"]:
-                p = shutil.which(cmd)
-                if p:
-                    candidates.append(p)
-            for p in candidates:
-                if p and os.path.exists(p):
-                    return p
-            try:
-                import winreg
-                for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-                    try:
-                        with winreg.OpenKey(root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as key:
-                            val, _ = winreg.QueryValueEx(key, None)
-                            if val and os.path.exists(val):
-                                return val
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-            return None
+            nonlocal browser_resolve_issues
+            chrome_path, issues = find_compatible_browser_binary()
+            browser_resolve_issues = list(issues or [])
+            for item in browser_resolve_issues:
+                write_log(f"[WARN] Skip browser binary: {item}")
+            return chrome_path
 
         if not scan_only_request:
             attach_only_existing_browser = bool(getattr(app, "attach_only_existing_browser", False))
@@ -5259,6 +5771,16 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             last_err = e
                             write_log(f"[WARN] Attach debug Chrome failed (port={port}): {e}")
                 if not started:
+                    if browser_resolve_issues:
+                        write_log(
+                            "[WARN] Browser compatibility issues detected while resolving binary: "
+                            + " | ".join(browser_resolve_issues[:4])
+                        )
+                        if not chrome_path:
+                            raise Exception(
+                                "CHROME_START_FAILED: Không tìm được browser tương thích với macOS hiện tại. "
+                                f"Chi tiết: {browser_resolve_issues[0]}"
+                            )
                     raise Exception(f"CHROME_START_FAILED: {last_err}")
         else:
             write_log("[INFO] Scan mode: skip Selenium/Chrome startup.")
@@ -5272,9 +5794,6 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             if row_value >= 1:
                 requested_rows.add(row_value)
         requested_block_name = str(target_block_name or "").strip().lower()
-        reuse_single_browser_session = bool(getattr(app, "reuse_single_browser_session", False))
-        if reuse_single_browser_session:
-            write_log("[INFO] Reuse single browser session enabled: all web blocks share the main logged-in profile.")
 
         mapping_list = mappings or [
             {
@@ -5526,14 +6045,27 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         except Exception:
             only_error_mode = False
 
-        tracked_error_rows = get_error_rows_for_sheet(sheet_url)
-        tracked_error_details = get_error_details_for_sheet(sheet_url)
+        stored_error_rows = get_error_rows_for_sheet(sheet_url)
+        stored_error_details = get_error_details_for_sheet(sheet_url)
+        if only_error_mode:
+            tracked_error_rows = set(stored_error_rows)
+            tracked_error_details = dict(stored_error_details)
+        else:
+            # In normal runs, only show failures from the current run.
+            # This avoids mixing historical pending rows into new job UI.
+            tracked_error_rows = set()
+            tracked_error_details = {}
         history_ready = True
         if only_error_mode:
             if tracked_error_rows:
                 write_log(f"[INFO] Error-only mode: loaded {len(tracked_error_rows)} rows from history")
             else:
                 write_log("[INFO] Error-only mode: no stored error rows for this sheet")
+        elif stored_error_rows:
+            write_log(
+                f"[INFO] Normal mode: ignore {len(stored_error_rows)} historical error row(s); "
+                "will show only current-run failures."
+            )
 
         def _is_target_row(start_at: int, row_num: int, link_val: str, mode_key: str = "") -> bool:
             if row_num < start_at:
@@ -5581,6 +6113,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 "empty_link": 0,
                 "invalid_link": 0,
                 "eligible": 0,
+                "first_nonempty_row": 0,
+                "first_nonempty_value": "",
+                "first_eligible_row": 0,
             }
             for i, lnk in enumerate(block["links"]):
                 r = row_nums[i] if i < len(row_nums) else (i + 4)
@@ -5598,6 +6133,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 if not raw_link:
                     stats["empty_link"] += 1
                     continue
+                if not stats["first_nonempty_row"]:
+                    stats["first_nonempty_row"] = int(r)
+                    stats["first_nonempty_value"] = raw_link[:140]
                 if block_mode_key == "scan":
                     if not normalize_scan_source_url(raw_link):
                         stats["invalid_link"] += 1
@@ -5609,7 +6147,35 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 if _is_target_row(block["start_line"], r, raw_link, mode_key=block_mode_key):
                     target_total += 1
                     stats["eligible"] += 1
+                    if not stats["first_eligible_row"]:
+                        stats["first_eligible_row"] = int(r)
             eligibility_debug.append(stats)
+        for s in eligibility_debug:
+            try:
+                start_row = int(s.get("start_line") or 0)
+                first_valid_row = int(s.get("first_eligible_row") or 0)
+                first_nonempty_row = int(s.get("first_nonempty_row") or 0)
+            except Exception:
+                continue
+            if (
+                first_valid_row > 0
+                and start_row > 0
+                and first_valid_row > start_row
+                and not requested_rows
+                and not only_error_mode
+            ):
+                col = str(s.get("col_url") or "").strip().upper() or "?"
+                block_name = str(s.get("name") or "").strip() or "-"
+                sample = str(s.get("first_nonempty_value") or "").strip()
+                if first_nonempty_row > 0 and first_nonempty_row == start_row and sample:
+                    write_log(
+                        f"[INFO] {block_name}: Start Line={start_row} but {col}{start_row} is not a valid URL ('{sample}'). "
+                        f"First eligible row is {first_valid_row}."
+                    )
+                else:
+                    write_log(
+                        f"[INFO] {block_name}: Start Line={start_row}. First eligible row is {first_valid_row}."
+                    )
         if target_total == 0:
             configured_url_cols = ", ".join(
                 sorted({str(block.get("col_url", "")).strip().upper() for block in prepared_blocks if str(block.get("col_url", "")).strip()})
@@ -5806,13 +6372,42 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             ui_call(ui_set_progress, percent)
             ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
 
-        def _start_worker_driver(block_index: int, block_mode: str):
+        def _webdriver_session_alive(driver_obj) -> bool:
+            if driver_obj is None:
+                return False
+            try:
+                _ = str(driver_obj.current_url or "")
+                return True
+            except Exception:
+                return False
+
+        def _is_recoverable_driver_error(exc: Exception) -> bool:
+            msg = str(exc or "").strip().lower()
+            if not msg:
+                return False
+            recoverable_markers = (
+                "disconnected",
+                "unable to connect to renderer",
+                "failed to check if window was closed",
+                "target window already closed",
+                "invalid session id",
+                "session deleted",
+                "chrome not reachable",
+                "web view not found",
+            )
+            return any(marker in msg for marker in recoverable_markers)
+
+        def _start_worker_driver(block_index: int, block_mode: str, fast_recovery: bool = False):
             if scan_only_request:
                 return None
-            if reuse_single_browser_session and app.driver and str(block_mode or "").strip().lower() != "scan":
-                return app.driver
             if block_index == 0 and app.driver:
-                return app.driver
+                if _webdriver_session_alive(app.driver):
+                    return app.driver
+                try:
+                    app.driver.quit()
+                except Exception:
+                    pass
+                app.driver = None
             worker_port = get_post_port(block_index, browser_port)
             worker_profile = get_block_profile(block_index, block_mode, browser_port=worker_port)
             os.makedirs(worker_profile, exist_ok=True)
@@ -5827,34 +6422,38 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             except Exception as e:
                 write_log(f"[INFO] No attachable worker Chrome on port {worker_port}: {e}")
             # Copy login session from main profile so parallel workers don't ask login again.
-            try:
-                has_local_session = os.path.isdir(os.path.join(worker_profile, "Default"))
-                seed_profile = LOCAL_PROFILE_PATH if os.path.isdir(LOCAL_PROFILE_PATH) else ""
-                if not seed_profile and os.path.isdir(FB_PROFILE_PATH):
-                    seed_profile = FB_PROFILE_PATH
-                if not seed_profile and os.path.isdir(FB_PROFILE_PATH_ALT):
-                    seed_profile = FB_PROFILE_PATH_ALT
-                if seed_profile and not has_local_session:
-                    shutil.copytree(
-                        seed_profile,
-                        worker_profile,
-                        dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns(
-                            "Cache",
-                            "Code Cache",
-                            "GPUCache",
-                            "GrShaderCache",
-                            "ShaderCache",
-                            "Crashpad",
-                            "Singleton*",
-                            "lockfile",
-                            "*.tmp",
-                        ),
-                    )
-            except Exception as e:
-                write_log(f"[WARN] Worker profile seed failed ({block_index}): {e}")
+            # In fast recovery mode we skip this expensive copy step to restart sooner.
+            if not fast_recovery:
+                try:
+                    has_local_session = os.path.isdir(os.path.join(worker_profile, "Default"))
+                    seed_profile = LOCAL_PROFILE_PATH if os.path.isdir(LOCAL_PROFILE_PATH) else ""
+                    if not seed_profile and os.path.isdir(FB_PROFILE_PATH):
+                        seed_profile = FB_PROFILE_PATH
+                    if not seed_profile and os.path.isdir(FB_PROFILE_PATH_ALT):
+                        seed_profile = FB_PROFILE_PATH_ALT
+                    if seed_profile and not has_local_session:
+                        shutil.copytree(
+                            seed_profile,
+                            worker_profile,
+                            dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns(
+                                "Cache",
+                                "Code Cache",
+                                "GPUCache",
+                                "GrShaderCache",
+                                "ShaderCache",
+                                "Crashpad",
+                                "Singleton*",
+                                "lockfile",
+                                "*.tmp",
+                            ),
+                        )
+                except Exception as e:
+                    write_log(f"[WARN] Worker profile seed failed ({block_index}): {e}")
             last = None
-            for headless in (True, False):
+            # Local UX: prefer visible Chrome first so user can re-login when needed.
+            headless_plan = (False,) if fast_recovery else (False, True)
+            for headless in headless_plan:
                 try:
                     return create_chrome_driver(
                         build_chrome_options(user_data_dir=worker_profile, headless=headless, debug_port=worker_port),
@@ -5989,7 +6588,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     multi_capture_enabled = False
                 captures_per_link = 5 if (multi_capture_enabled and block_mode == "booking") else 1
 
-                for idx, url in enumerate(links):
+                retry_once_by_row: set[int] = set()
+                pending_indexes = list(range(len(links)))
+                while pending_indexes:
+                    idx = pending_indexes.pop(0)
+                    url = links[idx] if idx < len(links) else ""
                     if not app.is_running:
                         break
                     while getattr(app, "is_paused", False):
@@ -6058,9 +6661,12 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     try:
                         unavailable = False
                         is_tiktok = False
+                        tiktok_shop_app_only = False
                         profile_name = ""
                         caption = ""
                         _post_time = ""
+                        tiktok_oembed_payload: dict = {}
+                        tiktok_oembed_png: bytes = b""
                         ocr_text = ""
                         text_scan_source = ""
                         if is_scan_mode:
@@ -6149,25 +6755,84 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     except Exception:
                                         pass
                                 if not denied_cleared and is_tiktok_access_denied_page(worker_driver, url):
-                                    raise Exception("TIKTOK_ACCESS_DENIED_PERSIST")
-                                try:
-                                    current_tiktok_url = wait_tiktok_redirect_ready(
-                                        worker_driver,
-                                        requested_url=url,
-                                        timeout_sec=TIKTOK_REDIRECT_WAIT_SEC,
+                                    unavailable = True
+                                    profile_name, caption = "", "Nội dung không khả dụng"
+                                    _post_time = ""
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "UNAVAILABLE",
+                                        (
+                                            f"{block_name}: TikTok bị chặn Access Denied sau "
+                                            f"{max_denied_retry} lần thử, đánh dấu không khả dụng"
+                                        ),
+                                        "unavailable",
                                     )
-                                except Exception:
-                                    current_tiktok_url = ""
-                                if current_tiktok_url and (not _is_expected_tiktok_page(url, current_tiktok_url)):
-                                    raise Exception(
-                                        f"TIKTOK_URL_MISMATCH expected={url[:120]} current={current_tiktok_url[:120]}"
-                                    )
+                                if not unavailable:
+                                    try:
+                                        current_tiktok_url = wait_tiktok_redirect_ready(
+                                            worker_driver,
+                                            requested_url=url,
+                                            timeout_sec=TIKTOK_REDIRECT_WAIT_SEC,
+                                        )
+                                    except Exception:
+                                        current_tiktok_url = ""
+                                    if current_tiktok_url and (not _is_expected_tiktok_page(url, current_tiktok_url)):
+                                        raise Exception(
+                                            f"TIKTOK_URL_MISMATCH expected={url[:120]} current={current_tiktok_url[:120]}"
+                                        )
                             time.sleep(PER_LINK_BASE_WAIT)
 
-                            unavailable = is_unavailable_content_page(worker_driver, url)
+                            unavailable = unavailable or is_unavailable_content_page(worker_driver, url)
+                            if is_tiktok and unavailable:
+                                tiktok_shop_app_only = is_tiktok_shop_app_only_notice(worker_driver, url)
+                                if tiktok_shop_app_only:
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "UNAVAILABLE",
+                                        f"{block_name}: TikTok Shop yêu cầu xem trong app, bỏ qua fallback ảnh",
+                                        "unavailable",
+                                    )
+                                else:
+                                    try:
+                                        tiktok_oembed_payload = fetch_tiktok_oembed_data(url)
+                                    except Exception:
+                                        tiktok_oembed_payload = {}
+                                    oembed_author = str(tiktok_oembed_payload.get("author_name") or "").strip()
+                                    oembed_title = str(tiktok_oembed_payload.get("title") or "").strip()
+                                    oembed_thumb = str(tiktok_oembed_payload.get("thumbnail_url") or "").strip()
+                                    if oembed_thumb:
+                                        try:
+                                            tiktok_oembed_png = download_image_bytes_for_scan(
+                                                oembed_thumb,
+                                                timeout=20,
+                                                drive_service=None,
+                                            )
+                                        except Exception:
+                                            tiktok_oembed_png = b""
+                                    if oembed_author:
+                                        profile_name = oembed_author
+                                    if oembed_title:
+                                        caption = oembed_title
+                                    if tiktok_oembed_png:
+                                        unavailable = False
+                                        ui_call(
+                                            ui_add_log,
+                                            row,
+                                            "INFO",
+                                            "FALLBACK",
+                                            f"{block_name}: TikTok bị chặn, dùng oEmbed thumbnail để tiếp tục",
+                                            "ok",
+                                        )
                             if unavailable:
                                 profile_name, caption = "", "Nội dung không khả dụng"
                                 _post_time = ""
+                            elif is_tiktok and tiktok_oembed_payload and (tiktok_oembed_png or profile_name or caption):
+                                # Keep oEmbed metadata when page access is blocked but fallback data exists.
+                                pass
                             else:
                                 profile_name, caption = get_fb_profile_and_caption(worker_driver, url)
                                 _post_time = get_fb_post_datetime(worker_driver)
@@ -6187,7 +6852,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                         link_drive = ""
                         direct_url = ""
                         if (not is_scan_mode) and (idx_drive or idx_screenshot):
-                            effective_captures = 1 if unavailable else captures_per_link
+                            effective_captures = 1 if (unavailable or bool(tiktok_oembed_png)) else captures_per_link
                             sheet_air_raw = str(air_dates[idx]).strip() if (idx_air_date and idx < len(air_dates)) else ""
                             air_date = get_air_date_token(sheet_air_raw) or fixed_air_date or get_air_date_token(_post_time)
                             platform_token = sanitize_filename_token(detect_platform_label(url), fallback="Other", max_len=24)
@@ -6248,7 +6913,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 return file_id_local, web_link_local, direct_local
 
                             for shot_idx in range(1, effective_captures + 1):
-                                if shot_idx == 1:
+                                using_oembed_capture = bool(shot_idx == 1 and tiktok_oembed_png)
+                                png_bytes = tiktok_oembed_png if using_oembed_capture else b""
+                                if shot_idx == 1 and (not using_oembed_capture):
                                     if has_please_wait_overlay(worker_driver):
                                         ui_call(
                                             ui_add_log,
@@ -6259,13 +6926,68 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                             "start",
                                         )
                                         time.sleep(PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC)
+                                        cleared_wait, waited_wait = wait_for_please_wait_clear(worker_driver)
+                                        if not cleared_wait:
+                                            unavailable = True
+                                            profile_name, caption = "", "Nội dung không khả dụng"
+                                            _post_time = ""
+                                            ui_call(
+                                                ui_add_log,
+                                                row,
+                                                "WARN",
+                                                "UNAVAILABLE",
+                                                (
+                                                    f"{block_name}: Trang kẹt 'Please wait' hơn "
+                                                    f"{int(waited_wait)}s, đánh dấu không khả dụng"
+                                                ),
+                                                "unavailable",
+                                            )
+                                            break
                                     first_capture_delay = SCREENSHOT_CAPTURE_DELAY + (
                                         TIKTOK_FIRST_CAPTURE_EXTRA_SEC if is_tiktok else 0.0
                                     )
                                     time.sleep(first_capture_delay)
                                 else:
                                     time.sleep(MULTI_CAPTURE_INTERVAL_SEC)
-                                png_bytes = worker_driver.get_screenshot_as_png()
+                                if not png_bytes:
+                                    png_bytes = worker_driver.get_screenshot_as_png()
+                                blank_retry = max(0, int(BLANK_SCREEN_MAX_RETRIES or 0))
+                                blank_attempt = 0
+                                while (not using_oembed_capture) and blank_attempt < blank_retry and is_blank_like_screenshot_png(png_bytes):
+                                    blank_attempt += 1
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "RETRY",
+                                        (
+                                            f"{block_name}: Ảnh chụp có vẻ trắng/rỗng, "
+                                            f"đợi {int(BLANK_SCREEN_RETRY_DELAY_SEC)}s rồi chụp lại "
+                                            f"({blank_attempt}/{blank_retry})"
+                                        ),
+                                        "start",
+                                    )
+                                    time.sleep(max(0.2, float(BLANK_SCREEN_RETRY_DELAY_SEC or 2.0)))
+                                    png_bytes = worker_driver.get_screenshot_as_png()
+                                if (not using_oembed_capture) and is_blank_like_screenshot_png(png_bytes):
+                                    unavailable = True
+                                    profile_name, caption = "", "Nội dung không khả dụng"
+                                    _post_time = ""
+                                    link_drive = ""
+                                    direct_url = ""
+                                    captured_pngs = []
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "UNAVAILABLE",
+                                        (
+                                            f"{block_name}: Chụp lại sau {int(BLANK_SCREEN_RETRY_DELAY_SEC)}s "
+                                            "vẫn trắng/rỗng, đánh dấu không khả dụng"
+                                        ),
+                                        "unavailable",
+                                    )
+                                    break
                                 captured_pngs.append(png_bytes)
                                 if effective_captures > 1:
                                     file_name = f"{base_name}_S{shot_idx}.png"
@@ -6394,6 +7116,44 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             _mark_row_success(row)
                             _finish_row_ok(log_block_name, row, url, eta_text, issue_columns=issue_columns)
                     except Exception as e:
+                        if (not is_scan_mode) and _is_recoverable_driver_error(e):
+                            ui_call(
+                                ui_add_log,
+                                row,
+                                "WARN",
+                                "RETRY",
+                                f"{log_block_name}: Chrome bị ngắt kết nối, đang khởi động lại phiên trình duyệt...",
+                                "start",
+                            )
+                            write_log(f"[WARN] Recoverable browser error at row {row}: {e}")
+                            try:
+                                if (not local_is_main_driver) and worker_driver:
+                                    try:
+                                        worker_driver.quit()
+                                    except Exception:
+                                        pass
+                                worker_driver = _start_worker_driver(
+                                    block_index,
+                                    str(block.get("mode", "seeding")),
+                                    fast_recovery=True,
+                                )
+                                local_is_main_driver = bool(worker_driver) and (worker_driver is app.driver)
+                            except Exception as restart_exc:
+                                write_log(f"[WARN] Browser recovery failed at row {row}: {restart_exc}")
+                            else:
+                                if row not in retry_once_by_row:
+                                    retry_once_by_row.add(row)
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "OK",
+                                        "RETRY",
+                                        f"{log_block_name}: Đã khôi phục phiên Chrome, thử lại dòng này 1 lần...",
+                                        "ok",
+                                    )
+                                    pending_indexes.insert(0, idx)
+                                    continue
+                                write_log(f"[WARN] Row {row} already retried once after browser recovery; mark failed.")
                         write_log(f"{log_block_name} row {row} ERROR: {e}")
                         _mark_row_failed(row)
                         _finish_row_fail(log_block_name, row, str(e), eta_text, issue_columns=issue_columns)
@@ -6430,10 +7190,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
         # Run all configured posts in parallel (no fixed upper limit).
         worker_total = max(1, len(prepared_blocks))
-        if reuse_single_browser_session and len(prepared_blocks) > 1:
-            for block in prepared_blocks:
-                _run_block(block)
-        elif len(prepared_blocks) > 1:
+        if len(prepared_blocks) > 1:
             with ThreadPoolExecutor(max_workers=worker_total) as ex:
                 futures = [ex.submit(_run_block, b) for b in prepared_blocks]
                 for fu in as_completed(futures):
@@ -6466,7 +7223,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         fail_count = final_fail_count
         ui_call(ui_update_summary, processed_count, target_total, success_count, final_fail_count, "---", unavailable_count)
         ui_call(ui_set_done)
-        if messagebox:
+        if can_show_native_dialog():
             try:
                 stopped_early = (not getattr(app, "is_running", True)) and (processed_count < target_total)
                 summary_text = (
@@ -6495,7 +7252,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         ui_call(app.set_inputs_enabled, True)
 
     except Exception as e:
-        write_log(f"FATAL: {e}")
+        error_text = str(e).strip() or "Unknown error"
+        write_log(f"FATAL: {error_text}")
         if history_ready:
             set_error_rows_for_sheet(
                 sheet_url,
@@ -6505,11 +7263,22 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             )
             if hasattr(app, "refresh_error_history_ui"):
                 ui_call(app.refresh_error_history_ui)
-        if messagebox:
-            ui_call(messagebox.showerror, "Lỗi hệ thống", str(e))
-        else:
-            print(f"FATAL: {e}")
+        try:
+            ui_call(ui_set_status, "LỖI HỆ THỐNG", "#ef4444")
+            ui_call(ui_set_detail, error_text)
+        except Exception:
+            pass
+        if hasattr(app, "_job_store") and isinstance(getattr(app, "_job_store", None), dict):
+            try:
+                app._job_store["error"] = error_text
+            except Exception:
+                pass
         ui_call(app.set_inputs_enabled, True)
+        if can_show_native_dialog():
+            ui_call(messagebox.showerror, "Lỗi hệ thống", error_text)
+        else:
+            print(f"FATAL: {error_text}")
+            raise
     finally:
         if app.driver:
             try:
@@ -6672,58 +7441,17 @@ def launch_chrome_for_login(browser_port: int = 9223, profile_path: str | None =
                 time.sleep(0.25)
             return not is_port_open(port, timeout_sec=0.4)
 
+        browser_resolve_issues: list[str] = []
         def find_chrome_binary() -> str | None:
-            candidates = []
-            if os.name == "nt":
-                candidates.extend(
-                    [
-                        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Chromium", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Chromium", "Application", "chrome.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Microsoft", "Edge", "Application", "msedge.exe"),
-                        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
-                    ]
-                )
-            elif sys.platform == "darwin":
-                candidates.extend(
-                    [
-                        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-                    ]
-                )
-            else:
-                for cmd in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "microsoft-edge-stable"]:
-                    p = shutil.which(cmd)
-                    if p:
-                        candidates.append(p)
-
-            for cmd in ["chrome", "chrome.exe", "google-chrome", "chromium", "msedge", "msedge.exe"]:
-                p = shutil.which(cmd)
-                if p:
-                    candidates.append(p)
-            for p in candidates:
-                if p and os.path.exists(p):
-                    return p
-            try:
-                import winreg
-                for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-                    try:
-                        with winreg.OpenKey(root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as key:
-                            val, _ = winreg.QueryValueEx(key, None)
-                            if val and os.path.exists(val):
-                                return val
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-            return None
+            nonlocal browser_resolve_issues
+            chrome_path, issues = find_compatible_browser_binary()
+            browser_resolve_issues = list(issues or [])
+            for item in browser_resolve_issues:
+                write_log(f"[WARN] Skip browser binary: {item}")
+            return chrome_path
 
         def open_visible_window(chrome_path: str, profile: str):
             args_visible = [
-                chrome_path,
                 f"--remote-debugging-port={browser_port}",
                 "--remote-debugging-address=127.0.0.1",
                 f"--user-data-dir={profile}",
@@ -6731,7 +7459,18 @@ def launch_chrome_for_login(browser_port: int = 9223, profile_path: str | None =
                 "--window-size=1200,900",
                 "about:blank",
             ]
-            subprocess.Popen(args_visible, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if sys.platform == "darwin":
+                marker = "/Contents/MacOS/"
+                app_bundle = None
+                if marker in chrome_path:
+                    app_bundle = chrome_path.split(marker, 1)[0]
+                open_cmd = ["open", "-na", app_bundle or "Google Chrome", "--args", *args_visible]
+                try:
+                    subprocess.Popen(open_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+                except Exception as e:
+                    write_log(f"[WARN] open -na failed on macOS, fallback to binary: {e}")
+            subprocess.Popen([chrome_path, *args_visible], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def open_tab_in_existing_debugger(target_url: str = "about:blank") -> bool:
             try:
@@ -6798,8 +7537,34 @@ exit 1
             focused = focus_existing_browser_window(marker_title)
             return opened, marker_title if focused else marker_title
 
+        def focus_browser_window_macos() -> bool:
+            if sys.platform != "darwin":
+                return False
+            script = (
+                'tell application "Google Chrome" to activate\n'
+                'tell application "System Events" to tell process "Google Chrome" to set frontmost to true'
+            )
+            try:
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=4,
+                    check=False,
+                )
+                return result.returncode == 0
+            except Exception as e:
+                write_log(f"[WARN] Failed to activate Chrome on macOS: {e}")
+                return False
+
         chrome_path = find_chrome_binary()
         if not chrome_path:
+            if browser_resolve_issues:
+                return (
+                    False,
+                    "Không tìm được browser tương thích với macOS hiện tại. "
+                    f"Chi tiết: {browser_resolve_issues[0]}",
+                )
             return False, "Chrome not found (missing chrome.exe)"
 
         if not has_desktop_session:
@@ -6808,13 +7573,18 @@ exit 1
                 "Môi trường web deploy không có giao diện desktop để mở Chrome. Hãy dùng local web/app nếu cần Chrome 9223 trên máy của bạn.",
             )
 
-        profile = profile_path or LOCAL_PROFILE_PATH
+        profile = _resolve_writable_profile_dir(
+            profile_path or LOCAL_PROFILE_PATH,
+            browser_port=browser_port,
+            log_prefix="Launch: ",
+        )
+        local_profile = _normalize_profile_dir(LOCAL_PROFILE_PATH)
         os.makedirs(profile, exist_ok=True)
-        if os.path.abspath(profile) != os.path.abspath(LOCAL_PROFILE_PATH):
+        if os.path.abspath(profile) != os.path.abspath(local_profile):
             try:
-                if not os.path.isdir(os.path.join(profile, "Default")) and os.path.isdir(LOCAL_PROFILE_PATH):
+                if not os.path.isdir(os.path.join(profile, "Default")) and os.path.isdir(local_profile):
                     shutil.copytree(
-                        LOCAL_PROFILE_PATH,
+                        local_profile,
                         profile,
                         dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns(
@@ -6875,6 +7645,7 @@ exit 1
                     f"[INFO] Chrome debug port {browser_port} already active. "
                     f"opened_tab={opened_tab}, focused={focused}, marker_title={marker_title}"
                 )
+                focus_browser_window_macos()
                 if opened_tab or focused:
                     return True, f"Port {browser_port} already active; opened existing Chrome session"
                 return True, f"Port {browser_port} already active; check the existing Chrome window"
@@ -6899,6 +7670,7 @@ exit 1
         for _ in range(12):
             if is_port_open(browser_port):
                 write_log(f"[INFO] Chrome launched on port {browser_port} for login. Profile: {profile}")
+                focus_browser_window_macos()
                 if replaced_headless:
                     return True, f"Port {browser_port} đã được mở lại thành window thật. Profile: {os.path.basename(profile)}"
                 return True, f"Port {browser_port}, Profile: {os.path.basename(profile)}"
@@ -6914,6 +7686,7 @@ exit 1
             for _ in range(8):
                 if is_port_open(browser_port):
                     write_log(f"[INFO] Chrome launched via fallback shell command on port {browser_port}.")
+                    focus_browser_window_macos()
                     if replaced_headless:
                         return True, f"Port {browser_port} đã được mở lại thành window thật. Profile: {os.path.basename(profile)}"
                     return True, f"Port {browser_port} (fallback), Profile: {os.path.basename(profile)}"

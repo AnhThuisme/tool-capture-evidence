@@ -1,0 +1,14 @@
+{
+    "mac64_chromedriver_108.0.5359.71_for_108.0.5359": {
+        "timestamp": "15/05/2026",
+        "binary_path": "EvidenceTool_WDM/.wdm/drivers/chromedriver/mac64/108.0.5359.71/chromedriver"
+    },
+    "mac64_chromedriver_148.0.7778.167_for_148.0.7778": {
+        "timestamp": "18/05/2026",
+        "binary_path": "EvidenceTool_WDM/.wdm/drivers/chromedriver/mac64/148.0.7778.167/chromedriver-mac-arm64/chromedriver"
+    },
+    "mac64_chromedriver_148.0.7778.178_for_148.0.7778": {
+        "timestamp": "01/06/2026",
+        "binary_path": "EvidenceTool_WDM/.wdm/drivers/chromedriver/mac64/148.0.7778.178/chromedriver-mac-arm64/chromedriver"
+    }
+}

@@ -193,48 +193,89 @@
     },
     "updated_at": "2026-04-13 11:48:06"
   },
-  "sheet_id:1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg": {
-    "sheet_url": "http://docs.google.com/spreadsheets/d/1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg/edit?gid=2083079471#gid=2083079471",
-    "sheet_name": "Ap bạc M&B",
-    "rows": [
-      4,
-      5,
-      6,
-      7,
-      8,
-      9,
-      10,
-      11,
-      12,
-      57
-    ],
-    "details": {
-      "4": "Post 1: Message: disconnected: Unable to receive message from renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromed",
-      "5": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "6": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "7": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "8": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "9": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "10": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "11": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "12": "Post 1: Message: disconnected: unable to connect to renderer\n  (failed to check if window was closed: disconnected: unable to connect to renderer)\n  (Session info: chrome=108.0.5359.124)\nStacktrace:\n0   chromedriver",
-      "57": "Post 1: The read operation timed out"
-    },
-    "updated_at": "2026-04-23 14:27:51"
-  },
   "sheet_id:1Dc6obObiAZX1gIwWLJbuRC-nqj_38UfBiNDetbhHZZU": {
-    "sheet_url": "https://docs.google.com/spreadsheets/d/1Dc6obObiAZX1gIwWLJbuRC-nqj_38UfBiNDetbhHZZU/edit?gid=923297369#gid=923297369",
-    "sheet_name": "Ap New | KOL",
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1Dc6obObiAZX1gIwWLJbuRC-nqj_38UfBiNDetbhHZZU/edit?gid=801000961#gid=801000961",
+    "sheet_name": "Ap New | Threads Post",
     "rows": [
-      45,
+      73,
+      87,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
       99,
       152
     ],
     "details": {
-      "45": "Post 2: TIKTOK_CAPTCHA_TIMEOUT_15s",
-      "99": "Post 2: TIKTOK_CAPTCHA_TIMEOUT_15s",
+      "73": "Ap New | M&B Post: Nội dung không khả dụng",
+      "87": "Ap New | M&B Post: Nội dung không khả dụng",
+      "92": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/screenshot (Caused by NewConnectionError(\"HTTPConnection(host='localhost', por",
+      "93": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
+      "94": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
+      "95": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
+      "96": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
+      "97": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
+      "98": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
+      "99": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
       "152": "Post 2: TIKTOK_CAPTCHA_TIMEOUT_15s"
     },
-    "updated_at": "2026-04-15 17:28:06"
+    "updated_at": "2026-05-15 11:33:13"
+  },
+  "sheet_id:1NIe8Buq5kHu-dNbd1SzOkgmHeShOvAdxEMWYU26yo7A": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1NIe8Buq5kHu-dNbd1SzOkgmHeShOvAdxEMWYU26yo7A/edit?gid=1205894811#gid=1205894811",
+    "sheet_name": "ONE PORT",
+    "rows": [
+      23
+    ],
+    "details": {
+      "23": "Post 2: Nội dung không khả dụng"
+    },
+    "updated_at": "2026-05-14 14:11:41"
+  },
+  "sheet_id:1D4etpdknwuPeWW2Y9Y5tGibeLTqQeYhYWcuWltZA-Q0": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1D4etpdknwuPeWW2Y9Y5tGibeLTqQeYhYWcuWltZA-Q0/edit?gid=219146566#gid=219146566",
+    "sheet_name": "[RP T4] MODERATOR",
+    "rows": [
+      25
+    ],
+    "details": {
+      "25": "[RP T4] MODERATOR: Nội dung không khả dụng"
+    },
+    "updated_at": "2026-05-18 17:43:21"
+  },
+  "sheet_id:1gG9nNtvoCvmwquJNx9GnA_fFmJ8Hw-9NfR9HmUlrzcs": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1gG9nNtvoCvmwquJNx9GnA_fFmJ8Hw-9NfR9HmUlrzcs/edit?gid=1182286620#gid=1182286620",
+    "sheet_name": "LIQUID Q1 NANO APNEW (HÌNH)",
+    "rows": [
+      419
+    ],
+    "details": {
+      "419": "LIQUID Q1 NANO APNEW (HÌNH): Nội dung không khả dụng"
+    },
+    "updated_at": "2026-05-26 14:26:57"
+  },
+  "sheet_id:1UtffvLDh6BUu8DWGd5PRIwXO-BeX3CVAb83OOrOS4o8": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1UtffvLDh6BUu8DWGd5PRIwXO-BeX3CVAb83OOrOS4o8/edit?gid=329774766#gid=329774766",
+    "sheet_name": "Tracking comment_T04/2026 (SL: 30 & 25)",
+    "rows": [
+      71,
+      72,
+      73,
+      79,
+      81,
+      105
+    ],
+    "details": {
+      "71": "Tracking comment_T04/2026 (SL: 30 & 25): Nội dung không khả dụng",
+      "72": "Tracking comment_T04/2026 (SL: 30 & 25): Nội dung không khả dụng",
+      "73": "Tracking comment_T04/2026 (SL: 30 & 25): Nội dung không khả dụng",
+      "79": "Tracking comment_T04/2026 (SL: 30 & 25): Nội dung không khả dụng",
+      "81": "Tracking comment_T04/2026 (SL: 30 & 25): Nội dung không khả dụng",
+      "105": "Tracking comment_T04/2026 (SL: 30 & 25): Nội dung không khả dụng"
+    },
+    "updated_at": "2026-06-01 09:41:47"
   }
 }

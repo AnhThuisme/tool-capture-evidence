@@ -1,0 +1,7 @@
+ACTIVE_VIEW_RUNS True
+RUN_TITLE Seeding
+BODY_HEAD Tool Evidence | Chạy tác vụ | Seeding | Booking | Scan | Dự án | Hoạt động | Quản lý người dùng | Cài đặt | ADMIN | thu.phannguyenanh@fanscom.vn | Đăng xuất | VN | Seeding | Chia sẻ Sheet & Drive folder cho (quyền Editor): | link-verification@hazel-tea-485816-u3.iam.gserviceaccount.com | Sheet URL | Tìm thấy 19 sheet | Sheet Name | Không tìm thấy sheet: NAT CMT T1 (SL: 7,879) | Drive Folder ID | Chạy đè | Luôn chạy lại và ghi đè kết quả cũ.
+BROWSER_LOGS_START
+{"level": "SEVERE", "message": "http://127.0.0.1:8012/favicon.ico - Failed to load resource: the server responded with a status of 404 (Not Found)", "source": "network", "timestamp": 1775112203248}
+{"level": "DEBUG", "message": "http://127.0.0.1:8012/ - [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o", "source": "recommendation", "timestamp": 1775112203292}
+BROWSER_LOGS_END
