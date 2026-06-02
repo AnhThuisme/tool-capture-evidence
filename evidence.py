@@ -354,11 +354,15 @@ def resolve_credentials_path() -> str:
     if env_path:
         norm_env_path = os.path.normpath(env_path)
         if os.path.exists(norm_env_path):
-            return norm_env_path
+            ok, _ = probe_google_credentials(norm_env_path)
+            if ok:
+                return norm_env_path
 
     env_b64_path = _bootstrap_env_credentials_path()
     if env_b64_path:
-        return env_b64_path
+        ok, _ = probe_google_credentials(env_b64_path)
+        if ok:
+            return env_b64_path
 
     candidates = [
         os.path.join(APP_DIR, "credentials.inline.json"),  # saved once from web UI / committed fixed file
@@ -368,16 +372,69 @@ def resolve_credentials_path() -> str:
         os.path.join(BASE_DIR, "credentials.inline.json"),
         os.path.join(BASE_DIR, "credentials.json"),    # source directory
     ]
+    for root_dir in (APP_DIR, os.getcwd(), BASE_DIR):
+        service_dir = os.path.join(root_dir, "service_accounts")
+        if not os.path.isdir(service_dir):
+            continue
+        try:
+            for name in sorted(os.listdir(service_dir)):
+                if name.lower().endswith(".json"):
+                    candidates.append(os.path.join(service_dir, name))
+        except Exception:
+            continue
     if hasattr(sys, "_MEIPASS"):
         candidates.append(os.path.join(getattr(sys, "_MEIPASS"), "credentials.inline.json"))
         candidates.append(os.path.join(getattr(sys, "_MEIPASS"), "credentials.json"))
 
+    first_existing = ""
     for p in candidates:
         if os.path.exists(p):
-            return p
+            if not first_existing:
+                first_existing = p
+            ok, _ = probe_google_credentials(p)
+            if ok:
+                return p
 
     # default location for error messages when file is missing
-    return candidates[0]
+    return first_existing or candidates[0]
+
+
+_GOOGLE_CREDENTIALS_PROBE_CACHE: dict[str, tuple[float, int, bool, str]] = {}
+
+
+def probe_google_credentials(path: str | None) -> tuple[bool, str]:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return False, "empty path"
+    norm_path = os.path.normpath(raw_path)
+    if not os.path.exists(norm_path):
+        return False, "file not found"
+    try:
+        stat = os.stat(norm_path)
+    except Exception as exc:
+        return False, str(exc)
+
+    cache_key = os.path.abspath(norm_path)
+    cached = _GOOGLE_CREDENTIALS_PROBE_CACHE.get(cache_key)
+    signature = (float(stat.st_mtime), int(stat.st_size))
+    if cached and cached[:2] == signature:
+        return bool(cached[2]), str(cached[3] or "")
+
+    try:
+        creds = ServiceAccountCredentials.from_json_keyfile_name(
+            norm_path,
+            [
+                "https://spreadsheets.google.com/feeds",
+                "https://www.googleapis.com/auth/drive",
+            ],
+        )
+        creds.get_access_token()
+        _GOOGLE_CREDENTIALS_PROBE_CACHE[cache_key] = (*signature, True, "")
+        return True, ""
+    except Exception as exc:
+        reason = str(exc)
+        _GOOGLE_CREDENTIALS_PROBE_CACHE[cache_key] = (*signature, False, reason)
+        return False, reason
 
 
 JSON_PATH = resolve_credentials_path()
@@ -2900,8 +2957,46 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
         title = ""
     url = (source_url or "").lower()
 
-    # Facebook login gate popup (e.g. "See more on Facebook") should be treated
-    # as unavailable for this workflow to avoid false "success" screenshots.
+    def _has_visible_facebook_content() -> bool:
+        try:
+            return bool(
+                driver.execute_script(
+                    """
+                    const selectors = [
+                      'article',
+                      'div[role="article"]',
+                      'div[data-pagelet*="FeedUnit"]',
+                      'div[data-testid="post_message"]',
+                      'div[data-ad-preview="message"]',
+                      'div[data-testid*="comment"]',
+                      '[aria-label*="comment" i]'
+                    ];
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const rect = el.getBoundingClientRect();
+                      const style = window.getComputedStyle(el);
+                      return rect.width > 120 && rect.height > 80 && style.visibility !== 'hidden' && style.display !== 'none';
+                    };
+                    for (const sel of selectors) {
+                      const nodes = Array.from(document.querySelectorAll(sel));
+                      for (const node of nodes) {
+                        if (!isVisible(node)) continue;
+                        const text = String(node.innerText || '').trim();
+                        if (text.length >= 120) return true;
+                        if (text.length >= 60 && /(like|comment|share|thích|bình luận|chia sẻ)/i.test(text)) return true;
+                      }
+                    }
+                    return false;
+                    """
+                )
+            )
+        except Exception:
+            return False
+
+    # Facebook login gate popup (e.g. "See more on Facebook") should only be
+    # treated as unavailable when it blocks the page and no post/comment content
+    # is visibly present. If the content is already readable enough to capture,
+    # keep the row as success.
     fb_scope = "facebook.com" in (url + cur)
     if fb_scope:
         fb_login_markers_raw = [
@@ -2930,7 +3025,8 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
             )
         except Exception:
             has_password_field = False
-        if marker_hits >= 2 and has_password_field:
+        has_visible_fb_content = _has_visible_facebook_content()
+        if marker_hits >= 2 and has_password_field and not has_visible_fb_content:
             return True
 
     # TikTok onboarding/login interest modal should be treated as unavailable
@@ -3024,6 +3120,65 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
             return True
 
     return False
+
+
+def dismiss_facebook_login_gate(driver) -> bool:
+    """
+    Best-effort close for Facebook login wall dialogs such as
+    "See more on Facebook". Returns True when a close action was attempted.
+    """
+    script = """
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    const dialogs = Array.from(document.querySelectorAll("[role='dialog'], div[aria-modal='true']"));
+    const closeSelectors = [
+      "[aria-label='Close']",
+      "[aria-label='Đóng']",
+      "[aria-label='close']",
+      "[data-testid='dialog_close_button']",
+      "div[role='button'][aria-label]",
+      "svg[aria-label='Close']",
+      "svg[aria-label='Đóng']"
+    ];
+    const isVisible = (el) => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const clickNode = (node) => {
+      if (!node || !isVisible(node)) return false;
+      const target = node.closest("button,[role='button'],a,div") || node;
+      try { target.scrollIntoView({block: "center", inline: "center"}); } catch (_) {}
+      try { target.click(); return true; } catch (_) {}
+      try {
+        target.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true, view: window}));
+        return true;
+      } catch (_) {}
+      return false;
+    };
+
+    for (const dialog of dialogs) {
+      const txt = norm(dialog.innerText || "");
+      if (!txt.includes("see more on facebook") && !txt.includes("xem thêm trên facebook")) continue;
+      for (const sel of closeSelectors) {
+        const nodes = Array.from(dialog.querySelectorAll(sel));
+        for (const node of nodes) {
+          if (clickNode(node)) return true;
+        }
+      }
+      const buttons = Array.from(dialog.querySelectorAll("button,[role='button']"));
+      for (const btn of buttons) {
+        const label = norm(btn.getAttribute("aria-label") || btn.textContent || "");
+        if (label === "close" || label === "đóng" || label === "x") {
+          if (clickNode(btn)) return true;
+        }
+      }
+    }
+    return false;
+    """
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
 
 
 def is_tiktok_shop_app_only_notice(driver, source_url: str = "") -> bool:
@@ -6661,6 +6816,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     try:
                         unavailable = False
                         is_tiktok = False
+                        is_facebook = False
                         tiktok_shop_app_only = False
                         profile_name = ""
                         caption = ""
@@ -6683,6 +6839,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                             url_lower = url.lower()
                             is_tiktok = "tiktok.com" in url_lower or "vt.tiktok.com" in url_lower
+                            is_facebook = ("facebook.com" in url_lower) or ("fb.watch" in url_lower) or ("m.facebook.com" in url_lower)
                             if is_tiktok:
                                 # Redirect chains (especially vt.tiktok.com) may need a short settle window.
                                 wait_tiktok_redirect_ready(
@@ -6784,7 +6941,31 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         )
                             time.sleep(PER_LINK_BASE_WAIT)
 
+                            if is_facebook:
+                                try:
+                                    closed_fb_gate = dismiss_facebook_login_gate(worker_driver)
+                                except Exception:
+                                    closed_fb_gate = False
+                                if closed_fb_gate:
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "INFO",
+                                        "POPUP",
+                                        f"{block_name}: Đã thử đóng popup đăng nhập Facebook trước khi chụp",
+                                        "start",
+                                    )
+                                    time.sleep(1.2)
+
                             unavailable = unavailable or is_unavailable_content_page(worker_driver, url)
+                            if is_facebook and unavailable:
+                                try:
+                                    closed_fb_gate = dismiss_facebook_login_gate(worker_driver)
+                                except Exception:
+                                    closed_fb_gate = False
+                                if closed_fb_gate:
+                                    time.sleep(1.2)
+                                    unavailable = is_unavailable_content_page(worker_driver, url)
                             if is_tiktok and unavailable:
                                 tiktok_shop_app_only = is_tiktok_shop_app_only_notice(worker_driver, url)
                                 if tiktok_shop_app_only:
@@ -7022,7 +7203,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     )
 
                         is_youtube = ("youtube.com" in url) or ("youtu.be" in url)
-                        is_facebook = ("facebook.com" in url) or ("fb.watch" in url) or ("m.facebook.com" in url)
+                        is_facebook = is_facebook or ("facebook.com" in url) or ("fb.watch" in url) or ("m.facebook.com" in url)
                         if unavailable:
                             col_i = "Nội dung không khả dụng"
                         elif is_youtube:

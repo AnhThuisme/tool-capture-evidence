@@ -119,6 +119,8 @@ def save_settings(request: Request, payload: web_ui.SettingsUpdateRequest):
         with open(out_path, "w", encoding="utf-8") as handle:
             json.dump(parsed, handle, ensure_ascii=False, indent=2)
         credentials_path = out_path
+    if credentials_path:
+        credentials_path, _ = web_ui._load_google_credentials(credentials_path)
 
     patch = {
         "credentials_path": credentials_path,

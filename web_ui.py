@@ -492,6 +492,7 @@ MAIL_CONFIG_PATH = os.path.join(evidence.BASE_DIR, "web_mail_config.json")
 JOB_PERSIST_MIN_INTERVAL_SEC = 2.0
 JOB_LIST_RECENT_LOG_LIMIT_DEFAULT = 40
 JOB_LIST_RECENT_LOG_LIMIT_MAX = 200
+JOB_HISTORY_RETENTION_DAYS = max(0, int(os.getenv("WEB_JOB_HISTORY_RETENTION_DAYS", "30") or 30))
 _LAST_JOB_PERSIST_TS = 0.0
 JOB_PERSIST_LOCK = threading.Lock()
 RUN_MODES = ("seeding", "booking", "scan")
@@ -2072,17 +2073,63 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
 def _resolve_existing_credentials_path(preferred_path: str = "") -> str:
     preferred = str(preferred_path or "").strip()
     if preferred and os.path.exists(preferred):
-        return os.path.normpath(preferred)
+        norm_preferred = os.path.normpath(preferred)
+        ok, _ = evidence.probe_google_credentials(norm_preferred)
+        if ok:
+            return norm_preferred
     fallback = str(getattr(evidence, "JSON_PATH", "") or "").strip()
     if fallback and os.path.exists(fallback):
-        return os.path.normpath(fallback)
+        norm_fallback = os.path.normpath(fallback)
+        ok, _ = evidence.probe_google_credentials(norm_fallback)
+        if ok:
+            return norm_fallback
     try:
         dynamic = str(evidence.resolve_credentials_path() or "").strip()
     except Exception:
         dynamic = ""
     if dynamic and os.path.exists(dynamic):
-        return os.path.normpath(dynamic)
+        norm_dynamic = os.path.normpath(dynamic)
+        ok, _ = evidence.probe_google_credentials(norm_dynamic)
+        if ok:
+            return norm_dynamic
     return ""
+
+
+def _load_google_credentials(credentials_path: str):
+    cred_path = _resolve_existing_credentials_path(str(credentials_path or "").strip())
+    if not cred_path or not os.path.exists(cred_path):
+        has_b64 = bool(str(os.getenv("GOOGLE_CREDENTIALS_JSON_B64", "")).strip())
+        has_path = bool(str(os.getenv("GOOGLE_CREDENTIALS_PATH", "")).strip())
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Chưa có credentials để đọc Google Sheets. "
+                f"Env GOOGLE_CREDENTIALS_JSON_B64={'ON' if has_b64 else 'OFF'}, "
+                f"GOOGLE_CREDENTIALS_PATH={'ON' if has_path else 'OFF'}."
+            ),
+        )
+    try:
+        creds = evidence.ServiceAccountCredentials.from_json_keyfile_name(
+            cred_path,
+            [
+                "https://spreadsheets.google.com/feeds",
+                "https://www.googleapis.com/auth/drive",
+            ],
+        )
+        creds.get_access_token()
+        return cred_path, creds
+    except HTTPException:
+        raise
+    except Exception as exc:
+        service_email = evidence.get_service_account_email(cred_path) or "unknown-service-account"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Google credentials không hợp lệ hoặc đã bị thu hồi. "
+                f"File: {cred_path}. Service account: {service_email}. "
+                f"Google trả về: {exc}"
+            ),
+        ) from exc
 
 
 def _resolve_credentials_input(credentials_input: str, user_email: str | None = None) -> str:
@@ -2106,6 +2153,12 @@ def _resolve_credentials_input(credentials_input: str, user_email: str | None = 
         if fallback:
             return fallback
         raise HTTPException(status_code=400, detail=f"Không tìm thấy credentials file: {path}")
+    ok, _ = evidence.probe_google_credentials(path)
+    if ok:
+        return path
+    fallback = _resolve_existing_credentials_path("")
+    if fallback and os.path.normcase(fallback) != os.path.normcase(path):
+        return fallback
     return path
 
 
@@ -2113,32 +2166,22 @@ def _open_spreadsheet(sheet_url: str, credentials_path: str):
     norm_url = evidence.normalize_sheet_input(sheet_url)
     if not norm_url:
         raise HTTPException(status_code=400, detail="Thiếu Sheet URL")
-    cred_path = _resolve_existing_credentials_path(str(credentials_path or "").strip())
-    if not cred_path or not os.path.exists(cred_path):
-        has_b64 = bool(str(os.getenv("GOOGLE_CREDENTIALS_JSON_B64", "")).strip())
-        has_path = bool(str(os.getenv("GOOGLE_CREDENTIALS_PATH", "")).strip())
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Chưa có credentials để đọc Google Sheets. "
-                f"Env GOOGLE_CREDENTIALS_JSON_B64={'ON' if has_b64 else 'OFF'}, "
-                f"GOOGLE_CREDENTIALS_PATH={'ON' if has_path else 'OFF'}."
-            ),
-        )
+    cred_path, creds = _load_google_credentials(credentials_path)
     try:
-        creds = evidence.ServiceAccountCredentials.from_json_keyfile_name(
-            cred_path,
-            [
-                "https://spreadsheets.google.com/feeds",
-                "https://www.googleapis.com/auth/drive",
-            ],
-        )
         client = evidence.gspread.authorize(creds)
         return client.open_by_url(norm_url)
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Không đọc được Google Sheets: {exc}") from exc
+        service_email = evidence.get_service_account_email(cred_path) or "unknown-service-account"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Không đọc được Google Sheets. "
+                f"File: {cred_path}. Service account: {service_email}. "
+                f"Lỗi: {exc}"
+            ),
+        ) from exc
 
 
 def _resolve_worksheet(spreadsheet: Any, sheet_url: str, sheet_name: str):
@@ -2680,6 +2723,59 @@ def _resolved_job_history_path() -> str:
     return os.path.abspath(str(JOB_HISTORY_PATH or "web_job_history.json"))
 
 
+def _parse_utc_iso(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except Exception:
+        parsed = None
+    if parsed is not None:
+        try:
+            return parsed.replace(tzinfo=None) if getattr(parsed, "tzinfo", None) else parsed
+        except Exception:
+            return parsed
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _job_retention_anchor(job: dict[str, Any]) -> datetime | None:
+    for key in ("finished_at", "created_at", "started_at"):
+        parsed = _parse_utc_iso(job.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _prune_job_history_items(items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    retention_days = int(JOB_HISTORY_RETENTION_DAYS or 0)
+    if retention_days <= 0:
+        return list(items or []), False
+    cutoff = datetime.utcnow().timestamp() - (retention_days * 86400)
+    kept: list[dict[str, Any]] = []
+    pruned = False
+    for item in list(items or []):
+        if not isinstance(item, dict):
+            pruned = True
+            continue
+        status = str(item.get("status", "") or "").strip().lower()
+        if status in {"queued", "running", "paused"}:
+            kept.append(item)
+            continue
+        anchor = _job_retention_anchor(item)
+        if anchor is None or anchor.timestamp() >= cutoff:
+            kept.append(item)
+            continue
+        pruned = True
+    return kept, pruned
+
+
 def _persist_jobs(force: bool = False) -> None:
     global _LAST_JOB_PERSIST_TS
     now = time.time()
@@ -2688,6 +2784,7 @@ def _persist_jobs(force: bool = False) -> None:
             return
         with JOBS_LOCK:
             payload = [_serialize_job(job) for job in JOBS.values()]
+            payload, _ = _prune_job_history_items(payload)
         payload.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
 
         history_path = _resolved_job_history_path()
@@ -2722,6 +2819,7 @@ def _load_persisted_jobs() -> None:
         return
     if not isinstance(raw, list):
         return
+    raw, pruned = _prune_job_history_items(raw)
     restored: dict[str, dict[str, Any]] = {}
     for item in raw:
         if not isinstance(item, dict):
@@ -2760,6 +2858,8 @@ def _load_persisted_jobs() -> None:
     with JOBS_LOCK:
         JOBS.clear()
         JOBS.update(restored)
+    if pruned:
+        _persist_jobs(force=True)
 
 
 def _default_mapping(start_line: int, run_mode: str = "seeding") -> dict[str, Any]:
@@ -9383,7 +9483,11 @@ function renderServiceAccountCard(settings) {
   const s = settings || {};
   const card = document.getElementById('settings_service_card');
   if (!card) return;
-  card.style.display = s.service_account_fixed ? 'none' : '';
+  card.style.display = '';
+  const hint = document.getElementById('settings_service_account_file_hint');
+  if (hint && s.service_account_fixed) {
+    hint.textContent = 'Đang dùng credentials cố định. Upload JSON mới ở đây sẽ ghi đè sang credentials theo user.';
+  }
 }
 
 function resetServiceAccountFileInput() {
@@ -9435,7 +9539,9 @@ function renderSettingsSummary(settings) {
   document.getElementById('settings_summary_viewport').textContent = `${s.viewport_width || '-'} x ${s.viewport_height || '-'}`;
   document.getElementById('settings_summary_timeout').textContent = `${s.page_timeout_ms || '-'} ms | ${t('tiktokCaptchaWait')}: ${s.tiktok_captcha_wait_sec || '-'} s | ${t('pleaseWaitDelay')}: ${s.please_wait_delay_sec || '-'} s`;
   document.getElementById('settings_summary_full_page').textContent = s.full_page_capture ? t('fullPage') : t('viewportOnly');
-  const serviceState = s.service_account_fixed ? t('fixedCredentials') : (s.service_account_saved ? t('saved') : t('notSaved'));
+  const serviceState = s.service_account_fixed
+    ? 'Fixed credentials (editable in Settings)'
+    : (s.service_account_saved ? t('saved') : t('notSaved'));
   document.getElementById('settings_summary_service_account').textContent = serviceState;
   document.getElementById('settings_summary_service_email').textContent = s.service_account_email || t('noServiceEmail');
   renderRunShareInfo(s);
@@ -10216,6 +10322,8 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(parsed, f, ensure_ascii=False, indent=2)
         credentials_path = out_path
+    if credentials_path:
+        credentials_path, _ = _load_google_credentials(credentials_path)
 
     fixed_tiktok_wait = max(5, int(float(getattr(evidence, "TIKTOK_CAPTCHA_MAX_WAIT_SEC", 15)) or 15))
     fixed_please_wait = max(0.0, float(getattr(evidence, "PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC", 2.0) or 2.0))
