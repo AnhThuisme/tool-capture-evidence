@@ -2319,11 +2319,41 @@ def _clear_sheet_link_columns_cache(user_email: str, sheet_url: str, sheet_name:
 
 
 def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows: int = 120, max_columns: int = 100) -> dict[str, Any]:
-    first_row = max(1, int(start_row or 1))
+    requested_first_row = max(1, int(start_row or 1))
+    first_row = requested_first_row
     # Booking sheets may place URLs far below headers/summary blocks,
     # so keep a deeper default scan window than before.
     rows_to_scan = max(60, min(int(sample_rows or 120), 700))
     cols_to_scan = max(8, min(int(max_columns or 100), 182))
+    worksheet_row_count = 0
+    worksheet_col_count = 0
+    for raw_value in (
+        getattr(worksheet, "row_count", None),
+        getattr(worksheet, "_properties", {}).get("gridProperties", {}).get("rowCount")
+        if isinstance(getattr(worksheet, "_properties", None), dict)
+        else None,
+    ):
+        try:
+            worksheet_row_count = max(worksheet_row_count, int(raw_value or 0))
+        except Exception:
+            pass
+    for raw_value in (
+        getattr(worksheet, "col_count", None),
+        getattr(worksheet, "_properties", {}).get("gridProperties", {}).get("columnCount")
+        if isinstance(getattr(worksheet, "_properties", None), dict)
+        else None,
+    ):
+        try:
+            worksheet_col_count = max(worksheet_col_count, int(raw_value or 0))
+        except Exception:
+            pass
+    if worksheet_row_count > 0 and first_row > worksheet_row_count:
+        # If UI carries an old deep start row from another block/tab, do not clamp
+        # to the last row because that misses header-adjacent link columns entirely.
+        # Reset to the typical data-start window near the top of the sheet instead.
+        first_row = min(max(1, 4), worksheet_row_count)
+    if worksheet_col_count > 0:
+        cols_to_scan = min(cols_to_scan, worksheet_col_count)
     last_col_letter = evidence.col_index_to_letter(cols_to_scan)
 
     counts: dict[str, int] = {}
@@ -2335,6 +2365,12 @@ def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows:
         scan_first = max(1, int(scan_start_row or 1))
         scan_len = max(10, int(scan_rows or 10))
         scan_last = scan_first + scan_len - 1
+        if worksheet_row_count > 0:
+            if scan_first > worksheet_row_count:
+                return
+            scan_last = min(scan_last, worksheet_row_count)
+        if cols_to_scan <= 0 or not last_col_letter or scan_last < scan_first:
+            return
         cell_range = f"A{scan_first}:{last_col_letter}{scan_last}"
         scanned_ranges.append(cell_range)
 
@@ -2388,8 +2424,13 @@ def _extract_sheet_link_columns(worksheet: Any, start_row: int = 4, sample_rows:
                 if col_letter not in samples:
                     samples[col_letter] = url
 
-    # Pass 1: scan from selected start row.
+    # Pass 1: scan from selected start row (or a safe top fallback when the
+    # configured start row is already outside the current worksheet bounds).
     _scan_range(first_row, rows_to_scan)
+    # Pass 1b: if we had to recover from an out-of-range start row and still
+    # found nothing, scan from the sheet top before trying deeper windows.
+    if not counts and worksheet_row_count > 0 and requested_first_row > worksheet_row_count:
+        _scan_range(1, rows_to_scan)
     # Pass 2 fallback: still empty -> scan deeper windows (common in booking sheets).
     if not counts:
         _scan_range(first_row + rows_to_scan, 500)

@@ -2936,6 +2936,43 @@ def sanitize_filename_token(text: str, fallback: str = "Unknown", max_len: int =
     return t[:max_len]
 
 
+def has_visible_facebook_content(driver) -> bool:
+    try:
+        return bool(
+            driver.execute_script(
+                """
+                const selectors = [
+                  'article',
+                  'div[role="article"]',
+                  'div[data-pagelet*="FeedUnit"]',
+                  'div[data-testid="post_message"]',
+                  'div[data-ad-preview="message"]',
+                  'div[data-testid*="comment"]',
+                  '[aria-label*="comment" i]'
+                ];
+                const isVisible = (el) => {
+                  if (!el) return false;
+                  const rect = el.getBoundingClientRect();
+                  const style = window.getComputedStyle(el);
+                  return rect.width > 120 && rect.height > 80 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                for (const sel of selectors) {
+                  const nodes = Array.from(document.querySelectorAll(sel));
+                  for (const node of nodes) {
+                    if (!isVisible(node)) continue;
+                    const text = String(node.innerText || '').trim();
+                    if (text.length >= 120) return true;
+                    if (text.length >= 60 && /(like|comment|share|thích|bình luận|chia sẻ)/i.test(text)) return true;
+                  }
+                }
+                return false;
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
 def is_unavailable_content_page(driver, source_url: str = "") -> bool:
     """
     Detect pages that opened but content is unavailable/private/deleted.
@@ -2956,42 +2993,6 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
     except Exception:
         title = ""
     url = (source_url or "").lower()
-
-    def _has_visible_facebook_content() -> bool:
-        try:
-            return bool(
-                driver.execute_script(
-                    """
-                    const selectors = [
-                      'article',
-                      'div[role="article"]',
-                      'div[data-pagelet*="FeedUnit"]',
-                      'div[data-testid="post_message"]',
-                      'div[data-ad-preview="message"]',
-                      'div[data-testid*="comment"]',
-                      '[aria-label*="comment" i]'
-                    ];
-                    const isVisible = (el) => {
-                      if (!el) return false;
-                      const rect = el.getBoundingClientRect();
-                      const style = window.getComputedStyle(el);
-                      return rect.width > 120 && rect.height > 80 && style.visibility !== 'hidden' && style.display !== 'none';
-                    };
-                    for (const sel of selectors) {
-                      const nodes = Array.from(document.querySelectorAll(sel));
-                      for (const node of nodes) {
-                        if (!isVisible(node)) continue;
-                        const text = String(node.innerText || '').trim();
-                        if (text.length >= 120) return true;
-                        if (text.length >= 60 && /(like|comment|share|thích|bình luận|chia sẻ)/i.test(text)) return true;
-                      }
-                    }
-                    return false;
-                    """
-                )
-            )
-        except Exception:
-            return False
 
     # Facebook login gate popup (e.g. "See more on Facebook") should only be
     # treated as unavailable when it blocks the page and no post/comment content
@@ -3025,7 +3026,7 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
             )
         except Exception:
             has_password_field = False
-        has_visible_fb_content = _has_visible_facebook_content()
+        has_visible_fb_content = has_visible_facebook_content(driver)
         if marker_hits >= 2 and has_password_field and not has_visible_fb_content:
             return True
 
@@ -3181,10 +3182,111 @@ def dismiss_facebook_login_gate(driver) -> bool:
         return False
 
 
+def get_temporary_platform_error(driver, source_url: str = "") -> str:
+    """
+    Detect temporary platform-side errors that should be counted as FAIL
+    instead of UNAVAILABLE. Returns a human-readable error message when found.
+    """
+    try:
+        txt_raw = (
+            driver.execute_script(
+                "return (document.body && document.body.innerText) ? document.body.innerText : ''"
+            )
+            or ""
+        )
+    except Exception:
+        txt_raw = ""
+    txt = str(txt_raw or "").lower()
+    txt_norm = normalize_match_text(txt_raw or "")
+    try:
+        cur = str(driver.current_url or "").lower()
+    except Exception:
+        cur = ""
+    url = str(source_url or "").lower()
+    scope = f"{url} {cur}"
+
+    if "facebook.com" in scope or "fb.watch" in scope or "m.facebook.com" in scope:
+        temporary_markers_raw = [
+            "this page isn't available at the moment",
+            "this page isnt available at the moment",
+            "this may be because of a technical error",
+            "please try reloading this page",
+            "reload page",
+        ]
+        temporary_markers_norm = [normalize_match_text(m) for m in temporary_markers_raw]
+        hits = 0
+        for marker_raw, marker_norm in zip(temporary_markers_raw, temporary_markers_norm):
+            if marker_raw in txt or (marker_norm and marker_norm in txt_norm):
+                hits += 1
+        if hits >= 2:
+            return "Facebook technical error / reload page"
+
+    return ""
+
+
+def dismiss_tiktok_login_gate(driver) -> bool:
+    """
+    Close TikTok login/signup gate dialogs when a visible close button exists.
+    """
+    script = """
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    const dialogs = Array.from(document.querySelectorAll("[role='dialog'], div[aria-modal='true'], div[class*='modal']"));
+    const isVisible = (el) => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const clickNode = (node) => {
+      if (!node || !isVisible(node)) return false;
+      const target = node.closest("button,[role='button'],div") || node;
+      try { target.scrollIntoView({block: "center", inline: "center"}); } catch (_) {}
+      try { target.click(); return true; } catch (_) {}
+      try {
+        target.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true, view: window}));
+        return true;
+      } catch (_) {}
+      return false;
+    };
+    for (const dialog of dialogs) {
+      const txt = norm(dialog.innerText || "");
+      if (!txt.includes("log in to tiktok") && !txt.includes("use qr code") && !txt.includes("continue with google")) continue;
+      const selectors = [
+        "[aria-label='Close']",
+        "[aria-label='close']",
+        "[data-e2e='modal-close-inner-button']",
+        "[data-e2e*='close']",
+        "button[aria-label]",
+        "svg"
+      ];
+      for (const sel of selectors) {
+        const nodes = Array.from(dialog.querySelectorAll(sel));
+        for (const node of nodes) {
+          const label = norm(node.getAttribute?.("aria-label") || node.textContent || "");
+          if (sel === "svg" && !label) {
+            const btn = node.closest("button,[role='button'],div");
+            if (clickNode(btn)) return true;
+            continue;
+          }
+          if (label === "close" || label === "x" || label === "đóng" || sel.includes("modal-close")) {
+            if (clickNode(node)) return true;
+          }
+        }
+      }
+    }
+    return false;
+    """
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
 def is_tiktok_shop_app_only_notice(driver, source_url: str = "") -> bool:
     """
     Detect TikTok Shop pages that can only be viewed in TikTok app.
-    These pages should be treated as unavailable for web screenshot workflow.
+    These pages are still valid screenshot targets and should not be forced
+    into unavailable/failed state.
     """
     try:
         txt_raw = (
@@ -6815,6 +6917,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                     try:
                         unavailable = False
+                        technical_error_message = ""
                         is_tiktok = False
                         is_facebook = False
                         tiktok_shop_app_only = False
@@ -6956,6 +7059,23 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         "start",
                                     )
                                     time.sleep(1.2)
+                            if is_tiktok:
+                                try:
+                                    closed_tiktok_gate = dismiss_tiktok_login_gate(worker_driver)
+                                except Exception:
+                                    closed_tiktok_gate = False
+                                if closed_tiktok_gate:
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "INFO",
+                                        "POPUP",
+                                        f"{block_name}: Đã thử đóng popup đăng nhập TikTok trước khi chụp",
+                                        "start",
+                                    )
+                                    time.sleep(1.0)
+
+                            technical_error_message = get_temporary_platform_error(worker_driver, url)
 
                             unavailable = unavailable or is_unavailable_content_page(worker_driver, url)
                             if is_facebook and unavailable:
@@ -6965,17 +7085,21 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     closed_fb_gate = False
                                 if closed_fb_gate:
                                     time.sleep(1.2)
+                                    technical_error_message = get_temporary_platform_error(worker_driver, url)
                                     unavailable = is_unavailable_content_page(worker_driver, url)
+                            if technical_error_message:
+                                unavailable = False
                             if is_tiktok and unavailable:
                                 tiktok_shop_app_only = is_tiktok_shop_app_only_notice(worker_driver, url)
                                 if tiktok_shop_app_only:
+                                    unavailable = False
                                     ui_call(
                                         ui_add_log,
                                         row,
-                                        "WARN",
-                                        "UNAVAILABLE",
-                                        f"{block_name}: TikTok Shop yêu cầu xem trong app, bỏ qua fallback ảnh",
-                                        "unavailable",
+                                        "INFO",
+                                        "SHOP",
+                                        f"{block_name}: TikTok Shop chỉ hiện lớp app-only, vẫn tiếp tục chụp bình thường",
+                                        "start",
                                     )
                                 else:
                                     try:
@@ -7134,7 +7258,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     png_bytes = worker_driver.get_screenshot_as_png()
                                 blank_retry = max(0, int(BLANK_SCREEN_MAX_RETRIES or 0))
                                 blank_attempt = 0
-                                while (not using_oembed_capture) and blank_attempt < blank_retry and is_blank_like_screenshot_png(png_bytes):
+                                while (not using_oembed_capture) and blank_attempt < blank_retry and (not tiktok_shop_app_only) and is_blank_like_screenshot_png(png_bytes):
                                     blank_attempt += 1
                                     ui_call(
                                         ui_add_log,
@@ -7150,7 +7274,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     )
                                     time.sleep(max(0.2, float(BLANK_SCREEN_RETRY_DELAY_SEC or 2.0)))
                                     png_bytes = worker_driver.get_screenshot_as_png()
-                                if (not using_oembed_capture) and is_blank_like_screenshot_png(png_bytes):
+                                if (not using_oembed_capture) and (not tiktok_shop_app_only) and is_blank_like_screenshot_png(png_bytes):
                                     unavailable = True
                                     profile_name, caption = "", "Nội dung không khả dụng"
                                     _post_time = ""
@@ -7204,6 +7328,18 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                         is_youtube = ("youtube.com" in url) or ("youtu.be" in url)
                         is_facebook = is_facebook or ("facebook.com" in url) or ("fb.watch" in url) or ("m.facebook.com" in url)
+                        if unavailable and is_facebook and has_visible_facebook_content(worker_driver):
+                            unavailable = False
+                            if not caption or str(caption).strip().lower() == "nội dung không khả dụng":
+                                caption = ""
+                            ui_call(
+                                ui_add_log,
+                                row,
+                                "INFO",
+                                "RESCUE",
+                                f"{block_name}: Ảnh Facebook vẫn có nội dung hiển thị, tiếp tục xử lý bình thường",
+                                "ok",
+                            )
                         if unavailable:
                             col_i = "Nội dung không khả dụng"
                         elif is_youtube:
@@ -7215,8 +7351,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             col_i = caption.strip() if caption else ""
                         profile_name = normalize_account_name(profile_name, url)
                         if (not unavailable) and is_facebook and (not profile_name) and (not col_i.strip()):
-                            unavailable = True
-                            col_i = "Nội dung không khả dụng"
+                            if has_visible_facebook_content(worker_driver):
+                                col_i = "Có nội dung hiển thị nhưng không trích được caption"
+                            else:
+                                unavailable = True
+                                col_i = "Nội dung không khả dụng"
 
                         updates = []
                         scan_ok = False
@@ -7290,6 +7429,15 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             else:
                                 _mark_row_failed(row)
                                 _finish_row_fail(log_block_name, row, "NO_MATCH", eta_text, issue_columns=issue_columns)
+                        elif technical_error_message:
+                            _mark_row_failed(row)
+                            _finish_row_fail(
+                                log_block_name,
+                                row,
+                                technical_error_message,
+                                eta_text,
+                                issue_columns=issue_columns,
+                            )
                         elif unavailable:
                             _mark_row_unavailable(row)
                             _finish_row_unavailable(log_block_name, row, "Nội dung không khả dụng", eta_text, issue_columns=issue_columns)
