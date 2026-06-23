@@ -67,28 +67,28 @@ CAPTURE_WINDOW_SIZE = "1920,1400"
 CAPTURE_ZOOM_PERCENT = 90
 PAGE_READY_TIMEOUT = 3
 PAGE_READY_FALLBACK_SLEEP = 0.45
-PER_LINK_BASE_WAIT = 0.22
-TIKTOK_SCROLL_WAIT_1 = 0.35
-TIKTOK_SCROLL_WAIT_2 = 0.5
+PER_LINK_BASE_WAIT = 0.12
+TIKTOK_SCROLL_WAIT_1 = 0.2
+TIKTOK_SCROLL_WAIT_2 = 0.3
 ZOOM_SETTLE_SLEEP = 0.08
-SCREENSHOT_CAPTURE_DELAY = 1.0
+SCREENSHOT_CAPTURE_DELAY = 0.55
 # Extra buffer for TikTok before first screenshot to let video/player UI settle.
-TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 1.0
+TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 0.45
 TIKTOK_CAPTCHA_MAX_WAIT_SEC = 15.0
 TIKTOK_CAPTCHA_POLL_SEC = 1.0
-TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC = 0.7
+TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC = 0.35
 TIKTOK_BRING_TO_FRONT_INTERVAL_SEC = 8.0
 TIKTOK_CAPTCHA_FORCE_FOCUS = True
 TIKTOK_ACCESS_DENIED_RETRY_MAX = 4
-TIKTOK_ACCESS_DENIED_RETRY_SLEEP_SEC = 1.6
+TIKTOK_ACCESS_DENIED_RETRY_SLEEP_SEC = 0.8
 TIKTOK_REDIRECT_WAIT_SEC = 4.0
-PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = 2.0
+PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = 0.8
 PLEASE_WAIT_MAX_WAIT_SEC = 8.0
-PLEASE_WAIT_POLL_SEC = 1.0
+PLEASE_WAIT_POLL_SEC = 0.5
 BLANK_SCREEN_RETRY_DELAY_SEC = 2.0
 BLANK_SCREEN_MAX_RETRIES = 1
-MULTI_CAPTURE_INTERVAL_SEC = 5.0
-FB_COMMENT_READY_WAIT = 4.0
+MULTI_CAPTURE_INTERVAL_SEC = 3.0
+FB_COMMENT_READY_WAIT = 2.2
 UI_CLICK_SETTLE_SLEEP = 0.15
 UI_SCROLL_SETTLE_SLEEP = 0.1
 TIKTOK_OEMBED_TIMEOUT_SEC = 10.0
@@ -2050,8 +2050,99 @@ def extract_comment_id(url):
             comment_id = url[start:end]
     return comment_id
 
+
+def wait_for_facebook_comment_ready(driver, url: str, timeout_sec: float = FB_COMMENT_READY_WAIT) -> bool:
+    comment_id = extract_comment_id(url)
+    deadline = time.time() + max(0.3, float(timeout_sec or FB_COMMENT_READY_WAIT))
+    while time.time() < deadline:
+        try:
+            if comment_id:
+                has_exact = bool(
+                    driver.execute_script(
+                        """
+                        const cid = arguments[0];
+                        return !!document.evaluate(
+                          `//div[contains(@data-ft, '"comment_id":"${cid}"')]`,
+                          document,
+                          null,
+                          XPathResult.FIRST_ORDERED_NODE_TYPE,
+                          null
+                        ).singleNodeValue;
+                        """,
+                        comment_id,
+                    )
+                )
+                if has_exact:
+                    return True
+            has_any_comment = bool(
+                driver.execute_script(
+                    """
+                    const nodes = Array.from(document.querySelectorAll("div[data-testid='comment'], div[role='article'], div[dir='auto']"));
+                    for (const node of nodes) {
+                      const text = String(node.innerText || '').trim();
+                      if (text.length >= 10) return true;
+                    }
+                    return false;
+                    """
+                )
+            )
+            if has_any_comment:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return False
+
+
+def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: float = SCREENSHOT_CAPTURE_DELAY) -> float:
+    start = time.time()
+    scope = str(source_url or "").lower()
+    deadline = start + max(0.2, float(max_wait_sec or SCREENSHOT_CAPTURE_DELAY))
+    while time.time() < deadline:
+        try:
+            if "facebook.com" in scope or "fb.watch" in scope or "m.facebook.com" in scope:
+                if has_visible_facebook_content(driver):
+                    return time.time() - start
+            elif "tiktok.com" in scope or "vt.tiktok.com" in scope:
+                ready = bool(
+                    driver.execute_script(
+                        """
+                        const isVisible = (el) => {
+                          if (!el) return false;
+                          const rect = el.getBoundingClientRect();
+                          const style = window.getComputedStyle(el);
+                          return rect.width > 60 && rect.height > 60 && style.visibility !== 'hidden' && style.display !== 'none';
+                        };
+                        const mediaNodes = Array.from(document.querySelectorAll("video, canvas, img"));
+                        if (mediaNodes.some(isVisible)) return true;
+                        const txt = String(document.body && document.body.innerText || '').trim();
+                        return txt.length >= 80;
+                        """
+                    )
+                )
+                if ready and not has_please_wait_overlay(driver):
+                    return time.time() - start
+            else:
+                body_ready = bool(
+                    driver.execute_script(
+                        """
+                        const body = document.body;
+                        if (!body) return false;
+                        const rect = body.getBoundingClientRect();
+                        const txt = String(body.innerText || '').trim();
+                        return rect.height > 240 && (txt.length >= 40 || document.querySelector("img,video,canvas"));
+                        """
+                    )
+                )
+                if body_ready:
+                    return time.time() - start
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return max(0.0, time.time() - start)
+
 def get_highlighted_fb_comment(driver, url):
-    time.sleep(FB_COMMENT_READY_WAIT)
+    wait_for_facebook_comment_ready(driver, url, timeout_sec=FB_COMMENT_READY_WAIT)
     
     comment_id = extract_comment_id(url)
     if comment_id:
@@ -7011,7 +7102,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                             requested_url=url,
                                             timeout_sec=TIKTOK_REDIRECT_WAIT_SEC,
                                         )
-                                        time.sleep(max(0.6, float(TIKTOK_ACCESS_DENIED_RETRY_SLEEP_SEC or 1.6)))
+                                        wait_for_capture_surface_ready(
+                                            worker_driver,
+                                            source_url=url,
+                                            max_wait_sec=max(0.3, float(TIKTOK_ACCESS_DENIED_RETRY_SLEEP_SEC or 0.8)),
+                                        )
                                     except Exception:
                                         pass
                                 if not denied_cleared and is_tiktok_access_denied_page(worker_driver, url):
@@ -7251,7 +7346,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     first_capture_delay = SCREENSHOT_CAPTURE_DELAY + (
                                         TIKTOK_FIRST_CAPTURE_EXTRA_SEC if is_tiktok else 0.0
                                     )
-                                    time.sleep(first_capture_delay)
+                                    wait_for_capture_surface_ready(
+                                        worker_driver,
+                                        source_url=url,
+                                        max_wait_sec=first_capture_delay,
+                                    )
                                 else:
                                     time.sleep(MULTI_CAPTURE_INTERVAL_SEC)
                                 if not png_bytes:
