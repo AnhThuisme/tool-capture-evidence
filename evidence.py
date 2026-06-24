@@ -3317,7 +3317,8 @@ def get_temporary_platform_error(driver, source_url: str = "") -> str:
 
 def dismiss_tiktok_login_gate(driver) -> bool:
     """
-    Close TikTok login/signup gate dialogs when a visible close button exists.
+    Close TikTok login/signup or onboarding-interest gate dialogs when a
+    visible close button exists.
     """
     script = """
     const norm = (s) => String(s || '').trim().toLowerCase();
@@ -3341,13 +3342,29 @@ def dismiss_tiktok_login_gate(driver) -> bool:
     };
     for (const dialog of dialogs) {
       const txt = norm(dialog.innerText || "");
-      if (!txt.includes("log in to tiktok") && !txt.includes("use qr code") && !txt.includes("continue with google")) continue;
+      const isLoginGate =
+        txt.includes("log in to tiktok") ||
+        txt.includes("use qr code") ||
+        txt.includes("continue with google") ||
+        txt.includes("use phone or email");
+      const isInterestGate =
+        txt.includes("what would you like to watch on tiktok") ||
+        txt.includes("continue (0/3)") ||
+        txt.includes("continue 0/3") ||
+        txt.includes("what would you like to watch");
+      if (!isLoginGate && !isInterestGate) continue;
       const selectors = [
         "[aria-label='Close']",
         "[aria-label='close']",
+        "[aria-label='Dismiss']",
+        "[aria-label='dismiss']",
+        "[aria-label='Đóng']",
         "[data-e2e='modal-close-inner-button']",
         "[data-e2e*='close']",
+        "[class*='close']",
+        "[class*='Close']",
         "button[aria-label]",
+        "button",
         "svg"
       ];
       for (const sel of selectors) {
@@ -3359,9 +3376,28 @@ def dismiss_tiktok_login_gate(driver) -> bool:
             if (clickNode(btn)) return true;
             continue;
           }
-          if (label === "close" || label === "x" || label === "đóng" || sel.includes("modal-close")) {
+          if (
+            label === "close" ||
+            label === "dismiss" ||
+            label === "x" ||
+            label === "đóng" ||
+            sel.includes("modal-close") ||
+            sel.toLowerCase().includes("close")
+          ) {
             if (clickNode(node)) return true;
           }
+        }
+      }
+      const topRightNodes = Array.from(dialog.querySelectorAll("button,[role='button'],div,svg"));
+      for (const node of topRightNodes) {
+        if (!isVisible(node)) continue;
+        const rect = node.getBoundingClientRect();
+        const hostRect = dialog.getBoundingClientRect();
+        const label = norm(node.getAttribute?.("aria-label") || node.textContent || "");
+        const nearTopRight = rect.width <= 64 && rect.height <= 64 && rect.top <= (hostRect.top + 80) && rect.left >= (hostRect.right - 96);
+        if (!nearTopRight) continue;
+        if (label === "x" || label === "close" || label === "dismiss" || label === "đóng" || label === "") {
+          if (clickNode(node)) return true;
         }
       }
     }
