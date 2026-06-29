@@ -6598,8 +6598,8 @@ function removeMappingBlock(index) {
 
 function addMappingBlock() {
   const blocks = ensureMappingBlocks(currentRunMode);
-  if (currentRunMode === 'seeding' && blocks.length >= 3) {
-    alert('Seeding hiện hỗ trợ tối đa 3 block.');
+  if (currentRunMode === 'seeding' && blocks.length >= 5) {
+    alert('Seeding hiện hỗ trợ tối đa 5 block.');
     return;
   }
   blocks.push(defaultMappingBlock(currentRunMode, blocks.length + 1));
@@ -7979,6 +7979,7 @@ function processJobLifecycleNotifications(jobs) {
   (jobs || []).forEach(job => {
     const jobId = String(job?.id || '').trim();
     if (!jobId) return;
+    if (!isJobOwnedByCurrentUser(job)) return;
     const status = String(job?.status || '').trim().toLowerCase();
     const previousStatus = String(jobStatusMemory[jobId] || '').trim().toLowerCase();
     nextStatusMemory[jobId] = status;
@@ -10507,8 +10508,8 @@ def start_job(request: Request, payload: JobStartRequest):
     if run_mode == "seeding":
         candidate_blocks = [m for m in mapping_payload if str(m.get("sheet_name", "")).strip() or str(m.get("name", "")).strip()]
         if candidate_blocks:
-            if len(candidate_blocks) > 3:
-                raise HTTPException(status_code=400, detail="Seeding hiện hỗ trợ tối đa 3 sheet / 1 lần chạy")
+            if len(candidate_blocks) > 5:
+                raise HTTPException(status_code=400, detail="Seeding hiện hỗ trợ tối đa 5 sheet / 1 lần chạy")
             for idx, block in enumerate(candidate_blocks, start=1):
                 block_sheet_url = sheet_url
                 block_sheet_name = str(block.get("sheet_name", "")).strip() or str(block.get("name", "")).strip()

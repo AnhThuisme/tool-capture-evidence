@@ -71,7 +71,7 @@ PER_LINK_BASE_WAIT = 0.12
 TIKTOK_SCROLL_WAIT_1 = 0.2
 TIKTOK_SCROLL_WAIT_2 = 0.3
 ZOOM_SETTLE_SLEEP = 0.08
-SCREENSHOT_CAPTURE_DELAY = 0.55
+SCREENSHOT_CAPTURE_DELAY = 1.5
 # Extra buffer for TikTok before first screenshot to let video/player UI settle.
 TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 0.45
 TIKTOK_CAPTCHA_MAX_WAIT_SEC = 15.0
@@ -7291,10 +7291,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             effective_captures = 1 if (unavailable or bool(tiktok_oembed_png)) else captures_per_link
                             sheet_air_raw = str(air_dates[idx]).strip() if (idx_air_date and idx < len(air_dates)) else ""
                             air_date = get_air_date_token(sheet_air_raw) or fixed_air_date or get_air_date_token(_post_time)
+                            block_token = sanitize_filename_token(block_name, fallback="Post", max_len=48)
                             platform_token = sanitize_filename_token(detect_platform_label(url), fallback="Other", max_len=24)
                             kol_token = sanitize_filename_token(profile_name, fallback="UnknownKOL", max_len=60)
                             date_token = sanitize_filename_token(air_date, fallback="NoDate", max_len=16)
-                            base_name = f"Post_{platform_token}_{kol_token}_{date_token}_Row_{row}"
+                            base_name = f"{block_token}_{platform_token}_{kol_token}_{date_token}_Row_{row}"
                             captured_pngs: list[bytes] = []
 
                             def _upload_png_as(file_name: str, png_data: bytes):
