@@ -476,7 +476,29 @@ def extract_sheet_gid(sheet_text: str) -> int | None:
 def resolve_worksheet(spreadsheet, sheet_name: str = "", sheet_url: str = ""):
     raw_name = str(sheet_name or "").strip()
     if raw_name:
-        return spreadsheet.worksheet(raw_name)
+        try:
+            return spreadsheet.worksheet(raw_name)
+        except Exception:
+            pass
+
+        def _normalize_title(value: str) -> str:
+            text = str(value or "").strip().lower()
+            text = "".join(
+                ch for ch in unicodedata.normalize("NFD", text)
+                if unicodedata.category(ch) != "Mn"
+            )
+            text = re.sub(r"\s+", " ", text)
+            return text
+
+        target_norm = _normalize_title(raw_name)
+        if target_norm:
+            try:
+                for ws in spreadsheet.worksheets():
+                    title = str(getattr(ws, "title", "") or "").strip()
+                    if title and _normalize_title(title) == target_norm:
+                        return ws
+            except Exception:
+                pass
     gid = extract_sheet_gid(sheet_url)
     if gid is not None:
         try:
@@ -5856,7 +5878,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
         spreadsheet = client.open_by_url(sheet_url)
         spreadsheet_id = spreadsheet.id
-        worksheet = spreadsheet.worksheet(sheet_name)
+        worksheet = resolve_worksheet(spreadsheet, sheet_name=sheet_name, sheet_url=sheet_url)
         sheet_id = worksheet.id
         data_start_row = requested_data_start_row
         sheet_total_rows = max(0, int(getattr(worksheet, "row_count", 0) or 0) - data_start_row + 1)
@@ -6863,7 +6885,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 )
                 local_client = gspread.authorize(local_creds)
                 local_spreadsheet = local_client.open_by_url(sheet_url)
-                local_worksheet = local_spreadsheet.worksheet(sheet_name)
+                local_worksheet = resolve_worksheet(local_spreadsheet, sheet_name=sheet_name, sheet_url=sheet_url)
                 local_drive_service = build("drive", "v3", credentials=local_creds)
                 block_name = block["name"]
                 idx_profile = block["idx_profile"]
@@ -7291,11 +7313,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             effective_captures = 1 if (unavailable or bool(tiktok_oembed_png)) else captures_per_link
                             sheet_air_raw = str(air_dates[idx]).strip() if (idx_air_date and idx < len(air_dates)) else ""
                             air_date = get_air_date_token(sheet_air_raw) or fixed_air_date or get_air_date_token(_post_time)
-                            block_token = sanitize_filename_token(block_name, fallback="Post", max_len=48)
                             platform_token = sanitize_filename_token(detect_platform_label(url), fallback="Other", max_len=24)
                             kol_token = sanitize_filename_token(profile_name, fallback="UnknownKOL", max_len=60)
                             date_token = sanitize_filename_token(air_date, fallback="NoDate", max_len=16)
-                            base_name = f"{block_token}_{platform_token}_{kol_token}_{date_token}_Row_{row}"
+                            base_name = f"Post_{platform_token}_{kol_token}_{date_token}_Row_{row}"
                             captured_pngs: list[bytes] = []
 
                             def _upload_png_as(file_name: str, png_data: bytes):

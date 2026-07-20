@@ -6576,11 +6576,10 @@ function updateMappingBlock(mode, index, key, value) {
   if (!blocks[index]) return;
   blocks[index][key] = key === 'start_line' ? Number(value || 4) : String(value || '');
   if (String(mode || '').toLowerCase() === 'seeding' && String(key || '').toLowerCase() === 'sheet_name') {
-    const preferredName = String(blocks[index][key] || '').trim();
-    if (preferredName) blocks[index].name = preferredName;
+    const preferredSheetName = String(blocks[index][key] || '').trim();
     if (Number(index) === 0) {
       const sheetNameInput = document.getElementById('sheet_name');
-      if (sheetNameInput) sheetNameInput.value = preferredName;
+      if (sheetNameInput) sheetNameInput.value = preferredSheetName;
     }
   }
   console.log(`[DEBUG] updateMappingBlock(${mode}, ${index}, ${key}): ${value} -> ${blocks[index][key]}`);
@@ -6834,8 +6833,6 @@ function renderMappingEditor() {
         ? 'mapping-block mapping-block-new'
         : 'mapping-block';
       if (currentRunMode === 'seeding') {
-        const preferredName = String(block.sheet_name || block.name || '').trim();
-        if (preferredName) block.name = preferredName;
         const sharedDriveId = String(document.getElementById('drive_id')?.value || '').trim();
         if (!String(block.drive_id || '').trim() && sharedDriveId) block.drive_id = sharedDriveId;
       }
@@ -6859,7 +6856,7 @@ function renderMappingEditor() {
       const chromePort = getChromePortForBlock(index, currentRunMode);
       const chromeRow = `<div class="mapping-label">${esc(t('chrome'))}</div><div><button class="btn mapping-chrome-btn" type="button" onclick="launchChromeBlock(${index}, '${currentRunMode}', ${chromePort})">${esc(`${t('chrome')} ${chromePort}`)}</button></div>`;
       const blockTitle = currentRunMode === 'seeding'
-        ? String(block?.sheet_name || block?.name || `Post ${index + 1}`)
+        ? String(block?.name || block?.sheet_name || `Post ${index + 1}`)
         : String(block?.name || `Post ${index + 1}`);
       const blockHead = `<div class="mapping-block-head">
         <div class="mapping-block-title">${esc(blockTitle)}</div>
@@ -7405,6 +7402,7 @@ function toDateKeyFromDate(date) {
 function getJobSummary(job) {
   const base = job?.summary || {};
   const logs = Array.isArray(job?.logs) ? job.logs : (Array.isArray(job?.recent_logs) ? job.recent_logs : []);
+  const issueCells = Array.isArray(job?.issue_cells) ? job.issue_cells : [];
   const touchedRows = new Set();
   const successRows = new Set();
   const failedRows = new Set();
@@ -7417,14 +7415,16 @@ function getJobSummary(job) {
     else if (isFailedLog(item)) failedRows.add(row);
     else if (isSuccessLog(item)) successRows.add(row);
   });
+  issueCells.forEach(item => {
+    const row = Number(item?.row || 0);
+    if (!Number.isFinite(row) || row <= 0) return;
+    const kind = String(item?.kind || '').trim().toLowerCase();
+    if (kind === 'unavailable') unavailableRows.add(row);
+    else if (kind === 'failed' || kind === 'error') failedRows.add(row);
+  });
   const done = Math.max(Number(base.done || 0), touchedRows.size);
   const success = Math.max(Number(base.success || 0), successRows.size);
-  const failed = Math.max(
-    Number(base.failed || 0),
-    failedRows.size,
-    Number(job?.error_row_count || 0),
-    Object.keys(job?.error_rows || {}).length
-  );
+  const failed = Math.max(Number(base.failed || 0), failedRows.size);
   const unavailable = Math.max(Number(base.unavailable || 0), unavailableRows.size);
   const total = Math.max(
     Number(base.total || 0),
@@ -8710,7 +8710,7 @@ function updateRunActionButtons(snapshot = currentJobSnapshot) {
     issueCells
       .filter(item => {
         const kind = String(item?.kind || '').toLowerCase();
-        return kind === 'failed' || kind === 'error';
+        return kind === 'failed' || kind === 'error' || kind === 'unavailable';
       })
       .map(item => Number(item?.row || 0))
       .filter(row => Number.isFinite(row) && row > 0)
@@ -10513,6 +10513,7 @@ def start_job(request: Request, payload: JobStartRequest):
             for idx, block in enumerate(candidate_blocks, start=1):
                 block_sheet_url = sheet_url
                 block_sheet_name = str(block.get("sheet_name", "")).strip() or str(block.get("name", "")).strip()
+                block_post_name = str(block.get("name", "")).strip() or f"Post {idx}"
                 block_drive_id = evidence.normalize_drive_folder_input(str(block.get("drive_id", "")).strip() or drive_id)
                 if not block_sheet_url:
                     raise HTTPException(status_code=400, detail="Thiếu Sheet URL chính")
@@ -10527,7 +10528,7 @@ def start_job(request: Request, payload: JobStartRequest):
                 except Exception as exc:
                     raise HTTPException(status_code=400, detail=f"Block {idx}: không mở được sheet: {exc}") from exc
                 block_mapping = dict(block)
-                block_mapping["name"] = resolved_block_sheet_name
+                block_mapping["name"] = block_post_name
                 block_mapping["sheet_name"] = resolved_block_sheet_name
                 block_mapping["sheet_url"] = block_sheet_url
                 block_mapping["drive_id"] = block_drive_id
@@ -10833,7 +10834,7 @@ def retry_job_errors(job_id: str, request: Request):
     for item in issue_cells:
         try:
             kind = str((item or {}).get("kind") or "").strip().lower()
-            if kind not in {"failed", "error"}:
+            if kind not in {"failed", "error", "unavailable"}:
                 continue
             row_num = int((item or {}).get("row") or 0)
         except Exception:
@@ -10842,7 +10843,7 @@ def retry_job_errors(job_id: str, request: Request):
             target_rows.append(row_num)
     target_rows = sorted(set(target_rows))
     if not target_rows:
-        raise HTTPException(status_code=400, detail="Job này chưa có dòng lỗi để chạy lại")
+        raise HTTPException(status_code=400, detail="Job này chưa có dòng lỗi hoặc không khả dụng để chạy lại")
 
     retry_start_line = int(min(target_rows))
     mappings = list(source_request.get("mappings") or [])
