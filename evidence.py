@@ -2073,6 +2073,63 @@ def extract_comment_id(url):
     return comment_id
 
 
+def should_preserve_capture_scroll_position(url: str) -> bool:
+    return bool(extract_comment_id(str(url or "")))
+
+
+def reset_capture_scroll_to_top(driver, url: str, settle_sec: float = 0.18) -> bool:
+    if should_preserve_capture_scroll_position(url):
+        return False
+    try:
+        moved = bool(
+            driver.execute_script(
+                """
+                let changed = false;
+                const roots = [document.scrollingElement, document.documentElement, document.body]
+                  .filter(Boolean);
+                for (const root of roots) {
+                  const top = Number(root.scrollTop || 0);
+                  if (top > 2) {
+                    root.scrollTop = 0;
+                    changed = true;
+                  }
+                }
+                const selectors = [
+                  'main',
+                  '[role="main"]',
+                  '[role="dialog"]',
+                  '[data-e2e*="browse"]',
+                  '[data-e2e*="feed"]',
+                  'div[class*="scroll"]',
+                  'div[style*="overflow"]'
+                ];
+                const seen = new Set();
+                for (const selector of selectors) {
+                  const nodes = Array.from(document.querySelectorAll(selector));
+                  for (const el of nodes) {
+                    if (!el || seen.has(el)) continue;
+                    seen.add(el);
+                    const canScroll = el.scrollHeight > (el.clientHeight + 80);
+                    if (!canScroll) continue;
+                    const top = Number(el.scrollTop || 0);
+                    if (top > 2) {
+                      el.scrollTop = 0;
+                      changed = true;
+                    }
+                  }
+                }
+                try { window.scrollTo(0, 0); } catch (_) {}
+                return changed || (window.scrollY > 2);
+                """
+            )
+        )
+    except Exception:
+        return False
+    if moved:
+        time.sleep(max(0.05, float(settle_sec or 0.18)))
+    return moved
+
+
 def wait_for_facebook_comment_ready(driver, url: str, timeout_sec: float = FB_COMMENT_READY_WAIT) -> bool:
     comment_id = extract_comment_id(url)
     deadline = time.time() + max(0.3, float(timeout_sec or FB_COMMENT_READY_WAIT))
@@ -7100,10 +7157,13 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     timeout_sec=TIKTOK_REDIRECT_WAIT_SEC,
                                 )
                                 try:
-                                    worker_driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                                    time.sleep(TIKTOK_SCROLL_WAIT_1)
-                                    worker_driver.execute_script("window.scrollTo(0, window.innerHeight / 2);")
-                                    time.sleep(TIKTOK_SCROLL_WAIT_2)
+                                    moved_to_top = reset_capture_scroll_to_top(
+                                        worker_driver,
+                                        url,
+                                        settle_sec=max(TIKTOK_SCROLL_WAIT_1, TIKTOK_SCROLL_WAIT_2, 0.18),
+                                    )
+                                    if not moved_to_top:
+                                        time.sleep(max(TIKTOK_SCROLL_WAIT_1, 0.15))
                                 except Exception:
                                     pass
                                 if is_tiktok_slider_challenge_present(worker_driver):
@@ -7401,6 +7461,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                                 "unavailable",
                                             )
                                             break
+                                    reset_capture_scroll_to_top(worker_driver, url)
                                     first_capture_delay = SCREENSHOT_CAPTURE_DELAY + (
                                         TIKTOK_FIRST_CAPTURE_EXTRA_SEC if is_tiktok else 0.0
                                     )

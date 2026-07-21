@@ -1,0 +1,15 @@
+2026/06/03-14:23:09.228 7d77fb3 Reusing MANIFEST /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.facebook.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/06/03-14:23:09.228 7d77fb3 Recovering log #82
+2026/06/03-14:23:09.229 7d77fb3 Reusing old log /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.facebook.com_0.indexeddb.leveldb/000082.log 
+2026/06/03-14:32:46.392 7d77fa8 Level-0 table #87: started
+2026/06/03-14:32:46.398 7d77fa8 Level-0 table #87: 319829 bytes OK
+2026/06/03-14:32:46.402 7d77fa8 Delete type=0 #82
+2026/06/03-14:32:46.404 7d77fa8 Manual compaction at level-0 from (begin) .. (end); will stop at (end)
+2026/06/03-14:32:46.404 7d77fa8 Manual compaction at level-1 from (begin) .. (end); will stop at '\x00I\x00\x00\xc8\x0a\x00r\x00e\x00e\x00l\x00_\x00d\x00r\x00a\x00f\x00t' @ 688316 : 1
+2026/06/03-14:32:46.404 7d77fa8 Compacting 1@1 + 1@2 files
+2026/06/03-14:32:46.411 7d77fa8 Generated table #88@1: 10206 keys, 389553 bytes
+2026/06/03-14:32:46.412 7d77fa8 Compacted 1@1 + 1@2 files => 389553 bytes
+2026/06/03-14:32:46.413 7d77fa8 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/06/03-14:32:46.413 7d77fa8 Delete type=2 #87
+2026/06/03-14:32:46.413 7d77fa8 Delete type=2 #84
+2026/06/03-14:32:46.415 7d77fa8 Manual compaction at level-1 from '\x00I\x00\x00\xc8\x0a\x00r\x00e\x00e\x00l\x00_\x00d\x00r\x00a\x00f\x00t' @ 688316 : 1 .. (end); will stop at (end)

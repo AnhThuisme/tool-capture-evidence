@@ -193,37 +193,6 @@
     },
     "updated_at": "2026-04-13 11:48:06"
   },
-  "sheet_id:1Dc6obObiAZX1gIwWLJbuRC-nqj_38UfBiNDetbhHZZU": {
-    "sheet_url": "https://docs.google.com/spreadsheets/d/1Dc6obObiAZX1gIwWLJbuRC-nqj_38UfBiNDetbhHZZU/edit?gid=801000961#gid=801000961",
-    "sheet_name": "Ap New | Threads Post",
-    "rows": [
-      73,
-      87,
-      92,
-      93,
-      94,
-      95,
-      96,
-      97,
-      98,
-      99,
-      152
-    ],
-    "details": {
-      "73": "Ap New | M&B Post: Nội dung không khả dụng",
-      "87": "Ap New | M&B Post: Nội dung không khả dụng",
-      "92": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/screenshot (Caused by NewConnectionError(\"HTTPConnection(host='localhost', por",
-      "93": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
-      "94": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
-      "95": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
-      "96": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
-      "97": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
-      "98": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
-      "99": "Ap New | M&B Post: HTTPConnectionPool(host='localhost', port=56328): Max retries exceeded with url: /session/145f53d16fe657db84e9bbe547bdee50/url (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=56328",
-      "152": "Post 2: TIKTOK_CAPTCHA_TIMEOUT_15s"
-    },
-    "updated_at": "2026-05-15 11:33:13"
-  },
   "sheet_id:1NIe8Buq5kHu-dNbd1SzOkgmHeShOvAdxEMWYU26yo7A": {
     "sheet_url": "https://docs.google.com/spreadsheets/d/1NIe8Buq5kHu-dNbd1SzOkgmHeShOvAdxEMWYU26yo7A/edit?gid=1205894811#gid=1205894811",
     "sheet_name": "ONE PORT",
@@ -277,5 +246,90 @@
       "105": "Tracking comment_T04/2026 (SL: 30 & 25): Nội dung không khả dụng"
     },
     "updated_at": "2026-06-01 09:41:47"
+  },
+  "sheet_id:1NfoDHOtuzJRfCA8vGqwegIKZQdpJFGYvHySsmbja8wg": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1NfoDHOtuzJRfCA8vGqwegIKZQdpJFGYvHySsmbja8wg/edit?gid=1013245966#gid=1013245966",
+    "sheet_name": "QUÝ 2",
+    "rows": [
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "details": {
+      "7": "QUÝ 2: Nội dung không khả dụng",
+      "8": "QUÝ 2: Nội dung không khả dụng",
+      "9": "QUÝ 2: Nội dung không khả dụng",
+      "10": "QUÝ 2: Nội dung không khả dụng",
+      "11": "QUÝ 2: Nội dung không khả dụng",
+      "12": "QUÝ 2: Nội dung không khả dụng",
+      "13": "QUÝ 2: Nội dung không khả dụng"
+    },
+    "updated_at": "2026-06-02 14:48:04"
+  },
+  "sheet_id:1CWctQGUE1FU3kniAMo4gBxhIHhAJ287ORWZqcBylMjw": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1CWctQGUE1FU3kniAMo4gBxhIHhAJ287ORWZqcBylMjw/edit?gid=610740654#gid=610740654",
+    "sheet_name": "T05/2026 (SL: 12 & 3)",
+    "rows": [
+      4
+    ],
+    "details": {
+      "4": "T05/2026 (SL: 12 & 3): Nội dung không khả dụng"
+    },
+    "updated_at": "2026-06-11 11:16:55"
+  },
+  "sheet_id:1Ou1vB18CU3F68OK2IVp0EP150Ou7jNSxzM5ok1q7E08": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1Ou1vB18CU3F68OK2IVp0EP150Ou7jNSxzM5ok1q7E08/edit?gid=149562821#gid=149562821",
+    "sheet_name": "AP NEW 1 - FB KOL Seeding CMT (SL: 3.410)",
+    "rows": [
+      19
+    ],
+    "details": {
+      "19": "Post 5: <HttpError 403 when requesting https://www.googleapis.com/drive/v3/files/1IPNXgguaAWmS-mxq0MXAwPlaUReDq8Z-/permissions?supportsAllDrives=true&alt=json returned \"User rate limit exceeded.\". Details: \"[{'message':"
+    },
+    "updated_at": "2026-06-29 16:03:12"
+  },
+  "sheet_id:1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg/edit?gid=674545595#gid=674545595",
+    "sheet_name": "liquid m&b ap anh q2",
+    "rows": [
+      13,
+      19,
+      24,
+      25,
+      30,
+      34
+    ],
+    "details": {
+      "13": "Post 2: Nội dung không khả dụng",
+      "19": "Post 2: Nội dung không khả dụng",
+      "24": "Post 2: Nội dung không khả dụng",
+      "25": "Post 2: Nội dung không khả dụng",
+      "30": "Post 2: Nội dung không khả dụng",
+      "34": "Post 2: Nội dung không khả dụng"
+    },
+    "updated_at": "2026-07-20 18:26:46"
+  },
+  "sheet_id:1Dc6obObiAZX1gIwWLJbuRC-nqj_38UfBiNDetbhHZZU": {
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1Dc6obObiAZX1gIwWLJbuRC-nqj_38UfBiNDetbhHZZU/edit?gid=923297369#gid=923297369",
+    "sheet_name": "Copy of Ap New | KOL",
+    "rows": [
+      43,
+      58,
+      61,
+      107,
+      137
+    ],
+    "details": {
+      "43": "Post 2: Nội dung không khả dụng",
+      "58": "Post 2: Nội dung không khả dụng",
+      "61": "Post 2: Nội dung không khả dụng",
+      "107": "Post 2: Nội dung không khả dụng",
+      "137": "Post 2: Nội dung không khả dụng"
+    },
+    "updated_at": "2026-07-20 14:23:53"
   }
 }

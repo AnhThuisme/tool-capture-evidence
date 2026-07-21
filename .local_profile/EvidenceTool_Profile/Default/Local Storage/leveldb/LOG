@@ -1,20 +1,3 @@
-2026/06/01-09:29:27.585 7699188 Reusing MANIFEST /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/Local Storage/leveldb/MANIFEST-000001
-2026/06/01-09:29:27.589 7699188 Recovering log #859
-2026/06/01-09:29:27.590 7699188 Reusing old log /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/Local Storage/leveldb/000859.log 
-2026/06/01-09:32:08.857 769918b Level-0 table #863: started
-2026/06/01-09:32:08.859 769918b Level-0 table #863: 13969 bytes OK
-2026/06/01-09:32:08.865 769918b Delete type=0 #859
-2026/06/01-09:38:08.852 769918b Level-0 table #865: started
-2026/06/01-09:38:08.861 769918b Level-0 table #865: 17187 bytes OK
-2026/06/01-09:38:08.863 769918b Delete type=0 #862
-2026/06/01-09:38:08.870 769918b Compacting 4@0 + 2@1 files
-2026/06/01-09:38:08.887 769918b Generated table #866@0: 59846 keys, 2126391 bytes
-2026/06/01-09:38:08.894 769918b Generated table #867@0: 15237 keys, 915092 bytes
-2026/06/01-09:38:08.894 769918b Compacted 4@0 + 2@1 files => 3041483 bytes
-2026/06/01-09:38:08.896 769918b compacted to: files[ 0 5 1 0 0 0 0 ]
-2026/06/01-09:38:08.896 769918b Delete type=2 #856
-2026/06/01-09:38:08.896 769918b Delete type=2 #855
-2026/06/01-09:38:08.896 769918b Delete type=2 #863
-2026/06/01-09:38:08.896 769918b Delete type=2 #860
-2026/06/01-09:38:08.896 769918b Delete type=2 #858
-2026/06/01-09:38:08.896 769918b Delete type=2 #865
+2026/07/21-10:20:52.194 7127071 Reusing MANIFEST /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/Local Storage/leveldb/MANIFEST-000001
+2026/07/21-10:20:52.197 7127071 Recovering log #1195
+2026/07/21-10:20:52.197 7127071 Reusing old log /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/Local Storage/leveldb/001195.log 

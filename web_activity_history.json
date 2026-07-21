@@ -180,5 +180,18 @@
     "browser_port": 9325,
     "job_id": "",
     "row": null
+  },
+  {
+    "id": "4edb88df-4f54-4d6d-857d-ca78b89e60ee",
+    "owner_email": "thu.phannguyenanh@fanscom.vn",
+    "ts": "2026-06-02T03:10:42Z",
+    "kind": "login",
+    "message": "Tracking comment_T04/2026 (SL: 30 & 25): đã mở Chrome 9223 để đăng nhập",
+    "level": "info",
+    "run_mode": "seeding",
+    "block_name": "Tracking comment_T04/2026 (SL: 30 & 25)",
+    "browser_port": 9223,
+    "job_id": "",
+    "row": null
   }
 ]

@@ -1,71 +1,91 @@
 {
   "users": {
     "thu.phannguyenanh@fanscom.vn": {
-      "page_timeout_ms": 3000,
-      "sheet_name": "Tracking comment_T04/2026 (SL: 30 & 25)",
-      "ready_state": "interactive",
-      "viewport_width": 1920,
+      "sheet_name": "liquid m&b ap anh q2",
       "viewport_height": 1400,
+      "page_timeout_ms": 3000,
+      "drive_id": "1WZor9Of6Gu_E6SqoyxXw65YTrQYcF2Jq",
+      "viewport_width": 1920,
+      "ready_state": "interactive",
+      "sheet_url": "https://docs.google.com/spreadsheets/d/1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg/edit?gid=674545595#gid=674545595",
+      "credentials_path": "service_accounts/thu.phannguyenanh_fanscom.vn.json",
       "full_page_capture": false,
-      "sheet_url": "https://docs.google.com/spreadsheets/d/1UtffvLDh6BUu8DWGd5PRIwXO-BeX3CVAb83OOrOS4o8/edit?gid=329774766#gid=329774766",
-      "credentials_path": "credentials.inline.json",
-      "drive_id": "1ZnAxhC2HM60gIa_JjT7sXz4BnkRwmfMP",
-      "scan_keyword_terms": "",
-      "run_flags_by_mode": {
-        "seeding": {
-          "force_run_all": true,
-          "highlight_sheet_errors": true,
-          "capture_five_per_link": false,
-          "scan_negative_filter": false,
-          "scan_keyword_filter": false
-        },
-        "booking": {
-          "force_run_all": true,
-          "highlight_sheet_errors": true,
-          "capture_five_per_link": false,
-          "scan_negative_filter": false,
-          "scan_keyword_filter": false
-        },
-        "scan": {
-          "force_run_all": true,
-          "highlight_sheet_errors": true,
-          "capture_five_per_link": false,
-          "scan_negative_filter": false,
-          "scan_keyword_filter": false
-        }
-      },
-      "tiktok_captcha_wait_sec": 15,
       "mappings_by_mode": {
         "seeding": [
           {
-            "name": "Tracking comment_T04/2026 (SL: 30 & 25)",
-            "start_line": 64,
+            "name": "Post 2",
+            "start_line": 1,
             "sheet_url": "",
-            "sheet_name": "Tracking comment_T04/2026 (SL: 30 & 25)",
-            "drive_id": "https://drive.google.com/drive/folders/1ZnAxhC2HM60gIa_JjT7sXz4BnkRwmfMP",
-            "col_url": "C",
+            "sheet_name": "liquid m&b ap anh q2",
+            "drive_id": "https://drive.google.com/drive/folders/1WZor9Of6Gu_E6SqoyxXw65YTrQYcF2Jq",
+            "col_url": "D",
             "col_profile": "",
             "col_content": "",
-            "col_screenshot": "E",
-            "col_drive": "D",
-            "col_air_date": "2026-06-01",
+            "col_screenshot": "F",
+            "col_drive": "E",
+            "col_air_date": "2026-07-20",
+            "fixed_air_date": "",
+            "mode": "seeding"
+          },
+          {
+            "name": "Post 3",
+            "start_line": 1,
+            "sheet_url": "",
+            "sheet_name": "liquid m&b one port q2",
+            "drive_id": "https://drive.google.com/drive/folders/1KkNMRoxTF2DueLBuCOGZkzNLf1-C2k8J",
+            "col_url": "F",
+            "col_profile": "",
+            "col_content": "",
+            "col_screenshot": "H",
+            "col_drive": "G",
+            "col_air_date": "2026-07-20",
+            "fixed_air_date": "",
+            "mode": "seeding"
+          },
+          {
+            "name": "liquid admin q2",
+            "start_line": 1,
+            "sheet_url": "",
+            "sheet_name": "liquid admin q2",
+            "drive_id": "13VG67ReHAsLUPmx5Y5jATKat1IPq_VsJ",
+            "col_url": "H",
+            "col_profile": "",
+            "col_content": "",
+            "col_screenshot": "J",
+            "col_drive": "I",
+            "col_air_date": "2026-07-20",
+            "fixed_air_date": "",
+            "mode": "seeding"
+          },
+          {
+            "name": "Post 4",
+            "start_line": 1,
+            "sheet_url": "",
+            "sheet_name": "liquid moderator q2",
+            "drive_id": "https://drive.google.com/drive/folders/1-QYUvE9Mrhe-CN9AHBuDEf2yxAPQjq9z",
+            "col_url": "J",
+            "col_profile": "",
+            "col_content": "",
+            "col_screenshot": "L",
+            "col_drive": "K",
+            "col_air_date": "2026-07-20",
             "fixed_air_date": "",
             "mode": "seeding"
           }
         ],
         "booking": [
           {
-            "name": "Post 32",
-            "start_line": 341,
+            "name": "Post 2",
+            "start_line": 2,
             "sheet_url": "",
             "sheet_name": "",
             "drive_id": "",
-            "col_url": "BP",
+            "col_url": "O",
             "col_profile": "",
             "col_content": "",
-            "col_screenshot": "BR",
-            "col_drive": "BQ",
-            "col_air_date": "2026-06-01",
+            "col_screenshot": "Q",
+            "col_drive": "P",
+            "col_air_date": "2026-07-20",
             "fixed_air_date": "",
             "mode": "booking"
           }
@@ -88,15 +108,36 @@
           }
         ]
       },
+      "tiktok_captcha_wait_sec": 15,
       "scan_negative_terms": "",
+      "scan_keyword_terms": "",
+      "tiktok_force_focus": true,
       "please_wait_delay_sec": 2.0,
-      "tiktok_force_focus": true
+      "run_flags_by_mode": {
+        "seeding": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        },
+        "booking": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        },
+        "scan": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        }
+      }
     },
     "fanscom.ecom@gmail.com": {
-      "page_timeout_ms": 3000,
-      "sheet_name": "2. SEEDING SHARE POST FB",
-      "ready_state": "interactive",
-      "viewport_width": 1920,
       "mappings_by_mode": {
         "scan": [
           {
@@ -116,22 +157,26 @@
           }
         ]
       },
+      "sheet_name": "2. SEEDING SHARE POST FB",
       "viewport_height": 1400,
-      "full_page_capture": false,
+      "page_timeout_ms": 3000,
+      "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV",
+      "viewport_width": 1920,
+      "ready_state": "interactive",
       "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
-      "credentials_path": "c:\\Users\\thu.phannguyenanh\\Videos\\Web evidence\\credentials.inline.json",
-      "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV"
+      "credentials_path": "service_accounts/thu.phannguyenanh_fanscom.vn.json",
+      "full_page_capture": false
     }
   },
   "_legacy_defaults": {
-    "page_timeout_ms": 3000,
     "sheet_name": "2. SEEDING SHARE POST FB",
-    "ready_state": "interactive",
-    "viewport_width": 1920,
     "viewport_height": 1400,
-    "full_page_capture": false,
+    "page_timeout_ms": 3000,
+    "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV",
+    "viewport_width": 1920,
+    "ready_state": "interactive",
     "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
-    "credentials_path": "c:\\Users\\thu.phannguyenanh\\Videos\\Web evidence\\credentials.inline.json",
-    "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV"
+    "credentials_path": "service_accounts/thu.phannguyenanh_fanscom.vn.json",
+    "full_page_capture": false
   }
 }

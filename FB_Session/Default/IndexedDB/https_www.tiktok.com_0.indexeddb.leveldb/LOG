@@ -1,0 +1,10 @@
+2026/06/03-14:32:14.496 7d77fa8 Reusing MANIFEST /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.tiktok.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/06/03-14:32:14.496 7d77fa8 Recovering log #53
+2026/06/03-14:32:14.501 7d77fa8 Reusing old log /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.tiktok.com_0.indexeddb.leveldb/000053.log 
+2026/06/03-14:32:44.400 7d77fa8 Moved #52 to level-1 727910 bytes OK: files[ 0 1 1 0 0 0 0 ]
+2026/06/03-14:33:14.407 7d77fa8 Compacting 1@1 + 1@2 files
+2026/06/03-14:33:14.417 7d77fa8 Generated table #55@1: 533 keys, 10020 bytes
+2026/06/03-14:33:14.417 7d77fa8 Compacted 1@1 + 1@2 files => 10020 bytes
+2026/06/03-14:33:14.418 7d77fa8 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/06/03-14:33:14.419 7d77fa8 Delete type=2 #50
+2026/06/03-14:33:14.419 7d77fa8 Delete type=2 #52

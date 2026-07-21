@@ -1,3 +1,12 @@
-2026/06/01-09:30:09.417 7699124 Reusing MANIFEST /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.facebook.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/06/01-09:30:09.417 7699124 Recovering log #78
-2026/06/01-09:30:09.421 7699124 Reusing old log /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.facebook.com_0.indexeddb.leveldb/000078.log 
+2026/07/20-18:18:50.146 6f6fb54 Reusing MANIFEST /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.facebook.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/20-18:18:50.147 6f6fb54 Recovering log #4
+2026/07/20-18:18:50.166 6f6fb54 Reusing old log /Users/at/Downloads/New Folder With Items/Web evidence/.local_profile/EvidenceTool_Profile/Default/IndexedDB/https_www.facebook.com_0.indexeddb.leveldb/000004.log 
+2026/07/20-18:19:38.714 6f6fb54 Level-0 table #8: started
+2026/07/20-18:19:38.733 6f6fb54 Level-0 table #8: 1649410 bytes OK
+2026/07/20-18:19:38.737 6f6fb54 Delete type=0 #4
+2026/07/20-18:19:47.687 6f6fb54 Compacting 1@1 + 1@2 files
+2026/07/20-18:19:47.696 6f6fb54 Generated table #9@1: 2605 keys, 92048 bytes
+2026/07/20-18:19:47.696 6f6fb54 Compacted 1@1 + 1@2 files => 92048 bytes
+2026/07/20-18:19:47.698 6f6fb54 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/07/20-18:19:47.699 6f6fb54 Delete type=2 #5
+2026/07/20-18:19:47.699 6f6fb54 Delete type=2 #8
