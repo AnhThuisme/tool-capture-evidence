@@ -922,7 +922,7 @@ def _parse_email_list(value: Any) -> list[str]:
 
 
 def _system_admin_emails() -> list[str]:
-    return _parse_email_list(os.getenv("WEB_SYSTEM_ADMIN_EMAILS", "thu.phannguyenanh@fanscom.vn"))
+    return _parse_email_list(os.getenv("WEB_SYSTEM_ADMIN_EMAILS", "thu.phannguyenanh@fanscom.vn,ops@fanscom.vn"))
 
 
 def _internal_email_domains() -> set[str]:

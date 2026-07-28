@@ -6,6 +6,10 @@
     {
       "email": "thu.phannguyenanh@fanscom.vn",
       "role": "admin"
+    },
+    {
+      "email": "ops@fanscom.vn",
+      "role": "admin"
     }
   ],
   "user_meta": {},
@@ -17,6 +21,10 @@
   "campaigns_by_user": {},
   "notification_preferences_by_user": {
     "thu.phannguyenanh@fanscom.vn": {
+      "email_notifications": true,
+      "system_alerts": true
+    },
+    "ops@fanscom.vn": {
       "email_notifications": true,
       "system_alerts": true
     }

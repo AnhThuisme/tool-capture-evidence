@@ -2,20 +2,24 @@
   "allowed_emails": [
     "thu.phannguyenanh@fanscom.vn",
     "phanthu6a8@gmail.com",
-    "fanscom.ecom@gmail.com"
+    "fanscom.ecom@gmail.com",
+    "ops@fanscom.vn"
   ],
   "admin_emails": [
-    "thu.phannguyenanh@fanscom.vn"
+    "thu.phannguyenanh@fanscom.vn",
+    "ops@fanscom.vn"
   ],
   "managed_emails": [
     "thu.phannguyenanh@fanscom.vn",
     "phanthu6a8@gmail.com",
-    "fanscom.ecom@gmail.com"
+    "fanscom.ecom@gmail.com",
+    "ops@fanscom.vn"
   ],
   "email_types": {
     "thu.phannguyenanh@fanscom.vn": "internal",
     "phanthu6a8@gmail.com": "external",
-    "fanscom.ecom@gmail.com": "external"
+    "fanscom.ecom@gmail.com": "external",
+    "ops@fanscom.vn": "internal"
   },
   "updated_at": "2026-03-24T08:11:46Z"
 }
