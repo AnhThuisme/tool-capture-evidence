@@ -4,6 +4,8 @@ credentials.inline.json
 otp_sender.env
 cloudflare_tunnel.env
 local_agent.env
+service_accounts/
+*.json.secret
 
 # logs
 *.log
@@ -20,3 +22,10 @@ temp_screenshots/
 
 # system
 .DS_Store
+
+# browser profiles & drivers
+.local_profile/
+FB_Session/
+FB_Session_Selenium/
+EvidenceTool_WDM/
+.vscode/
