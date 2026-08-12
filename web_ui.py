@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -403,6 +403,7 @@ class SettingsUpdateRequest(BaseModel):
     sheet_url: str = ""
     sheet_name: str = ""
     drive_id: str = ""
+    fb_cookie: str = ""
     scan_negative_terms: str = ""
     scan_keyword_terms: str = ""
     viewport_width: int = 1920
@@ -540,6 +541,7 @@ SETTINGS_USER_KEYS = {
     "sheet_url",
     "sheet_name",
     "drive_id",
+    "fb_cookie",
     "scan_negative_terms",
     "scan_keyword_terms",
     "viewport_width",
@@ -722,6 +724,8 @@ def _filter_settings_payload(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     filtered = {key: data.get(key) for key in SETTINGS_USER_KEYS if key in data}
+    if "fb_cookie" in filtered:
+        filtered["fb_cookie"] = str(filtered.get("fb_cookie") or "").strip()
     if "scan_negative_terms" in filtered:
         filtered["scan_negative_terms"] = str(filtered.get("scan_negative_terms") or "")
     if "scan_keyword_terms" in filtered:
@@ -4505,6 +4509,13 @@ linear-gradient(to right, transparent, transparent)}
                   <div class="muted">Store this preference for future screenshot modes.</div>
                 </div>
                 <input id="settings_full_page_capture" type="checkbox" style="width:18px;height:18px" />
+              </div>
+              <div id="settings_fb_cookie_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
+                <div style="font-size:15px;font-weight:700">Cookie Facebook (Tự động đăng nhập)</div>
+                <div class="muted" style="margin-top:4px">Dán chuỗi Cookie Facebook (dạng c_user=...; xs=... hoặc JSON) để tự nạp session khi cào bài viết FB.</div>
+                <div class="field" style="margin-top:12px">
+                  <textarea id="settings_fb_cookie" placeholder="c_user=1000...; xs=2%3A..." style="height:75px;font-family:monospace;font-size:12px"></textarea>
+                </div>
               </div>
               <div id="settings_service_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
                 <div style="font-size:15px;font-weight:700">JSON service account</div>
@@ -9621,6 +9632,7 @@ function buildSettingsSavePayload() {
     sheet_url: sheet_url.value,
     sheet_name: sheet_name.value,
     drive_id: drive_id.value,
+    fb_cookie: document.getElementById('settings_fb_cookie')?.value || '',
     scan_negative_terms: getScanNegativeTermsValue(),
     scan_keyword_terms: getScanKeywordTermsValue(),
     viewport_width: Number(document.getElementById('settings_viewport_width')?.value || 1920),
@@ -9709,6 +9721,8 @@ async function loadDefaults() {
   if (settingsKeywordTerms) settingsKeywordTerms.value = s.scan_keyword_terms || '';
   const fullPageNode = document.getElementById('settings_full_page_capture');
   if (fullPageNode) fullPageNode.checked = !!s.full_page_capture;
+  const fbCookieNode = document.getElementById('settings_fb_cookie');
+  if (fbCookieNode) fbCookieNode.value = s.fb_cookie || '';
   renderSettingsSummary(s);
   if (isAdminUser()) await Promise.all([loadAccessPolicy(), loadMailConfig()]);
   renderMappingEditor();

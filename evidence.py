@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 import time
@@ -3296,10 +3296,14 @@ def is_unavailable_content_page(driver, source_url: str = "") -> bool:
 def dismiss_facebook_login_gate(driver) -> bool:
     """
     Best-effort close for Facebook login wall dialogs such as
-    "See more on Facebook". Returns True when a close action was attempted.
+    "See more on Facebook" or "Log In / Sign Up" overlay.
+    Returns True when a close action or removal was executed.
     """
     script = """
+    let actionDone = false;
     const norm = (s) => String(s || '').trim().toLowerCase();
+
+    // 1. Click close buttons on dialogs
     const dialogs = Array.from(document.querySelectorAll("[role='dialog'], div[aria-modal='true']"));
     const closeSelectors = [
       "[aria-label='Close']",
@@ -3329,27 +3333,257 @@ def dismiss_facebook_login_gate(driver) -> bool:
 
     for (const dialog of dialogs) {
       const txt = norm(dialog.innerText || "");
-      if (!txt.includes("see more on facebook") && !txt.includes("xem thêm trên facebook")) continue;
-      for (const sel of closeSelectors) {
-        const nodes = Array.from(dialog.querySelectorAll(sel));
-        for (const node of nodes) {
-          if (clickNode(node)) return true;
-        }
-      }
-      const buttons = Array.from(dialog.querySelectorAll("button,[role='button']"));
-      for (const btn of buttons) {
-        const label = norm(btn.getAttribute("aria-label") || btn.textContent || "");
-        if (label === "close" || label === "đóng" || label === "x") {
-          if (clickNode(btn)) return true;
+      if (txt.includes("see more on facebook") || txt.includes("xem thêm trên facebook") || txt.includes("đăng nhập") || txt.includes("log in")) {
+        for (const sel of closeSelectors) {
+          const nodes = Array.from(dialog.querySelectorAll(sel));
+          for (const node of nodes) {
+            if (clickNode(node)) { actionDone = true; break; }
+          }
+          if (actionDone) break;
         }
       }
     }
-    return false;
+
+    // 2. Hide/remove sticky login overlays and login popups
+    const elementsToHide = Array.from(document.querySelectorAll(
+      "#login_popup, #header-not-logged-in, div[data-testid='login_popup_form'], div[aria-label='Log In'], div[aria-label='Đăng nhập']"
+    ));
+    elementsToHide.forEach(el => {
+      try { el.remove(); actionDone = true; } catch (_) {
+        el.style.display = "none";
+        actionDone = true;
+      }
+    });
+
+    // 3. Hide any fixed/modal backdrop preventing interaction or overlaying content
+    const fixedOverlays = Array.from(document.querySelectorAll("div[style*='position: fixed'], div[style*='position:fixed']"));
+    for (const ov of fixedOverlays) {
+      const txt = norm(ov.innerText || "");
+      if (txt.includes("log in to see more") || txt.includes("đăng nhập để xem thêm") || txt.includes("see more on facebook") || txt.includes("xem thêm trên facebook")) {
+        ov.style.display = "none";
+        actionDone = true;
+      }
+    }
+
+    // 4. Re-enable body scrolling if blocked by modal
+    if (document.body) {
+      document.body.style.overflow = "auto";
+      document.body.style.position = "static";
+    }
+
+    return actionDone;
     """
     try:
         return bool(driver.execute_script(script))
     except Exception:
         return False
+
+
+def parse_cookie_string(raw_cookies: str) -> list[dict]:
+    """
+    Parses a cookie input string in various formats:
+    - Raw header / key-value pair string: 'c_user=123; xs=abc'
+    - JSON list of cookie dicts: '[{"name": "c_user", "value": "123"}, ...]'
+    - Netscape format lines: '.facebook.com TRUE / TRUE 0 c_user 123'
+    """
+    raw = str(raw_cookies or "").strip()
+    if not raw:
+        return []
+
+    cookies = []
+
+    # 1. JSON format
+    if (raw.startswith("[") and raw.endswith("]")) or (raw.startswith("{") and raw.endswith("}")):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict) and item.get("name") and item.get("value"):
+                        cookies.append({
+                            "name": str(item["name"]).strip(),
+                            "value": str(item["value"]).strip(),
+                            "domain": str(item.get("domain") or ".facebook.com").strip(),
+                            "path": str(item.get("path") or "/").strip(),
+                            "secure": bool(item.get("secure", True)),
+                        })
+                if cookies:
+                    return cookies
+        except Exception:
+            pass
+
+    # 2. Netscape format
+    lines = [l.strip() for l in raw.splitlines() if l.strip() and not l.strip().startswith("#")]
+    is_netscape = False
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 7:
+            domain, flag, path, secure_flag, expiry, name, value = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
+            cookies.append({
+                "name": name.strip(),
+                "value": value.strip(),
+                "domain": domain.strip() if domain.startswith(".") else f".{domain.strip()}",
+                "path": path.strip() or "/",
+                "secure": secure_flag.upper() == "TRUE",
+            })
+            is_netscape = True
+
+    if is_netscape and cookies:
+        return cookies
+
+    # 3. Key=Value header string format
+    chunks = []
+    for line in raw.splitlines():
+        for item in line.split(";"):
+            item = item.strip()
+            if item:
+                chunks.append(item)
+
+    for chunk in chunks:
+        if "=" in chunk:
+            name, val = chunk.split("=", 1)
+            name = name.strip()
+            val = val.strip()
+            if name and val:
+                cookies.append({
+                    "name": name,
+                    "value": val,
+                    "domain": ".facebook.com",
+                    "path": "/",
+                    "secure": True,
+                })
+
+    return cookies
+
+
+def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False) -> bool:
+    """
+    Injects parsed Facebook cookies into a Selenium driver session.
+    """
+    if not driver:
+        return False
+    if not force and getattr(driver, "_fb_cookies_injected", False):
+        return True
+
+    cookie_list = parse_cookie_string(raw_cookies)
+    if not cookie_list:
+        return False
+
+    injected_count = 0
+    domains = [".facebook.com", "facebook.com", ".m.facebook.com", ".www.facebook.com"]
+
+    # Method 1: Chrome DevTools Protocol (CDP) Network.setCookie
+    if hasattr(driver, "execute_cdp_cmd"):
+        try:
+            for ck in cookie_list:
+                c_name = ck.get("name")
+                c_val = ck.get("value")
+                if not c_name or not c_val:
+                    continue
+                for dom in domains:
+                    try:
+                        driver.execute_cdp_cmd(
+                            "Network.setCookie",
+                            {
+                                "name": c_name,
+                                "value": c_val,
+                                "domain": dom,
+                                "path": "/",
+                                "secure": True,
+                                "sameSite": "None",
+                            },
+                        )
+                    except Exception:
+                        pass
+                injected_count += 1
+            if injected_count > 0:
+                driver._fb_cookies_injected = True
+                write_log(f"[INFO] Successfully injected {injected_count} FB cookies via CDP.")
+                return True
+        except Exception as cdp_e:
+            write_log(f"[WARN] CDP cookie injection failed: {cdp_e}")
+
+    # Method 2: Fallback to Selenium driver.add_cookie
+    try:
+        current_url = str(driver.current_url or "").lower()
+        if "facebook.com" not in current_url:
+            try:
+                driver.get("https://www.facebook.com/404")
+            except Exception:
+                pass
+
+        for ck in cookie_list:
+            c_name = ck.get("name")
+            c_val = ck.get("value")
+            if not c_name or not c_val:
+                continue
+            added = False
+            for dom in (".facebook.com", "facebook.com"):
+                try:
+                    driver.add_cookie(
+                        {
+                            "name": c_name,
+                            "value": c_val,
+                            "domain": dom,
+                            "path": "/",
+                            "secure": True,
+                        }
+                    )
+                    added = True
+                    break
+                except Exception:
+                    pass
+            if not added:
+                try:
+                    driver.add_cookie({"name": c_name, "value": c_val, "path": "/"})
+                    added = True
+                except Exception:
+                    pass
+            if added:
+                injected_count += 1
+
+        if injected_count > 0:
+            driver._fb_cookies_injected = True
+            write_log(f"[INFO] Successfully injected {injected_count} FB cookies via Selenium.")
+            return True
+    except Exception as e:
+        write_log(f"[WARN] FB cookie injection failed: {e}")
+
+    return False
+
+
+def get_configured_fb_cookie(user_email: str = "") -> str:
+    """Read configured Facebook Cookie from app instance, SETTINGS_PATH or environment."""
+    env_cookie = os.environ.get("FB_COOKIE", "").strip()
+    if env_cookie:
+        return env_cookie
+    try:
+        if app and getattr(app, "fb_cookie_var", None):
+            val = str(app.fb_cookie_var.get() or "").strip()
+            if val:
+                return val
+    except Exception:
+        pass
+    try:
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            if user_email and isinstance(data.get("users"), dict):
+                user_data = data["users"].get(user_email, {})
+                if isinstance(user_data, dict) and user_data.get("fb_cookie"):
+                    return str(user_data["fb_cookie"]).strip()
+            if data.get("fb_cookie"):
+                return str(data["fb_cookie"]).strip()
+            if isinstance(data.get("users"), dict):
+                for u_key, u_dict in data["users"].items():
+                    if isinstance(u_dict, dict) and u_dict.get("fb_cookie"):
+                        c_val = str(u_dict["fb_cookie"]).strip()
+                        if c_val:
+                            return c_val
+    except Exception as e:
+        write_log(f"[WARN] Failed to read FB cookie setting: {e}")
+    return ""
 
 
 def get_temporary_platform_error(driver, source_url: str = "") -> str:
@@ -3916,6 +4150,7 @@ class ProgressApp:
         self.sheet_name_var = tk.StringVar(value=DEFAULT_SHEET_NAME_TARGET)
         self.drive_id_var = tk.StringVar(value=DEFAULT_DRIVE_FOLDER_ID)
         self.credentials_path_var = tk.StringVar(value=get_default_credentials_input())
+        self.fb_cookie_var = tk.StringVar(value="")
         self.mapping_blocks = []
         self.mapping_blocks_by_mode: dict[str, list[dict]] = {}
         self._active_mapping_mode = "Seeding"
@@ -4690,10 +4925,45 @@ class ProgressApp:
 
         menu_file = tk.Menu(menubar, tearoff=0)
         menu_file.add_command(label="Lưu cấu hình", command=self.save_settings)
+        menu_file.add_command(label="Cấu hình Cookie Facebook", command=self._dialog_fb_cookie)
         menu_file.add_command(label="Tải lại app", command=self.reload_app)
         menu_file.add_separator()
         menu_file.add_command(label="Thoát", command=self.exit_app)
         menubar.add_cascade(label="Tệp", menu=menu_file)
+
+    def _dialog_fb_cookie(self):
+        win = tk.Toplevel(self.root)
+        win.title("Cấu hình Cookie Facebook")
+        win.geometry("520x350")
+        win.transient(self.root)
+        win.grab_set()
+
+        lbl = tk.Label(win, text="Dán Cookie Facebook (dạng 'c_user=...; xs=...' hoặc JSON):", justify="left")
+        lbl.pack(anchor="w", padx=10, pady=5)
+
+        txt = tk.Text(win, wrap="word", height=10)
+        txt.pack(fill="both", expand=True, padx=10, pady=5)
+        txt.insert("1.0", self.fb_cookie_var.get())
+
+        btn_frame = tk.Frame(win)
+        btn_frame.pack(fill="x", padx=10, pady=10)
+
+        def save_cookie():
+            val = txt.get("1.0", "end").strip()
+            self.fb_cookie_var.set(val)
+            self.save_settings(silent=True)
+            if val:
+                cookies = parse_cookie_string(val)
+                messagebox.showinfo("Thành công", f"Đã lưu Cookie Facebook! ({len(cookies)} cặp cookie hợp lệ)")
+            else:
+                messagebox.showinfo("Đã xóa", "Đã xóa Cookie Facebook.")
+            win.destroy()
+
+        btn_save = tk.Button(btn_frame, text="Lưu Cookie", command=save_cookie, width=12)
+        btn_save.pack(side="right", padx=5)
+
+        btn_close = tk.Button(btn_frame, text="Hủy", command=win.destroy, width=10)
+        btn_close.pack(side="right", padx=5)
 
         menu_run = tk.Menu(menubar, tearoff=0)
         menu_run.add_command(label="Bắt đầu", command=self.start_processing)
@@ -5059,6 +5329,7 @@ class ProgressApp:
             "drive_id": self.drive_id_var.get().strip(),
             "credentials_path": self.credentials_path_var.get().strip(),
             "target_rows_input": self.target_rows_var.get().strip(),
+            "fb_cookie": self.fb_cookie_var.get().strip(),
             "mapping_mode": mode_key,
             "mapping_blocks": self.mapping_blocks_by_mode.get(mode_key, self.get_mapping_configs()),
             "mapping_blocks_by_mode": self.mapping_blocks_by_mode,
@@ -5115,6 +5386,7 @@ class ProgressApp:
             self.sheet_name_var.set(str(data.get("sheet_name", self.sheet_name_var.get())).strip())
             self.drive_id_var.set(str(data.get("drive_id", self.drive_id_var.get())).strip())
             self.target_rows_var.set(str(data.get("target_rows_input", self.target_rows_var.get())).strip())
+            self.fb_cookie_var.set(str(data.get("fb_cookie", self.fb_cookie_var.get())).strip())
             saved_credentials_path = str(data.get("credentials_path", self.credentials_path_var.get())).strip()
             if saved_credentials_path:
                 # Keep compatibility with older configs where folder text might be mangled,
@@ -6916,14 +7188,21 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             last = None
             # Local UX: prefer visible Chrome first so user can re-login when needed.
             headless_plan = (False,) if fast_recovery else (False, True)
+            new_driver = None
             for headless in headless_plan:
                 try:
-                    return create_chrome_driver(
+                    new_driver = create_chrome_driver(
                         build_chrome_options(user_data_dir=worker_profile, headless=headless, debug_port=worker_port),
                         service=service,
                     )
+                    break
                 except Exception as e:
                     last = e
+            if new_driver:
+                fb_cookie_str = get_configured_fb_cookie()
+                if fb_cookie_str:
+                    inject_fb_cookies_into_driver(new_driver, fb_cookie_str)
+                return new_driver
             raise Exception(f"WORKER_CHROME_START_FAILED[{block_index}]: {last}")
 
         def _run_block(block: dict):
@@ -7143,12 +7422,23 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 write_log(f"[WARN] OCR failed row {row}: {ocr_e}")
                                 ocr_text = ""
                         else:
+                            url_lower = url.lower()
+                            is_facebook = ("facebook.com" in url_lower) or ("fb.watch" in url_lower) or ("m.facebook.com" in url_lower)
+                            if is_facebook:
+                                fb_cookie_str = get_configured_fb_cookie()
+                                if fb_cookie_str:
+                                    inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True)
+
                             worker_driver.get(url)
                             wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
 
-                            url_lower = url.lower()
+                            if is_facebook:
+                                try:
+                                    dismiss_facebook_login_gate(worker_driver)
+                                except Exception:
+                                    pass
+
                             is_tiktok = "tiktok.com" in url_lower or "vt.tiktok.com" in url_lower
-                            is_facebook = ("facebook.com" in url_lower) or ("fb.watch" in url_lower) or ("m.facebook.com" in url_lower)
                             if is_tiktok:
                                 # Redirect chains (especially vt.tiktok.com) may need a short settle window.
                                 wait_tiktok_redirect_ready(
