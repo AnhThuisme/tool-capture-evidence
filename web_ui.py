@@ -1998,6 +1998,7 @@ def _settings_defaults() -> dict[str, Any]:
         "sheet_url": str(getattr(evidence, "DEFAULT_SHEET_URL", "")),
         "sheet_name": str(getattr(evidence, "DEFAULT_SHEET_NAME_TARGET", "")),
         "drive_id": str(getattr(evidence, "DEFAULT_DRIVE_FOLDER_ID", "")),
+        "fb_cookie": "",
         "scan_negative_terms": "",
         "scan_keyword_terms": "",
         "viewport_width": width,
@@ -2049,6 +2050,7 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     merged.update(data or {})
     cred_path = _resolve_existing_credentials_path(str(merged.get("credentials_path", "")).strip())
     merged["credentials_path"] = cred_path
+    merged["fb_cookie"] = str(merged.get("fb_cookie", "") or "").strip()
     merged["scan_negative_terms"] = str(merged.get("scan_negative_terms", "") or "")
     merged["scan_keyword_terms"] = str(merged.get("scan_keyword_terms", "") or "")
     try:
@@ -10388,6 +10390,7 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
         "sheet_url": str(payload.sheet_url or "").strip(),
         "sheet_name": str(payload.sheet_name or "").strip(),
         "drive_id": str(payload.drive_id or "").strip(),
+        "fb_cookie": str(payload.fb_cookie or "").strip(),
         "scan_negative_terms": str(payload.scan_negative_terms or ""),
         "scan_keyword_terms": str(payload.scan_keyword_terms or ""),
         "viewport_width": max(320, int(payload.viewport_width or 1920)),
