@@ -1,16 +1,43 @@
 {
   "users": {
     "thu.phannguyenanh@fanscom.vn": {
-      "sheet_name": "QUÝ 2",
-      "ready_state": "interactive",
-      "viewport_height": 1400,
-      "page_timeout_ms": 3000,
-      "sheet_url": "https://docs.google.com/spreadsheets/d/1Ic3JH7ZmWLt6hoi8yV61JWblbO-AVXD9o8Ttl2vOiYQ/edit?gid=1357767914#gid=1357767914",
-      "credentials_path": "/Users/anhthuisme/Downloads/tool-capture-evidence/service_accounts/thu.phannguyenanh_fanscom.vn.json",
-      "viewport_width": 1920,
-      "full_page_capture": false,
       "drive_id": "1mgl8C68daJu_0riqi0kYj9n_Fu5v4kTG",
+      "ready_state": "interactive",
+      "credentials_path": "/Users/anhthuisme/Downloads/tool-capture-evidence/service_accounts/thu.phannguyenanh_fanscom.vn.json",
+      "page_timeout_ms": 3000,
+      "viewport_width": 1920,
+      "sheet_name": "QUÝ 2",
+      "full_page_capture": false,
+      "sheet_url": "https://docs.google.com/spreadsheets/d/1Ic3JH7ZmWLt6hoi8yV61JWblbO-AVXD9o8Ttl2vOiYQ/edit?gid=1357767914#gid=1357767914",
+      "viewport_height": 1400,
+      "tiktok_captcha_wait_sec": 15,
+      "run_flags_by_mode": {
+        "seeding": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        },
+        "booking": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        },
+        "scan": {
+          "force_run_all": true,
+          "highlight_sheet_errors": true,
+          "capture_five_per_link": false,
+          "scan_negative_filter": false,
+          "scan_keyword_filter": false
+        }
+      },
+      "please_wait_delay_sec": 0.8,
       "tiktok_force_focus": true,
+      "scan_negative_terms": "",
+      "fb_cookie": "c_user=61552769967967; presence=C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1786530822081%2C%22v%22%3A1%7D; fr=1EyNMqx7IOEHQ4UYz.AWf2t0ZdW33zSB7SZ6SNcjNXfnf3KJqtapOfpXQsMDHqRoK7KkI.BqfFhF..AAA.0.0.BqfFhF.AWcixGkU7Ds7OJB3-WJtQeMmJAE; xs=43%3ApSpk8LAkw6c5CA%3A2%3A1786530468%3A-1%3A-1%3A%3AAcxi7ei-ZXtUoBvme2RRzIwXYH5qc977BDYujf2KqQ",
       "mappings_by_mode": {
         "seeding": [
           {
@@ -64,40 +91,16 @@
           }
         ]
       },
-      "run_flags_by_mode": {
-        "seeding": {
-          "force_run_all": true,
-          "highlight_sheet_errors": true,
-          "capture_five_per_link": false,
-          "scan_negative_filter": false,
-          "scan_keyword_filter": false
-        },
-        "booking": {
-          "force_run_all": true,
-          "highlight_sheet_errors": true,
-          "capture_five_per_link": false,
-          "scan_negative_filter": false,
-          "scan_keyword_filter": false
-        },
-        "scan": {
-          "force_run_all": true,
-          "highlight_sheet_errors": true,
-          "capture_five_per_link": false,
-          "scan_negative_filter": false,
-          "scan_keyword_filter": false
-        }
-      },
-      "tiktok_captcha_wait_sec": 15,
-      "fb_cookie": "c_user=61580675625101; fr=1UXZTX0XdAn6vxVVD.AWeInnFjIPFYZmE0vQ8D7ilfOCBlvDwhOVGvedTeiyBmOEWBwJg.BqfB0w..AAA.0.0.BqfB0w.AWccROc4QygRHApUKBJNKZb55m4; xs=29%3ACiG5vGvo4NPLHA%3A2%3A1786518827%3A-1%3A-1%3A%3AAczSLsaHNw14OmVuJW9_677fPGoMkeWwYevLEy6_-A; presence=C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1786518833974%2C%22v%22%3A1%7D; wd=677x744",
-      "scan_keyword_terms": "",
-      "scan_negative_terms": "",
-      "please_wait_delay_sec": 0.8
+      "scan_keyword_terms": ""
     },
     "fanscom.ecom@gmail.com": {
-      "sheet_name": "2. SEEDING SHARE POST FB",
+      "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV",
       "ready_state": "interactive",
-      "viewport_height": 1400,
+      "credentials_path": "service_accounts/thu.phannguyenanh_fanscom.vn.json",
       "page_timeout_ms": 3000,
+      "viewport_width": 1920,
+      "sheet_name": "2. SEEDING SHARE POST FB",
+      "full_page_capture": false,
       "mappings_by_mode": {
         "scan": [
           {
@@ -118,36 +121,11 @@
         ]
       },
       "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
-      "credentials_path": "service_accounts/thu.phannguyenanh_fanscom.vn.json",
-      "viewport_width": 1920,
-      "full_page_capture": false,
-      "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV"
+      "viewport_height": 1400
     },
     "phanthu6a8@gmail.com": {
-      "tiktok_force_focus": true,
-      "sheet_name": "liquid micro palylist ap bạc q2",
-      "ready_state": "interactive",
-      "viewport_height": 1400,
-      "page_timeout_ms": 3000,
-      "mappings_by_mode": {
-        "seeding": [
-          {
-            "name": "Post 2",
-            "start_line": 1,
-            "sheet_url": "",
-            "sheet_name": "liquid micro palylist ap bạc q2",
-            "drive_id": "https://drive.google.com/drive/folders/1YY1v4q2ayiNoEW0HICVx-jluLSJMcv0e",
-            "col_url": "G",
-            "col_profile": "",
-            "col_content": "",
-            "col_screenshot": "I",
-            "col_drive": "H",
-            "col_air_date": "2026-08-12",
-            "fixed_air_date": "",
-            "mode": "seeding"
-          }
-        ]
-      },
+      "tiktok_captcha_wait_sec": 15,
+      "drive_id": "1YY1v4q2ayiNoEW0HICVx-jluLSJMcv0e",
       "run_flags_by_mode": {
         "seeding": {
           "force_run_all": true,
@@ -171,26 +149,48 @@
           "scan_keyword_filter": false
         }
       },
-      "tiktok_captcha_wait_sec": 15,
-      "sheet_url": "https://docs.google.com/spreadsheets/d/1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg/edit?gid=173989512#gid=173989512",
+      "please_wait_delay_sec": 0.8,
+      "ready_state": "interactive",
       "credentials_path": "/Users/anhthuisme/Downloads/tool-capture-evidence/service_accounts/phanthu6a8_gmail.com.json",
-      "scan_keyword_terms": "",
+      "page_timeout_ms": 3000,
+      "tiktok_force_focus": true,
       "viewport_width": 1920,
-      "full_page_capture": false,
-      "drive_id": "1YY1v4q2ayiNoEW0HICVx-jluLSJMcv0e",
       "scan_negative_terms": "",
-      "please_wait_delay_sec": 0.8
+      "sheet_name": "liquid micro palylist ap bạc q2",
+      "full_page_capture": false,
+      "mappings_by_mode": {
+        "seeding": [
+          {
+            "name": "Post 2",
+            "start_line": 1,
+            "sheet_url": "",
+            "sheet_name": "liquid micro palylist ap bạc q2",
+            "drive_id": "https://drive.google.com/drive/folders/1YY1v4q2ayiNoEW0HICVx-jluLSJMcv0e",
+            "col_url": "G",
+            "col_profile": "",
+            "col_content": "",
+            "col_screenshot": "I",
+            "col_drive": "H",
+            "col_air_date": "2026-08-12",
+            "fixed_air_date": "",
+            "mode": "seeding"
+          }
+        ]
+      },
+      "scan_keyword_terms": "",
+      "sheet_url": "https://docs.google.com/spreadsheets/d/1hIuN5m_GQhBGMK4Fu85qac8YoLEl_Cjb_rihO7PKeMg/edit?gid=173989512#gid=173989512",
+      "viewport_height": 1400
     }
   },
   "_legacy_defaults": {
-    "sheet_name": "2. SEEDING SHARE POST FB",
+    "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV",
     "ready_state": "interactive",
-    "viewport_height": 1400,
-    "page_timeout_ms": 3000,
-    "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
     "credentials_path": "service_accounts/thu.phannguyenanh_fanscom.vn.json",
+    "page_timeout_ms": 3000,
     "viewport_width": 1920,
+    "sheet_name": "2. SEEDING SHARE POST FB",
     "full_page_capture": false,
-    "drive_id": "1c7zXpRWf29GbtY9S9dj3-wLrVFPOLaeV"
+    "sheet_url": "https://docs.google.com/spreadsheets/d/1NY1uJLzkwYSKM8Fw3vvDqoBU94Ff1SoDvKqerMm8dwA/edit?gid=1031391656#gid=1031391656",
+    "viewport_height": 1400
   }
 }
