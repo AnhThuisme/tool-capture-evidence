@@ -1188,11 +1188,11 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
         if counts:
             dominant_ratio = max(c for c, _ in counts) / total
 
-        if bright_ratio >= 0.93 or dark_ratio >= 0.93:
+        if bright_ratio >= 0.985 or dark_ratio >= 0.985:
             return True
-        if dominant_ratio >= 0.90 and mean_std <= 12.0:
+        if dominant_ratio >= 0.96 and mean_std <= 4.0:
             return True
-        if mean_std <= 5.0:
+        if mean_std <= 2.5:
             return True
         return False
     except Exception:
