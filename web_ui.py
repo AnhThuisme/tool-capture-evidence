@@ -4522,13 +4522,13 @@ linear-gradient(to right, transparent, transparent)}
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
                   <div>
                     <div style="font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px">
-                      <span>Cookie Facebook (Tự động đăng nhập)</span>
+                      <span id="settings_fb_cookie_title">Cookie Facebook (Tự động đăng nhập)</span>
                       <span id="settings_fb_cookie_status_badge" class="badge ok" style="font-size:11px">BẬT (Đang nạp Cookie)</span>
                     </div>
-                    <div class="muted" style="margin-top:4px">Dán chuỗi Cookie Facebook (c_user=...; xs=...) vào đây. Dữ liệu sẽ luôn được giữ lại an toàn ngay cả khi bạn TẮT công tắc.</div>
+                    <div id="settings_fb_cookie_help" class="muted" style="margin-top:4px">Dán chuỗi Cookie Facebook (c_user=...; xs=...) vào đây. Dữ liệu sẽ luôn được giữ lại an toàn ngay cả khi bạn TẮT công tắc.</div>
                   </div>
                   <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;user-select:none;background:rgba(255,255,255,0.06);padding:6px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.12)">
-                    <span>Công tắc ON / OFF:</span>
+                    <span id="settings_fb_cookie_switch_label">Công tắc ON / OFF:</span>
                     <input id="settings_enable_fb_cookie" type="checkbox" onchange="updateFbCookieBadgeState()" style="width:20px;height:20px;cursor:pointer" checked />
                   </label>
                 </div>
@@ -7164,8 +7164,11 @@ function applyLanguage() {
   if (scanKeywordEditor) scanKeywordEditor.placeholder = t('scanKeywordTermsPlaceholder');
   setText('#view-settings .list-row div div:first-child', t('fullPageCapture'));
   setText('#view-settings .list-row .muted', t('fullPageHelp'));
-  setText('#view-settings .settings-layout .card:first-child .card > div:first-child', t('jsonServiceAccount'));
-  setText('#view-settings .settings-layout .card:first-child .card > div:nth-child(2)', t('jsonHelp'));
+  setText('#settings_service_card > div:first-child', t('jsonServiceAccount'));
+  setText('#settings_service_card > div:nth-child(2)', t('jsonHelp'));
+  setText('#settings_fb_cookie_title', currentLang === 'vi' ? 'Cookie Facebook (Tự động đăng nhập)' : 'Facebook Cookie (Auto login)');
+  setText('#settings_fb_cookie_help', currentLang === 'vi' ? 'Dán chuỗi Cookie Facebook (c_user=...; xs=...) vào đây. Dữ liệu sẽ luôn được giữ lại an toàn ngay cả khi bạn TẮT công tắc.' : 'Paste Facebook Cookie string here (c_user=...; xs=...). Saved data is preserved even when switch is OFF.');
+  setText('#settings_fb_cookie_switch_label', currentLang === 'vi' ? 'Công tắc ON / OFF:' : 'ON / OFF Switch:');
   setText('#settingsServiceAccountFileLabel', t('serviceJsonLabel'));
   setText('#settingsServiceAccountJsonLabel', t('serviceJsonPasteLabel'));
   const serviceFileHint = document.getElementById('settings_service_account_file_hint');
