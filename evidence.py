@@ -3457,11 +3457,35 @@ def parse_cookie_string(raw_cookies: str) -> list[dict]:
     return cookies
 
 
+def is_fb_cookie_enabled(user_email: str = "") -> bool:
+    """Check if Facebook Cookie injection is enabled in settings."""
+    try:
+        if app and hasattr(app, "enable_fb_cookie"):
+            return bool(app.enable_fb_cookie.get())
+    except Exception:
+        pass
+    try:
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            if user_email and isinstance(data.get("users"), dict):
+                user_data = data["users"].get(user_email, {})
+                if isinstance(user_data, dict) and "enable_fb_cookie" in user_data:
+                    return bool(user_data["enable_fb_cookie"])
+            if "enable_fb_cookie" in data:
+                return bool(data["enable_fb_cookie"])
+    except Exception:
+        pass
+    return True
+
+
 def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False) -> bool:
     """
     Injects parsed Facebook cookies into a Selenium driver session.
     """
     if not driver:
+        return False
+    if not is_fb_cookie_enabled():
         return False
     if not force and getattr(driver, "_fb_cookies_injected", False):
         return True
@@ -3555,6 +3579,8 @@ def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False)
 
 def get_configured_fb_cookie(user_email: str = "") -> str:
     """Read configured Facebook Cookie from app instance, SETTINGS_PATH or environment."""
+    if not is_fb_cookie_enabled(user_email):
+        return ""
     env_cookie = os.environ.get("FB_COOKIE", "").strip()
     if env_cookie:
         return env_cookie
@@ -4151,6 +4177,7 @@ class ProgressApp:
         self.drive_id_var = tk.StringVar(value=DEFAULT_DRIVE_FOLDER_ID)
         self.credentials_path_var = tk.StringVar(value=get_default_credentials_input())
         self.fb_cookie_var = tk.StringVar(value="")
+        self.enable_fb_cookie = tk.BooleanVar(value=True)
         self.mapping_blocks = []
         self.mapping_blocks_by_mode: dict[str, list[dict]] = {}
         self._active_mapping_mode = "Seeding"
@@ -4941,7 +4968,10 @@ class ProgressApp:
         lbl = tk.Label(win, text="Dán Cookie Facebook (dạng 'c_user=...; xs=...' hoặc JSON):", justify="left")
         lbl.pack(anchor="w", padx=10, pady=5)
 
-        txt = tk.Text(win, wrap="word", height=10)
+        chk = tk.Checkbutton(win, text="Bật tự động nạp Cookie Facebook khi cào bài", variable=self.enable_fb_cookie)
+        chk.pack(anchor="w", padx=10, pady=2)
+
+        txt = tk.Text(win, wrap="word", height=9)
         txt.pack(fill="both", expand=True, padx=10, pady=5)
         txt.insert("1.0", self.fb_cookie_var.get())
 
@@ -5330,6 +5360,7 @@ class ProgressApp:
             "credentials_path": self.credentials_path_var.get().strip(),
             "target_rows_input": self.target_rows_var.get().strip(),
             "fb_cookie": self.fb_cookie_var.get().strip(),
+            "enable_fb_cookie": bool(self.enable_fb_cookie.get()),
             "mapping_mode": mode_key,
             "mapping_blocks": self.mapping_blocks_by_mode.get(mode_key, self.get_mapping_configs()),
             "mapping_blocks_by_mode": self.mapping_blocks_by_mode,
@@ -5387,6 +5418,7 @@ class ProgressApp:
             self.drive_id_var.set(str(data.get("drive_id", self.drive_id_var.get())).strip())
             self.target_rows_var.set(str(data.get("target_rows_input", self.target_rows_var.get())).strip())
             self.fb_cookie_var.set(str(data.get("fb_cookie", self.fb_cookie_var.get())).strip())
+            self.enable_fb_cookie.set(bool(data.get("enable_fb_cookie", self.enable_fb_cookie.get())))
             saved_credentials_path = str(data.get("credentials_path", self.credentials_path_var.get())).strip()
             if saved_credentials_path:
                 # Keep compatibility with older configs where folder text might be mangled,

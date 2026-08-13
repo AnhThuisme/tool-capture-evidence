@@ -404,6 +404,7 @@ class SettingsUpdateRequest(BaseModel):
     sheet_name: str = ""
     drive_id: str = ""
     fb_cookie: str = ""
+    enable_fb_cookie: bool = True
     scan_negative_terms: str = ""
     scan_keyword_terms: str = ""
     viewport_width: int = 1920
@@ -542,6 +543,7 @@ SETTINGS_USER_KEYS = {
     "sheet_name",
     "drive_id",
     "fb_cookie",
+    "enable_fb_cookie",
     "scan_negative_terms",
     "scan_keyword_terms",
     "viewport_width",
@@ -726,6 +728,8 @@ def _filter_settings_payload(data: Any) -> dict[str, Any]:
     filtered = {key: data.get(key) for key in SETTINGS_USER_KEYS if key in data}
     if "fb_cookie" in filtered:
         filtered["fb_cookie"] = str(filtered.get("fb_cookie") or "").strip()
+    if "enable_fb_cookie" in filtered:
+        filtered["enable_fb_cookie"] = bool(filtered.get("enable_fb_cookie"))
     if "scan_negative_terms" in filtered:
         filtered["scan_negative_terms"] = str(filtered.get("scan_negative_terms") or "")
     if "scan_keyword_terms" in filtered:
@@ -1999,6 +2003,7 @@ def _settings_defaults() -> dict[str, Any]:
         "sheet_name": str(getattr(evidence, "DEFAULT_SHEET_NAME_TARGET", "")),
         "drive_id": str(getattr(evidence, "DEFAULT_DRIVE_FOLDER_ID", "")),
         "fb_cookie": "",
+        "enable_fb_cookie": True,
         "scan_negative_terms": "",
         "scan_keyword_terms": "",
         "viewport_width": width,
@@ -2051,6 +2056,7 @@ def _build_settings_payload(data: dict[str, Any] | None = None) -> dict[str, Any
     cred_path = _resolve_existing_credentials_path(str(merged.get("credentials_path", "")).strip())
     merged["credentials_path"] = cred_path
     merged["fb_cookie"] = str(merged.get("fb_cookie", "") or "").strip()
+    merged["enable_fb_cookie"] = bool(merged.get("enable_fb_cookie", True))
     merged["scan_negative_terms"] = str(merged.get("scan_negative_terms", "") or "")
     merged["scan_keyword_terms"] = str(merged.get("scan_keyword_terms", "") or "")
     try:
@@ -4513,8 +4519,16 @@ linear-gradient(to right, transparent, transparent)}
                 <input id="settings_full_page_capture" type="checkbox" style="width:18px;height:18px" />
               </div>
               <div id="settings_fb_cookie_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
-                <div style="font-size:15px;font-weight:700">Cookie Facebook (Tự động đăng nhập)</div>
-                <div class="muted" style="margin-top:4px">Dán chuỗi Cookie Facebook (dạng c_user=...; xs=... hoặc JSON) để tự nạp session khi cào bài viết FB.</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                  <div>
+                    <div style="font-size:15px;font-weight:700">Cookie Facebook (Tự động đăng nhập)</div>
+                    <div class="muted" style="margin-top:4px">Dán chuỗi Cookie Facebook (dạng c_user=...; xs=... hoặc JSON) để tự nạp session khi cào bài viết FB.</div>
+                  </div>
+                  <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;user-select:none">
+                    <span>Bật nạp Cookie</span>
+                    <input id="settings_enable_fb_cookie" type="checkbox" style="width:20px;height:20px;cursor:pointer" checked />
+                  </label>
+                </div>
                 <div class="field" style="margin-top:12px">
                   <textarea id="settings_fb_cookie" placeholder="c_user=1000...; xs=2%3A..." style="height:75px;font-family:monospace;font-size:12px"></textarea>
                 </div>
@@ -9635,6 +9649,7 @@ function buildSettingsSavePayload() {
     sheet_name: sheet_name.value,
     drive_id: drive_id.value,
     fb_cookie: document.getElementById('settings_fb_cookie')?.value || '',
+    enable_fb_cookie: !!document.getElementById('settings_enable_fb_cookie')?.checked,
     scan_negative_terms: getScanNegativeTermsValue(),
     scan_keyword_terms: getScanKeywordTermsValue(),
     viewport_width: Number(document.getElementById('settings_viewport_width')?.value || 1920),
@@ -9725,6 +9740,8 @@ async function loadDefaults() {
   if (fullPageNode) fullPageNode.checked = !!s.full_page_capture;
   const fbCookieNode = document.getElementById('settings_fb_cookie');
   if (fbCookieNode) fbCookieNode.value = s.fb_cookie || '';
+  const enableFbCookieNode = document.getElementById('settings_enable_fb_cookie');
+  if (enableFbCookieNode) enableFbCookieNode.checked = s.enable_fb_cookie !== false;
   renderSettingsSummary(s);
   if (isAdminUser()) await Promise.all([loadAccessPolicy(), loadMailConfig()]);
   renderMappingEditor();
@@ -10391,6 +10408,7 @@ def save_settings(request: Request, payload: SettingsUpdateRequest):
         "sheet_name": str(payload.sheet_name or "").strip(),
         "drive_id": str(payload.drive_id or "").strip(),
         "fb_cookie": str(payload.fb_cookie or "").strip(),
+        "enable_fb_cookie": bool(payload.enable_fb_cookie),
         "scan_negative_terms": str(payload.scan_negative_terms or ""),
         "scan_keyword_terms": str(payload.scan_keyword_terms or ""),
         "viewport_width": max(320, int(payload.viewport_width or 1920)),
