@@ -4518,19 +4518,22 @@ linear-gradient(to right, transparent, transparent)}
                 </div>
                 <input id="settings_full_page_capture" type="checkbox" style="width:18px;height:18px" />
               </div>
-              <div id="settings_fb_cookie_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
+              <div id="settings_fb_cookie_card" class="card pad" style="margin-top:14px;background:var(--panel-soft);border:1px solid rgba(255,255,255,0.08)">
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
                   <div>
-                    <div style="font-size:15px;font-weight:700">Cookie Facebook (Tự động đăng nhập)</div>
-                    <div class="muted" style="margin-top:4px">Dán chuỗi Cookie Facebook (dạng c_user=...; xs=... hoặc JSON) để tự nạp session khi cào bài viết FB.</div>
+                    <div style="font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px">
+                      <span>Cookie Facebook (Tự động đăng nhập)</span>
+                      <span id="settings_fb_cookie_status_badge" class="badge ok" style="font-size:11px">BẬT (Đang nạp Cookie)</span>
+                    </div>
+                    <div class="muted" style="margin-top:4px">Dán chuỗi Cookie Facebook (c_user=...; xs=...) vào đây. Dữ liệu sẽ luôn được giữ lại an toàn ngay cả khi bạn TẮT công tắc.</div>
                   </div>
-                  <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;user-select:none">
-                    <span>Bật nạp Cookie</span>
-                    <input id="settings_enable_fb_cookie" type="checkbox" style="width:20px;height:20px;cursor:pointer" checked />
+                  <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;user-select:none;background:rgba(255,255,255,0.06);padding:6px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.12)">
+                    <span>Công tắc ON / OFF:</span>
+                    <input id="settings_enable_fb_cookie" type="checkbox" onchange="updateFbCookieBadgeState()" style="width:20px;height:20px;cursor:pointer" checked />
                   </label>
                 </div>
                 <div class="field" style="margin-top:12px">
-                  <textarea id="settings_fb_cookie" placeholder="c_user=1000...; xs=2%3A..." style="height:75px;font-family:monospace;font-size:12px"></textarea>
+                  <textarea id="settings_fb_cookie" placeholder="c_user=615...; fr=1UX...; xs=40%3A... (Dán Cookie Facebook vào ô này, không dán vào ô JSON service account bên dưới)" style="height:75px;font-family:monospace;font-size:12px"></textarea>
                 </div>
               </div>
               <div id="settings_service_card" class="card pad" style="margin-top:14px;background:var(--panel-soft)">
@@ -9639,6 +9642,52 @@ function setScanFilterNote(message = '', isError = false) {
   if (!note) return;
   note.textContent = String(message || '');
   note.style.color = isError ? '#fca5a5' : '';
+}
+
+function updateFbCookieBadgeState() {
+  const chk = document.getElementById('settings_enable_fb_cookie');
+  const badge = document.getElementById('settings_fb_cookie_status_badge');
+  if (!chk || !badge) return;
+  if (chk.checked) {
+    badge.className = 'badge ok';
+    badge.textContent = 'BẬT (Đang nạp Cookie)';
+  } else {
+    badge.className = 'badge info';
+    badge.textContent = 'TẮT (Đã lưu, không nạp Cookie)';
+  }
+}
+
+async function fillSettingsForm(data = null) {
+  const s = data || (await loadSettings());
+  currentSettingsCache = s;
+  if (sheet_url) sheet_url.value = s.sheet_url || '';
+  if (sheet_name) sheet_name.value = s.sheet_name || '';
+  if (drive_id) drive_id.value = s.drive_id || '';
+  const credPathNode = document.getElementById('settings_credentials_path');
+  if (credPathNode) credPathNode.value = s.credentials_path || '';
+  const viewportWidthNode = document.getElementById('settings_viewport_width');
+  if (viewportWidthNode) viewportWidthNode.value = s.viewport_width || 1920;
+  const viewportHeightNode = document.getElementById('settings_viewport_height');
+  if (viewportHeightNode) viewportHeightNode.value = s.viewport_height || 1400;
+  const timeoutNode = document.getElementById('settings_page_timeout_ms');
+  if (timeoutNode) timeoutNode.value = s.page_timeout_ms || 200;
+  const captchaWaitNode = document.getElementById('settings_tiktok_captcha_wait_sec');
+  if (captchaWaitNode) captchaWaitNode.value = s.tiktok_captcha_wait_sec ?? 15;
+  const pleaseWaitNode = document.getElementById('settings_please_wait_delay_sec');
+  if (pleaseWaitNode) pleaseWaitNode.value = s.please_wait_delay_sec ?? 2;
+  const focusNode = document.getElementById('settings_tiktok_force_focus');
+  if (focusNode) focusNode.checked = !!s.tiktok_force_focus;
+  const settingsNegativeTerms = document.getElementById('settings_scan_negative_terms');
+  if (settingsNegativeTerms) settingsNegativeTerms.value = s.scan_negative_terms || '';
+  const settingsKeywordTerms = document.getElementById('settings_scan_keyword_terms');
+  if (settingsKeywordTerms) settingsKeywordTerms.value = s.scan_keyword_terms || '';
+  const fullPageNode = document.getElementById('settings_full_page_capture');
+  if (fullPageNode) fullPageNode.checked = !!s.full_page_capture;
+  const fbCookieNode = document.getElementById('settings_fb_cookie');
+  if (fbCookieNode) fbCookieNode.value = s.fb_cookie || '';
+  const enableFbCookieNode = document.getElementById('settings_enable_fb_cookie');
+  if (enableFbCookieNode) enableFbCookieNode.checked = s.enable_fb_cookie !== false;
+  updateFbCookieBadgeState();
 }
 
 function buildSettingsSavePayload() {
