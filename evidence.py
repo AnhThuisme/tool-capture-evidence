@@ -2055,26 +2055,115 @@ def list_saved_error_sheets() -> list[dict]:
 
 # ================= FB COMMENT PARSE =================
 def extract_comment_id(url):
-    comment_id = None
-    if "comment_id=" in url:
-        start = url.find("comment_id=") + len("comment_id=")
-        end = url.find("&", start)
-        if end == -1:
-            comment_id = url[start:]
-        else:
-            comment_id = url[start:end]
-    elif "reply_comment_id=" in url:
-        start = url.find("reply_comment_id=") + len("reply_comment_id=")
-        end = url.find("&", start)
-        if end == -1:
-            comment_id = url[start:]
-        else:
-            comment_id = url[start:end]
-    return comment_id
+    if not url:
+        return None
+    url_str = str(url)
+    m = re.search(r'(?:comment_id|reply_comment_id)=(?:%22)?([0-9a-zA-Z_]+)', url_str, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r'(?:comment_id|reply_comment_id)%3D(?:%22)?([0-9a-zA-Z_]+)', url_str, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r'/(?:comment|comments)/([0-9a-zA-Z_]+)', url_str, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
+
+
+def is_facebook_comment_url(url: str) -> bool:
+    if not url:
+        return False
+    u = str(url).lower()
+    if "facebook.com" not in u and "fb.watch" not in u and "fb.com" not in u and "m.facebook.com" not in u:
+        return False
+    if bool(extract_comment_id(url)):
+        return True
+    if any(k in u for k in ["comment_id=", "reply_comment_id=", "comment_id%3d", "reply_comment_id%3d", "ctarget="]):
+        return True
+    if "comment" in u:
+        return True
+    return False
 
 
 def should_preserve_capture_scroll_position(url: str) -> bool:
-    return bool(extract_comment_id(str(url or "")))
+    return is_facebook_comment_url(url)
+
+
+def ensure_facebook_comment_in_view(driver, url: str) -> bool:
+    """
+    For Facebook comment links, locate the target comment element and scroll it
+    into center view so that screenshots accurately capture the comment even when post images are large.
+    """
+    if not is_facebook_comment_url(url):
+        return False
+    comment_id = extract_comment_id(url)
+    try:
+        scrolled = bool(
+            driver.execute_script(
+                """
+                const cid = arguments[0];
+                let targetEl = null;
+
+                if (cid) {
+                  try {
+                    const res = document.evaluate(
+                      `//div[contains(@data-ft, '"comment_id":"${cid}"') or contains(@data-ft, '"reply_comment_id":"${cid}"')]`,
+                      document,
+                      null,
+                      XPathResult.FIRST_ORDERED_NODE_TYPE,
+                      null
+                    );
+                    if (res && res.singleNodeValue) targetEl = res.singleNodeValue;
+                  } catch (_) {}
+
+                  if (!targetEl) {
+                    try {
+                      const sel = `[id*="${cid}"], [data-commentid*="${cid}"], a[href*="comment_id=${cid}"], a[href*="reply_comment_id=${cid}"]`;
+                      const node = document.querySelector(sel);
+                      if (node) {
+                        targetEl = node.closest("div[role='article'], div[data-testid='comment'], div[dir='auto']") || node;
+                      }
+                    } catch (_) {}
+                  }
+                }
+
+                if (!targetEl) {
+                  try {
+                    const comments = Array.from(document.querySelectorAll("div[role='article'], div[data-testid='comment']"));
+                    for (const el of comments) {
+                      const style = window.getComputedStyle(el);
+                      const bg = style.backgroundColor || '';
+                      if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== 'rgb(255, 255, 255)') {
+                        targetEl = el;
+                        break;
+                      }
+                    }
+                  } catch (_) {}
+                }
+
+                if (!targetEl) {
+                  try {
+                    const comments = Array.from(document.querySelectorAll("div[role='article'], div[data-testid='comment']"));
+                    if (comments.length > 0) targetEl = comments[0];
+                  } catch (_) {}
+                }
+
+                if (targetEl) {
+                  try {
+                    targetEl.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'nearest' });
+                    return true;
+                  } catch (_) {}
+                }
+                return false;
+                """,
+                comment_id or "",
+            )
+        )
+        if scrolled:
+            time.sleep(1.0)
+        return scrolled
+    except Exception:
+        return False
 
 
 def reset_capture_scroll_to_top(driver, url: str, settle_sec: float = 0.18) -> bool:
@@ -2128,6 +2217,7 @@ def reset_capture_scroll_to_top(driver, url: str, settle_sec: float = 0.18) -> b
     if moved:
         time.sleep(max(0.05, float(settle_sec or 0.18)))
     return moved
+
 
 
 def wait_for_facebook_comment_ready(driver, url: str, timeout_sec: float = FB_COMMENT_READY_WAIT) -> bool:
@@ -2685,11 +2775,11 @@ def normalize_account_name(name: str, url: str) -> str:
     return n.strip()
 
 
-def get_post_caption(driver):
+def get_post_caption(driver, url: str = ""):
 
     caption = ""
 
-    # Try to expand "See more" / "Xem thÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âªm" buttons to reveal full caption
+    # Try to expand "See more" / "Xem thêm" buttons to reveal full caption
     try:
         buttons = driver.find_elements(By.XPATH, "//div[contains(text(), 'Xem') or contains(text(), 'See more')]")
         for b in buttons:
@@ -2701,11 +2791,13 @@ def get_post_caption(driver):
     except:
         pass
 
-    try:
-        driver.execute_script("window.scrollTo(0, 600);")
-        time.sleep(UI_SCROLL_SETTLE_SLEEP)
-    except:
-        pass
+    target_url = url or getattr(driver, "current_url", "")
+    if not should_preserve_capture_scroll_position(target_url):
+        try:
+            driver.execute_script("window.scrollTo(0, 600);")
+            time.sleep(UI_SCROLL_SETTLE_SLEEP)
+        except:
+            pass
 
 
     # Strategy 0: Facebook main caption container (data-ad-preview="message")
@@ -2917,8 +3009,7 @@ def get_fb_profile_and_caption(driver, url):
     caption = ""
 
     url_l = (url or "").lower()
-    # Only treat as comment when link contains the word "comment"
-    is_comment = "comment" in url_l
+    is_comment = is_facebook_comment_url(url)
     is_tiktok = "tiktok.com" in url_l or "vt.tiktok.com" in url_l
     is_instagram = "instagram.com" in url_l or "instagr.am" in url_l
     is_facebook = ("facebook.com" in url_l) or ("fb.watch" in url_l) or ("m.facebook.com" in url_l)
@@ -2939,7 +3030,7 @@ def get_fb_profile_and_caption(driver, url):
         if is_comment:
             caption = get_highlighted_fb_comment(driver, url)
         else:
-            caption = get_post_caption(driver)
+            caption = get_post_caption(driver, url)
 
     # ===== FALLBACK MODE =====
     if not caption:
@@ -7784,6 +7875,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                             )
                                             break
                                     reset_capture_scroll_to_top(worker_driver, url)
+                                    if is_facebook_comment_url(url):
+                                        ensure_facebook_comment_in_view(worker_driver, url)
                                     first_capture_delay = SCREENSHOT_CAPTURE_DELAY + (
                                         TIKTOK_FIRST_CAPTURE_EXTRA_SEC if is_tiktok else 0.0
                                     )
@@ -7795,6 +7888,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 else:
                                     time.sleep(MULTI_CAPTURE_INTERVAL_SEC)
                                 if not png_bytes:
+                                    if is_facebook_comment_url(url):
+                                        ensure_facebook_comment_in_view(worker_driver, url)
+                                        time.sleep(1.0)
                                     png_bytes = worker_driver.get_screenshot_as_png()
                                 blank_retry = max(0, int(BLANK_SCREEN_MAX_RETRIES or 0))
                                 blank_attempt = 0
