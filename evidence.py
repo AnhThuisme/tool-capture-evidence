@@ -2371,13 +2371,21 @@ def wait_for_facebook_comment_ready(driver, url: str, timeout_sec: float = FB_CO
 
 
 def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: float = SCREENSHOT_CAPTURE_DELAY) -> float:
+    """
+    Tự động đợi thông minh cho đến khi trang mạng xã hội (TikTok, Facebook, Youtube...)
+    tải xong hoàn toàn (video/ảnh/text đã render, tắt loading spinner) rồi mới chụp.
+    """
     start = time.time()
     scope = str(source_url or "").lower()
-    deadline = start + max(0.2, float(max_wait_sec or SCREENSHOT_CAPTURE_DELAY))
+    timeout = max(1.5, float(max_wait_sec or SCREENSHOT_CAPTURE_DELAY))
+    deadline = start + timeout
+    settle_buffer = 0.35
+
     while time.time() < deadline:
         try:
             if "facebook.com" in scope or "fb.watch" in scope or "m.facebook.com" in scope:
                 if has_visible_facebook_content(driver):
+                    time.sleep(settle_buffer)
                     return time.time() - start
             elif "tiktok.com" in scope or "vt.tiktok.com" in scope:
                 ready = bool(
@@ -2389,14 +2397,42 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                           const style = window.getComputedStyle(el);
                           return rect.width > 60 && rect.height > 60 && style.visibility !== 'hidden' && style.display !== 'none';
                         };
-                        const mediaNodes = Array.from(document.querySelectorAll("video, canvas, img"));
-                        if (mediaNodes.some(isVisible)) return true;
+                        // 1. Kiểm tra video element đã sẵn sàng (đã load frame/metadata)
+                        const videos = Array.from(document.querySelectorAll("video"));
+                        const videoReady = videos.some(v => isVisible(v) && (v.readyState >= 1 || v.videoWidth > 0));
+                        if (videoReady) return true;
+
+                        // 2. Kiểm tra canvas / image đã render
+                        const mediaNodes = Array.from(document.querySelectorAll("canvas, img"));
+                        const mediaReady = mediaNodes.some(m => isVisible(m) && (m.tagName === 'CANVAS' || (m.complete && m.naturalHeight > 60)));
+                        if (mediaReady) return true;
+
+                        // 3. Kiểm tra tiêu đề / caption / username của TikTok đã hiển thị
+                        const author = document.querySelector('[data-e2e="browse-username"], [data-e2e="video-desc"], h1, h2');
+                        if (author && isVisible(author)) return true;
+
+                        // 4. Kiểm tra độ dài text nếu là trang bài viết
                         const txt = String(document.body && document.body.innerText || '').trim();
-                        return txt.length >= 80;
+                        return txt.length >= 100;
                         """
                     )
                 )
                 if ready and not has_please_wait_overlay(driver):
+                    time.sleep(settle_buffer)
+                    return time.time() - start
+            elif "youtube.com" in scope or "youtu.be" in scope:
+                yt_ready = bool(
+                    driver.execute_script(
+                        """
+                        const v = document.querySelector("video");
+                        if (v && v.readyState >= 1) return true;
+                        const title = document.querySelector("#title h1, h1.title, .slim-video-information-title");
+                        return Boolean(title && title.innerText.trim().length > 0);
+                        """
+                    )
+                )
+                if yt_ready:
+                    time.sleep(settle_buffer)
                     return time.time() - start
             else:
                 body_ready = bool(
@@ -2411,6 +2447,7 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                     )
                 )
                 if body_ready:
+                    time.sleep(settle_buffer)
                     return time.time() - start
         except Exception:
             pass
