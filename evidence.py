@@ -681,6 +681,13 @@ def create_chrome_driver(options: Options, service: Service | None = None):
                     Object.defineProperty(navigator, 'webdriver', {
                         get: () => undefined
                     });
+                    window.chrome = window.chrome || { runtime: {} };
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['vi-VN', 'vi', 'en-US', 'en']
+                    });
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5]
+                    });
                 """
             },
         )
@@ -6625,6 +6632,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             options.add_argument("--disable-sync")
             options.add_argument("--disable-features=TranslateUI")
             options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--enable-webgl")
+            options.add_argument("--use-gl=swiftshader")
+            options.add_argument("--autoplay-policy=no-user-gesture-required")
             options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
             options.add_argument("--lang=vi-VN,vi,en-US,en")
             options.page_load_strategy = "eager"
