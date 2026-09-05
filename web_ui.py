@@ -245,13 +245,14 @@ class WebAppAdapter:
 
     def add_live_log(self, row: int, state_left: str, state_right: str, message: str, tag: str = ""):
         logs = self._job_store.setdefault("logs", [])
+        clean_msg = evidence.format_user_friendly_error(message) if hasattr(evidence, "format_user_friendly_error") else str(message)
         logs.append(
             {
                 "ts": _utc_now_iso(),
                 "row": int(row),
                 "state": str(state_left),
                 "result": str(state_right),
-                "message": str(message),
+                "message": str(clean_msg),
                 "tag": str(tag or ""),
             }
         )
@@ -295,7 +296,8 @@ class WebAppAdapter:
         if not normalized_columns:
             normalized_columns.append("-")
 
-        message_text = str(message or "").strip()
+        clean_msg = evidence.format_user_friendly_error(message) if hasattr(evidence, "format_user_friendly_error") else str(message or "")
+        message_text = str(clean_msg or "").strip()
         cells = [item for item in cells if not (_same_row(item) and str(item.get("kind") or "").strip().lower() == issue_kind)]
         for col in normalized_columns:
             cells.append(
@@ -314,7 +316,8 @@ class WebAppAdapter:
         details = self._job_store.setdefault("error_rows", {})
         key = str(int(row))
         if is_error:
-            details[key] = str(message or "").strip()
+            clean_msg = evidence.format_user_friendly_error(message) if hasattr(evidence, "format_user_friendly_error") else str(message or "")
+            details[key] = str(clean_msg or "").strip()
         else:
             details.pop(key, None)
         self._persist()
@@ -326,7 +329,8 @@ class WebAppAdapter:
         compact: dict[str, str] = {}
         for k, v in (details or {}).items():
             try:
-                compact[str(int(k))] = str(v)
+                clean_v = evidence.format_user_friendly_error(v) if hasattr(evidence, "format_user_friendly_error") else str(v)
+                compact[str(int(k))] = str(clean_v)
             except Exception:
                 continue
         self._job_store["error_rows"] = compact
@@ -8194,8 +8198,103 @@ function isSuccessLog(log) {
   return raw.includes('ok') || raw.includes('success') || raw.includes('done');
 }
 
-function normalizeIssueSummaryLabel(rawMessage) {
+function formatUserFriendlyErrorMessage(rawMessage) {
   let text = String(rawMessage || '').trim();
+  if (!text) return '';
+
+  let prefix = '';
+  const prefixMatch = text.match(/^((?:Post|Scan|Booking|Hàng|Row|Block)\s*#?\d+\s*:\s*)/i);
+  if (prefixMatch) {
+    prefix = prefixMatch[1];
+    text = text.slice(prefix.length).trim();
+  }
+
+  const low = text.toLowerCase();
+
+  // 1. Google Drive / Service Account Quota
+  if (low.includes('service accounts do not have storage quota') || low.includes('storagequotaexceeded')) {
+    return `${prefix}Lỗi Drive: Service Account không có dung lượng riêng (storageQuotaExceeded). Cần tạo thư mục trong Bộ nhớ dùng chung (Shared Drive) rồi cấp quyền cho Service Account.`;
+  }
+
+  // 2. Google Drive / Sheets Rate Limit / Quota Exceeded
+  if (low.includes('userratelimitexceeded') || low.includes('user rate limit exceeded') || low.includes('ratelimitexceeded') || (low.includes('quota exceeded') && low.includes('queries')) || low.includes('rate limit exceeded')) {
+    return `${prefix}Lỗi Google API: Vượt quá giới hạn tần suất yêu cầu (Rate Limit/429). Hệ thống đang giới hạn số lượt gọi/phút.`;
+  }
+
+  // 3. Google 403 Forbidden / Permission Denied
+  if (low.includes('does not have permission') || low.includes('insufficientpermissions') || low.includes('the caller does not have permission') || low.includes('accessnotconfigured') || (low.includes('forbidden') && low.includes('403'))) {
+    return `${prefix}Lỗi quyền truy cập (403): Chưa chia sẻ quyền Chỉnh sửa (Editor) cho email Service Account.`;
+  }
+
+  // 4. Google 404 Not Found
+  if (low.includes('file not found') || low.includes('requested entity was not found') || (low.includes('notfound') && low.includes('404'))) {
+    return `${prefix}Lỗi không tìm thấy (404): File hoặc thư mục Google Drive/Sheet không tồn tại hoặc ID không đúng.`;
+  }
+
+  // 5. Invalid Credentials / 401
+  if (low.includes('invalid credentials') || low.includes('invalid_grant') || low.includes('autherror') || low.includes('token has been expired')) {
+    return `${prefix}Lỗi xác thực (401): File credentials.json của Service Account không hợp lệ hoặc đã hết hạn.`;
+  }
+
+  // 6. Generic HttpError pattern matching
+  const httpMatch = text.match(/<HttpError\s+(\d+)\s+when\s+requesting\s+.*?returned\s+"([^"]+)"/i);
+  if (httpMatch) {
+    const code = httpMatch[1];
+    let reason = httpMatch[2].replace(/\(https?:\/\/[^\)]+\)/g, '').trim();
+    return `${prefix}Lỗi Google API (${code}): ${reason}`;
+  }
+
+  // 7. Selenium / Chrome WebDriver Errors
+  if (low.includes('chrome not reachable') || low.includes('disconnected: unable to send message') || low.includes('target frame detached') || low.includes('invalid session id')) {
+    return `${prefix}Lỗi trình duyệt: Chrome bị mất kết nối hoặc bị đóng đột ngột.`;
+  }
+  if (low.includes('session not created')) {
+    return `${prefix}Lỗi trình duyệt: Không thể khởi động Chrome (xung đột phiên bản ChromeDriver hoặc cổng kết nối).`;
+  }
+  if (low.includes('timeoutexception') || low.includes('timed out')) {
+    return `${prefix}Lỗi tải trang: Hết thời gian chờ phản hồi từ trang web (Timeout).`;
+  }
+  if (low.includes('no such element')) {
+    return `${prefix}Lỗi hiển thị: Không tìm thấy phần tử nội dung bài viết trên trang.`;
+  }
+  if (low.includes('element click intercepted') || low.includes('element not interactable')) {
+    return `${prefix}Lỗi tương tác: Nút bấm hoặc phần tử web bị che khuất / chưa sẵn sàng.`;
+  }
+
+  // 8. Network / Connection Errors
+  if (low.includes('connection refused') || low.includes('failed to establish a new connection') || low.includes('maxretryerror')) {
+    return `${prefix}Lỗi kết nối mạng: Không thể kết nối tới máy chủ.`;
+  }
+  if (low.includes('connecttimeout') || low.includes('readtimeout')) {
+    return `${prefix}Lỗi kết nối mạng: Hết thời gian chờ kết nối (Timeout).`;
+  }
+
+  // 9. App specific errors
+  if (low.includes('tiktok_url_mismatch') || low.includes('url mismatch')) {
+    return `${prefix}TikTok tự chuyển hướng sang bài viết khác so với link dòng.`;
+  }
+  if (low.includes('nội dung không khả dụng') || low.includes('khong kha dung') || low.includes('unavailable')) {
+    return `${prefix}Nội dung không khả dụng (bài viết đã bị ẩn, xóa hoặc bị giới hạn).`;
+  }
+  if (low === 'upload_fail' || low.includes('upload_fail')) {
+    return `${prefix}Lỗi tải ảnh chụp màn hình lên Google Drive.`;
+  }
+  if (low === 'ocr_fail' || low.includes('ocr_fail')) {
+    return `${prefix}Lỗi nhận diện văn bản ảnh (OCR).`;
+  }
+
+  // 10. Clean up raw HttpError brackets if still present
+  if (low.includes('httperror') || low.includes('apierror')) {
+    let cleaned = text.replace(/https?:\/\/\S+/g, '').replace(/Details:.*$/is, '').trim();
+    cleaned = cleaned.replace(/<HttpError\s+/i, 'Lỗi HTTP ').replace(/>$/, '').trim();
+    if (cleaned) return `${prefix}${cleaned}`;
+  }
+
+  return `${prefix}${text}`;
+}
+
+function normalizeIssueSummaryLabel(rawMessage) {
+  let text = formatUserFriendlyErrorMessage(rawMessage);
   if (!text) return '';
   text = text.replace(/^[^:]{1,80}: */, '').trim();
   text = text.replace(/^row *#?[0-9]+ *[-:] */i, '').trim();
@@ -8255,7 +8354,8 @@ function aggregateErrorCounts(jobs) {
   (jobs || []).forEach(job => {
     const rows = job?.error_rows || {};
     Object.values(rows).forEach(msg => {
-      const key = String(msg || '').trim() || 'Unknown error';
+      const formatted = formatUserFriendlyErrorMessage(msg);
+      const key = String(formatted || '').trim() || 'Unknown error';
       map.set(key, (map.get(key) || 0) + 1);
     });
   });
@@ -8703,7 +8803,8 @@ function renderRunMonitor(snapshot, logs) {
   document.getElementById('runMonitorRows').innerHTML = rows.length
     ? rows.map(x => {
         const postName = getLogPostLabel(x);
-        const message = x.message || `${x.state}/${x.result}`;
+        const rawMessage = x.message || `${x.state}/${x.result}`;
+        const message = formatUserFriendlyErrorMessage(rawMessage);
         const replayBlockName = extractLogBlockName(x);
         const replayButton = canReplayLog(x)
           ? `<button class="monitor-replay-btn" type="button" ${replayLocked ? `disabled title="${!ownJob ? 'Chỉ replay được job của chính bạn' : 'Job đang chạy, chưa thể replay'}"` : `onclick="replayLogRow('${esc(st.id || currentJobId || '')}', ${Number(x.row || 0)}, '${esc(replayBlockName)}')"`}>

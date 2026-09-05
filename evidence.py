@@ -399,6 +399,96 @@ def resolve_credentials_path() -> str:
     return first_existing or candidates[0]
 
 
+def format_user_friendly_error(err: Any) -> str:
+    """
+    Chuyển đổi các lỗi kỹ thuật (HttpError, Google API, Selenium, WebDriver, Network, Sheet...)
+    thành thông báo tiếng Việt ngắn gọn, dễ hiểu, nêu rõ lý do và cách khắc phục.
+    """
+    if err is None:
+        return ""
+    raw = str(err).strip() if not isinstance(err, str) else err.strip()
+    if not raw:
+        return "Lỗi xử lý"
+
+    # Tách tiền tố nếu có (ví dụ "Post 5: ", "Scan 1: ", "Hàng 6: ")
+    prefix = ""
+    prefix_match = re.match(r"^((?:Post|Scan|Booking|Hàng|Row|Block)\s*#?\d+\s*:\s*)", raw, re.IGNORECASE)
+    if prefix_match:
+        prefix = prefix_match.group(1)
+        core = raw[len(prefix):].strip()
+    else:
+        core = raw
+
+    low = core.lower()
+
+    # 1. Google Drive / Service Account Quota
+    if "service accounts do not have storage quota" in low or "storagequotaexceeded" in low:
+        return f"{prefix}Lỗi Drive: Service Account không có dung lượng riêng (storageQuotaExceeded). Cần tạo thư mục trong Bộ nhớ dùng chung (Shared Drive) rồi cấp quyền cho Service Account."
+
+    # 2. Rate limit / Quota exceeded
+    if "userratelimitexceeded" in low or "user rate limit exceeded" in low or "ratelimitexceeded" in low or ("quota exceeded" in low and "queries" in low) or "rate limit exceeded" in low:
+        return f"{prefix}Lỗi Google API: Vượt quá giới hạn tần suất yêu cầu (Rate Limit/429). Hệ thống đang giới hạn số lượt gọi/phút."
+
+    # 3. Google Drive / Sheets Permission Denied (403)
+    if "does not have permission" in low or "insufficientpermissions" in low or "the caller does not have permission" in low or "accessnotconfigured" in low or ("forbidden" in low and "403" in low):
+        return f"{prefix}Lỗi quyền truy cập (403): Chưa chia sẻ quyền Chỉnh sửa (Editor) cho email Service Account."
+
+    # 4. Google Drive / Sheets Not Found (404)
+    if "file not found" in low or "requested entity was not found" in low or ("notfound" in low and "404" in low):
+        return f"{prefix}Lỗi không tìm thấy (404): File hoặc thư mục Google Drive/Sheet không tồn tại hoặc ID không đúng."
+
+    # 5. Invalid Credentials (401)
+    if "invalid credentials" in low or "invalid_grant" in low or "autherror" in low or "token has been expired" in low:
+        return f"{prefix}Lỗi xác thực (401): File credentials.json của Service Account không hợp lệ hoặc đã hết hạn."
+
+    # 6. HttpError pattern matching
+    http_match = re.search(r"<HttpError\s+(\d+)\s+when\s+requesting\s+.*?returned\s+\"(.*?)\"", core, re.IGNORECASE | re.DOTALL)
+    if http_match:
+        code = http_match.group(1)
+        reason = http_match.group(2).strip()
+        reason = re.sub(r"\(https?://[^\)]+\)", "", reason).strip()
+        return f"{prefix}Lỗi Google API (Mã {code}): {reason}"
+
+    # 7. Selenium / Chrome WebDriver Errors
+    if "chrome not reachable" in low or "disconnected: unable to send message" in low or "target frame detached" in low or "invalid session id" in low:
+        return f"{prefix}Lỗi trình duyệt: Chrome bị mất kết nối hoặc bị đóng đột ngột."
+    if "session not created" in low:
+        return f"{prefix}Lỗi trình duyệt: Không thể khởi động Chrome (xung đột phiên bản ChromeDriver hoặc cổng kết nối)."
+    if "timeoutexception" in low or "timed out" in low:
+        return f"{prefix}Lỗi tải trang: Hết thời gian chờ phản hồi từ trang web (Timeout)."
+    if "no such element" in low:
+        return f"{prefix}Lỗi hiển thị: Không tìm thấy phần tử nội dung bài viết trên trang."
+    if "element click intercepted" in low or "element not interactable" in low:
+        return f"{prefix}Lỗi tương tác: Nút bấm hoặc phần tử web bị che khuất / chưa sẵn sàng."
+
+    # 8. Network / Connection Errors
+    if "connection refused" in low or "failed to establish a new connection" in low or "maxretryerror" in low:
+        return f"{prefix}Lỗi kết nối mạng: Không thể kết nối tới máy chủ (Connection Refused)."
+    if "connecttimeout" in low or "readtimeout" in low:
+        return f"{prefix}Lỗi kết nối mạng: Hết thời gian kết nối (Timeout)."
+
+    # 9. App specific errors
+    if "tiktok_url_mismatch" in low or "url mismatch" in low:
+        return f"{prefix}TikTok tự chuyển hướng sang bài viết khác so với link dòng."
+    if "nội dung không khả dụng" in low or "khong kha dung" in low or "unavailable" in low:
+        return f"{prefix}Nội dung không khả dụng (bài viết đã bị ẩn, xóa hoặc bị giới hạn)."
+    if core.upper() == "UPLOAD_FAIL" or "upload_fail" in low:
+        return f"{prefix}Lỗi tải ảnh chụp màn hình lên Google Drive."
+    if core.upper() == "OCR_FAIL" or "ocr_fail" in low:
+        return f"{prefix}Lỗi nhận diện văn bản ảnh (OCR)."
+
+    # 10. General HttpError / APIError clean-up
+    if "httperror" in low or "apierror" in low:
+        cleaned = re.sub(r"https?://\S+", "", core)
+        cleaned = re.sub(r"Details:.*$", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
+        cleaned = re.sub(r"<HttpError\s+", "Lỗi HTTP ", cleaned)
+        cleaned = cleaned.rstrip(">").strip()
+        if cleaned:
+            return f"{prefix}{cleaned}"
+
+    return raw
+
+
 _GOOGLE_CREDENTIALS_PROBE_CACHE: dict[str, tuple[float, int, bool, str]] = {}
 
 
@@ -7177,17 +7267,18 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
         def _finish_row_fail(block_name: str, row: int, err: str, eta: str, issue_columns: list[str] | None = None):
             nonlocal processed_count, fail_count, unavailable_count
+            friendly_err = format_user_friendly_error(err)
             with error_lock:
                 row_issue_blocks.setdefault(row, set()).add(block_name)
                 tracked_error_rows.add(row)
-                err_text = str(err).strip()
+                err_text = str(friendly_err).strip()
                 if not err_text:
                     err_text = "Lỗi xử lý"
                 if err_text.lower().startswith(str(block_name).strip().lower() + ":"):
                     msg_store = err_text
                 else:
                     msg_store = f"{block_name}: {err_text}"
-                tracked_error_details[row] = msg_store[:220]
+                tracked_error_details[row] = msg_store[:280]
             with counter_lock:
                 processed_count += 1
                 fail_count += 1
@@ -7197,7 +7288,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 unavailv = unavailable_count
                 percent = int((done / max(1, target_total)) * 100)
                 eta = _calc_eta(done)
-            ui_call(ui_add_log, row, "FAIL", "FAIL", f"{block_name}: {err}", "fail")
+            ui_call(ui_add_log, row, "FAIL", "FAIL", f"{block_name}: {friendly_err}", "fail")
             if hasattr(app, "update_error_row_live"):
                 ui_call(app.update_error_row_live, row, msg_store, True)
             if hasattr(app, "update_issue_cells_live"):
@@ -8119,9 +8210,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     pending_indexes.insert(0, idx)
                                     continue
                                 write_log(f"[WARN] Row {row} already retried once after browser recovery; mark failed.")
-                        write_log(f"{log_block_name} row {row} ERROR: {e}")
+                        clean_err = format_user_friendly_error(e)
+                        write_log(f"{log_block_name} row {row} ERROR: {clean_err} (raw: {e})")
                         _mark_row_failed(row)
-                        _finish_row_fail(log_block_name, row, str(e), eta_text, issue_columns=issue_columns)
+                        _finish_row_fail(log_block_name, row, clean_err, eta_text, issue_columns=issue_columns)
                         if is_scan_mode and idx_drive:
                             try:
                                 safe_sheet_write(
@@ -8133,7 +8225,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                         if (not is_scan_mode) and idx_drive:
                             try:
                                 safe_sheet_write(
-                                    lambda: local_worksheet.update_acell(f"{col_drive_letter}{row}", f"ERR: {str(e)[:80]}"),
+                                    lambda: local_worksheet.update_acell(f"{col_drive_letter}{row}", f"ERR: {clean_err[:80]}"),
                                     op_desc=f"update_drive_err_row_{row}",
                                 )
                             except Exception:
@@ -8141,7 +8233,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                         if (not is_scan_mode) and idx_content:
                             try:
                                 safe_sheet_write(
-                                    lambda: local_worksheet.update_acell(f"{col_content_letter}{row}", f"ERR_CAPTION: {str(e)[:80]}"),
+                                    lambda: local_worksheet.update_acell(f"{col_content_letter}{row}", f"ERR_CAPTION: {clean_err[:80]}"),
                                     op_desc=f"update_caption_err_row_{row}",
                                 )
                             except Exception:
@@ -8217,8 +8309,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         ui_call(app.set_inputs_enabled, True)
 
     except Exception as e:
-        error_text = str(e).strip() or "Unknown error"
-        write_log(f"FATAL: {error_text}")
+        error_text = format_user_friendly_error(e)
+        write_log(f"FATAL: {error_text} (raw: {e})")
         if history_ready:
             set_error_rows_for_sheet(
                 sheet_url,
