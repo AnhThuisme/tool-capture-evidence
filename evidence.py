@@ -8070,16 +8070,18 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                                 )
                                                 if tiktok_oembed_png:
                                                     png_bytes = tiktok_oembed_png
+                                                    using_oembed_capture = True
+                                                    unavailable = False
                                                     if not profile_name:
                                                         profile_name = str(tiktok_oembed_payload.get("author_name") or "").strip()
-                                                    if not caption:
+                                                    if not caption or caption == "Nội dung không khả dụng":
                                                         caption = str(tiktok_oembed_payload.get("title") or "").strip()
                                                     ui_call(
                                                         ui_add_log,
                                                         row,
                                                         "INFO",
                                                         "FALLBACK",
-                                                        f"{block_name}: Ảnh chụp bị trắng, chuyển sang dùng oEmbed thumbnail",
+                                                        f"{block_name}: Ảnh chụp bị trắng, tự động lấy thumbnail & thông tin video thành công",
                                                         "ok",
                                                     )
                                         except Exception:
