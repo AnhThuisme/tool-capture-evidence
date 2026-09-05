@@ -659,17 +659,34 @@ def create_chrome_driver(options: Options, service: Service | None = None):
     from the installed Chrome version.
     """
     errors = []
+    driver = None
     if service is not None:
         try:
-            return webdriver.Chrome(service=service, options=options)
+            driver = webdriver.Chrome(service=service, options=options)
         except Exception as exc:
             errors.append(f"service={exc}")
             write_log(f"[WARN] Chrome via explicit service failed, fallback to Selenium Manager: {exc}")
+    if driver is None:
+        try:
+            driver = webdriver.Chrome(options=options)
+        except Exception as exc:
+            errors.append(f"selenium_manager={exc}")
+            raise Exception(" | ".join(errors) if errors else str(exc)) from exc
+
     try:
-        return webdriver.Chrome(options=options)
-    except Exception as exc:
-        errors.append(f"selenium_manager={exc}")
-        raise Exception(" | ".join(errors) if errors else str(exc)) from exc
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": """
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                """
+            },
+        )
+    except Exception:
+        pass
+    return driver
 
 # ================= HELPERS =================
 def get_service_account_email(path: str | None = None):
@@ -6563,10 +6580,12 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             options.add_argument("--disable-sync")
             options.add_argument("--disable-features=TranslateUI")
             options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+            options.add_argument("--lang=vi-VN,vi,en-US,en")
             options.page_load_strategy = "eager"
             if headless:
-                headless_mode = os.environ.get("EVIDENCE_CHROME_HEADLESS_MODE", "old").strip().lower()
-                options.add_argument("--headless=new" if headless_mode == "new" else "--headless")
+                headless_mode = os.environ.get("EVIDENCE_CHROME_HEADLESS_MODE", "new").strip().lower()
+                options.add_argument("--headless=new" if headless_mode != "old" else "--headless")
             return options
 
         scan_only_request = bool(mappings) and all(
@@ -8002,6 +8021,34 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     time.sleep(max(0.2, float(BLANK_SCREEN_RETRY_DELAY_SEC or 2.0)))
                                     png_bytes = worker_driver.get_screenshot_as_png()
                                 if (not using_oembed_capture) and (not tiktok_shop_app_only) and is_blank_like_screenshot_png(png_bytes):
+                                    if is_tiktok and not tiktok_oembed_png:
+                                        try:
+                                            tiktok_oembed_payload = fetch_tiktok_oembed_data(url)
+                                            oembed_thumb = str(tiktok_oembed_payload.get("thumbnail_url") or "").strip()
+                                            if oembed_thumb:
+                                                tiktok_oembed_png = download_image_bytes_for_scan(
+                                                    oembed_thumb,
+                                                    timeout=20,
+                                                    drive_service=None,
+                                                )
+                                                if tiktok_oembed_png:
+                                                    png_bytes = tiktok_oembed_png
+                                                    if not profile_name:
+                                                        profile_name = str(tiktok_oembed_payload.get("author_name") or "").strip()
+                                                    if not caption:
+                                                        caption = str(tiktok_oembed_payload.get("title") or "").strip()
+                                                    ui_call(
+                                                        ui_add_log,
+                                                        row,
+                                                        "INFO",
+                                                        "FALLBACK",
+                                                        f"{block_name}: Ảnh chụp bị trắng, chuyển sang dùng oEmbed thumbnail",
+                                                        "ok",
+                                                    )
+                                        except Exception:
+                                            pass
+
+                                if (not using_oembed_capture) and (not tiktok_shop_app_only) and is_blank_like_screenshot_png(png_bytes):
                                     unavailable = True
                                     profile_name, caption = "", "Nội dung không khả dụng"
                                     _post_time = ""
@@ -8112,11 +8159,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             if idx_profile and profile_name:
                                 updates.append({"range": f"{col_profile_letter}{row}", "values": [[profile_name]]})
                             if idx_drive:
-                                updates.append({"range": f"{col_drive_letter}{row}", "values": [[link_drive]]})
+                                if link_drive:
+                                    updates.append({"range": f"{col_drive_letter}{row}", "values": [[link_drive]]})
+                                elif unavailable:
+                                    updates.append({"range": f"{col_drive_letter}{row}", "values": [["Nội dung không khả dụng"]]})
                             if idx_screenshot and direct_url:
                                 updates.append({"range": f"{col_screenshot_letter}{row}", "values": [[f'=IMAGE(\"{direct_url}\")']]})
-                            if idx_content and col_i:
-                                updates.append({"range": f"{col_content_letter}{row}", "values": [[col_i]]})
+                            if idx_content:
+                                if col_i:
+                                    updates.append({"range": f"{col_content_letter}{row}", "values": [[col_i]]})
+                                elif unavailable:
+                                    updates.append({"range": f"{col_content_letter}{row}", "values": [["Nội dung không khả dụng"]]})
 
                         if updates:
                             safe_sheet_write(
