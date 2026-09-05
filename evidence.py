@@ -71,9 +71,9 @@ PER_LINK_BASE_WAIT = 0.2
 TIKTOK_SCROLL_WAIT_1 = 0.3
 TIKTOK_SCROLL_WAIT_2 = 0.4
 ZOOM_SETTLE_SLEEP = 0.15
-SCREENSHOT_CAPTURE_DELAY = 2.5
-# Extra buffer for TikTok before first screenshot to let video/player UI settle.
-TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 0.8
+SCREENSHOT_CAPTURE_DELAY = 3.0
+# Extra buffer for TikTok before first screenshot to let video/player UI settle and hydration finish.
+TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 5.0
 TIKTOK_CAPTCHA_MAX_WAIT_SEC = 15.0
 TIKTOK_CAPTCHA_POLL_SEC = 1.0
 TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC = 0.5
@@ -85,7 +85,7 @@ TIKTOK_REDIRECT_WAIT_SEC = 4.0
 PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = 1.2
 PLEASE_WAIT_MAX_WAIT_SEC = 8.0
 PLEASE_WAIT_POLL_SEC = 0.5
-BLANK_SCREEN_RETRY_DELAY_SEC = 2.5
+BLANK_SCREEN_RETRY_DELAY_SEC = 3.0
 BLANK_SCREEN_MAX_RETRIES = 2
 MULTI_CAPTURE_INTERVAL_SEC = 2.5
 FB_COMMENT_READY_WAIT = 2.5
@@ -1261,8 +1261,8 @@ def build_collage_png(image_bytes_list: list[bytes]) -> bytes:
 
 def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
     """
-    Heuristic for blank/placeholder screenshots (white/black/near-solid canvas).
-    Returns True when frame has very low visual variance or one dominant color.
+    Heuristic for blank/placeholder screenshots (white/black/near-solid canvas or skeleton loaders).
+    Returns True when frame has very low visual variance, solid color, or skeleton loading screen.
     """
     if not image_bytes:
         return True
@@ -1277,16 +1277,13 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
         stat = ImageStat.Stat(sample)
         std_vals = list(stat.stddev or [0.0, 0.0, 0.0])
         mean_std = sum(float(v) for v in std_vals) / max(1, len(std_vals))
+        mean_vals = list(stat.mean or [0.0, 0.0, 0.0])
+        avg_mean = sum(float(v) for v in mean_vals) / max(1, len(mean_vals))
 
         pixels = sample.getdata()
         total = max(1, len(pixels))
-        bright = 0
-        dark = 0
-        for r, g, b in pixels:
-            if r >= 245 and g >= 245 and b >= 245:
-                bright += 1
-            if r <= 14 and g <= 14 and b <= 14:
-                dark += 1
+        bright = sum(1 for r, g, b in pixels if r >= 240 and g >= 240 and b >= 240)
+        dark = sum(1 for r, g, b in pixels if r <= 35 and g <= 35 and b <= 35)
         bright_ratio = bright / total
         dark_ratio = dark / total
 
@@ -1295,7 +1292,9 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
         if counts:
             dominant_ratio = max(c for c, _ in counts) / total
 
-        if bright_ratio >= 0.985 or dark_ratio >= 0.985:
+        if bright_ratio >= 0.97 and avg_mean >= 235:
+            return True
+        if dark_ratio >= 0.97 and avg_mean <= 25:
             return True
         if dominant_ratio >= 0.96 and mean_std <= 4.0:
             return True
@@ -2395,25 +2394,34 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                           if (!el) return false;
                           const rect = el.getBoundingClientRect();
                           const style = window.getComputedStyle(el);
-                          return rect.width > 60 && rect.height > 60 && style.visibility !== 'hidden' && style.display !== 'none';
+                          return rect.width > 50 && rect.height > 50 && style.visibility !== 'hidden' && style.display !== 'none';
                         };
-                        // 1. Kiểm tra video element đã sẵn sàng (đã load frame/metadata)
+
+                        // 1. Kiểm tra xem có đang ở trạng thái Skeleton Loader (khung xám chờ tải) không
+                        const hasSkeleton = Boolean(
+                          document.querySelector('[class*="Skeleton"], [class*="skeleton"], [data-e2e*="skeleton"], [class*="DivSkeletonContainer"], [class*="placeholder-"]')
+                        );
+
+                        // 2. Kiểm tra video element đã sẵn sàng (đã load frame/metadata)
                         const videos = Array.from(document.querySelectorAll("video"));
                         const videoReady = videos.some(v => isVisible(v) && (v.readyState >= 1 || v.videoWidth > 0));
-                        if (videoReady) return true;
-
-                        // 2. Kiểm tra canvas / image đã render
-                        const mediaNodes = Array.from(document.querySelectorAll("canvas, img"));
-                        const mediaReady = mediaNodes.some(m => isVisible(m) && (m.tagName === 'CANVAS' || (m.complete && m.naturalHeight > 60)));
-                        if (mediaReady) return true;
 
                         // 3. Kiểm tra tiêu đề / caption / username của TikTok đã hiển thị
-                        const author = document.querySelector('[data-e2e="browse-username"], [data-e2e="video-desc"], h1, h2');
-                        if (author && isVisible(author)) return true;
+                        const author = document.querySelector('[data-e2e="browse-username"], [data-e2e="video-author-uniqueid"], [data-e2e="user-title"], h1, h2');
+                        const authorReady = Boolean(author && isVisible(author) && author.innerText.trim().length > 0);
 
-                        // 4. Kiểm tra độ dài text nếu là trang bài viết
-                        const txt = String(document.body && document.body.innerText || '').trim();
-                        return txt.length >= 100;
+                        const desc = document.querySelector('[data-e2e="browse-video-desc"], [data-e2e="video-desc"], [data-e2e="user-bio"]');
+                        const descReady = Boolean(desc && isVisible(desc) && desc.innerText.trim().length > 0);
+
+                        // 4. Kiểm tra canvas / image đã render
+                        const mediaNodes = Array.from(document.querySelectorAll("canvas, img"));
+                        const mediaReady = mediaNodes.some(m => isVisible(m) && (m.tagName === 'CANVAS' || (m.complete && m.naturalHeight > 60)));
+
+                        // Chỉ coi là sẵn sàng khi: Video hoặc (Tác giả + Caption/Media) đã hiện VÀ không còn kẹt ở khung Skeleton
+                        if (videoReady || ((authorReady || descReady) && mediaReady && !hasSkeleton)) {
+                            return true;
+                        }
+                        return false;
                         """
                     )
                 )
