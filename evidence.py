@@ -2508,9 +2508,17 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                           )
                         );
 
-                        // Coi là SẴN SÀNG khi KHÔNG còn skeleton VÀ:
-                        //   a) Video có frame sẵn sàng, HOẶC
-                        //   b) Tác giả + (Caption hoặc Media) đều đã hiện
+                        // Xác định đây có phải trang video cụ thể không
+                        const isVideoPage = window.location.pathname.includes('/video/')
+                          || window.location.hostname === 'vt.tiktok.com';
+
+                        // Với trang VIDEO: BẮt BUỘC video phải có frame thật sự
+                        // Không chấp nhận fallback author+media (sẽ khiến chụp nhầm skeleton trắng)
+                        if (isVideoPage) {
+                          return videoReady;
+                        }
+
+                        // Với trang PROFILE / DISCOVER / khác: chấp nhận author+media
                         if (videoReady) return true;
                         if ((authorReady || descReady) && mediaReady) return true;
                         return false;
