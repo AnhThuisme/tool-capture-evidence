@@ -85,8 +85,8 @@ TIKTOK_REDIRECT_WAIT_SEC = 4.0
 PLEASE_WAIT_EXTRA_CAPTURE_DELAY_SEC = 1.2
 PLEASE_WAIT_MAX_WAIT_SEC = 8.0
 PLEASE_WAIT_POLL_SEC = 0.5
-BLANK_SCREEN_RETRY_DELAY_SEC = 3.0
-BLANK_SCREEN_MAX_RETRIES = 2
+BLANK_SCREEN_RETRY_DELAY_SEC = 4.0
+BLANK_SCREEN_MAX_RETRIES = 3
 MULTI_CAPTURE_INTERVAL_SEC = 2.5
 FB_COMMENT_READY_WAIT = 2.5
 UI_CLICK_SETTLE_SLEEP = 0.2
@@ -2417,7 +2417,9 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
     scope = str(source_url or "").lower()
     timeout = max(1.5, float(max_wait_sec or SCREENSHOT_CAPTURE_DELAY))
     deadline = start + timeout
-    settle_buffer = 0.35
+    # TikTok video cần thêm thời gian decode frame sau khi DOM ready
+    is_tiktok_scope = "tiktok.com" in scope or "vt.tiktok.com" in scope
+    settle_buffer = 1.2 if is_tiktok_scope else 0.35
 
     while time.time() < deadline:
         try:
@@ -2425,7 +2427,7 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                 if has_visible_facebook_content(driver):
                     time.sleep(settle_buffer)
                     return time.time() - start
-            elif "tiktok.com" in scope or "vt.tiktok.com" in scope:
+            elif is_tiktok_scope:
                 ready = bool(
                     driver.execute_script(
                         """
