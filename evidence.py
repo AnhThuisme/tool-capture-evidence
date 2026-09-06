@@ -1334,30 +1334,36 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
         if avg_mean >= 215 and mean_std <= 8.0 and bright_ratio >= 0.75:
             return True
 
-        # Kiểm tra vùng TRUNG TÂM ảnh (video player area của TikTok khi chưa load):
-        # Nếu phần giữa ảnh (30%–70% ngang, 20%–85% dọc) gần toàn trắng → skeleton
+        # Strip trung tâm hẹp (x 40-60%, y 10-60%): tránh sidebar trái, caption bar dưới
+        # Nếu 92%+ trắng thuần (r,g,b≥245) → video player chưa load
         try:
             sw, sh = sample.size
-            cx0, cy0 = int(sw * 0.30), int(sh * 0.20)
-            cx1, cy1 = int(sw * 0.70), int(sh * 0.85)
+            sx0, sy0 = int(sw * 0.40), int(sh * 0.10)
+            sx1, sy1 = int(sw * 0.60), int(sh * 0.60)
+            if sx1 > sx0 and sy1 > sy0:
+                strip = sample.crop((sx0, sy0, sx1, sy1))
+                strip_px = list(strip.getdata())
+                s_total = max(1, len(strip_px))
+                s_white = sum(1 for r, g, b in strip_px if r >= 245 and g >= 245 and b >= 245)
+                if s_white / s_total >= 0.92:
+                    return True
+            # Center crop: x 28-72%, y 15-60%, ngưỡng giảm xuống 85%
+            cx0, cy0 = int(sw * 0.28), int(sh * 0.15)
+            cx1, cy1 = int(sw * 0.72), int(sh * 0.60)
             if cx1 > cx0 and cy1 > cy0:
                 center_crop = sample.crop((cx0, cy0, cx1, cy1))
                 center_px = list(center_crop.getdata())
                 c_total = max(1, len(center_px))
-                # Near-white: r,g,b đều ≥ 228 (trắng / màu rất sáng)
-                c_bright = sum(1 for r, g, b in center_px if r >= 228 and g >= 228 and b >= 228)
+                c_bright = sum(1 for r, g, b in center_px if r >= 230 and g >= 230 and b >= 230)
                 c_bright_ratio = c_bright / c_total
-                # Xám skeleton trong vùng trung tâm
                 c_gray = sum(
                     1 for r, g, b in center_px
                     if 175 <= r <= 242 and 175 <= g <= 242 and 175 <= b <= 242
                     and abs(int(r) - int(g)) <= 20 and abs(int(g) - int(b)) <= 20
                 )
                 c_gray_ratio = c_gray / c_total
-                # Nếu tâm ảnh 90%+ là trắng/sáng → video player chưa load
-                if c_bright_ratio >= 0.90:
+                if c_bright_ratio >= 0.85:
                     return True
-                # Nếu tâm ảnh 88%+ là xám đồng nhất → skeleton gray
                 if c_gray_ratio >= 0.88:
                     return True
         except Exception:
@@ -2450,7 +2456,7 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
     deadline = start + timeout
     # TikTok video cần thêm thời gian decode frame sau khi DOM ready
     is_tiktok_scope = "tiktok.com" in scope or "vt.tiktok.com" in scope
-    settle_buffer = 1.2 if is_tiktok_scope else 0.35
+    settle_buffer = 2.0 if is_tiktok_scope else 0.35
 
     while time.time() < deadline:
         try:
@@ -2500,8 +2506,6 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                           if (!isVisible(v)) return false;
                           // readyState >= 2 = HAVE_CURRENT_DATA: browser có frame hiện tại
                           // Loại bỏ videoWidth > 0 vì nó true ngạy từ đầu khi biết kích thước, chưa có frame
-                          if (v.readyState < 2) return false;
-                          // Cố gắng vẽ frame lên canvas để kiểm tra pixel thật sự
                           try {
                             const cvs = document.createElement('canvas');
                             cvs.width = 16; cvs.height = 9;
@@ -2515,8 +2519,8 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                             }
                             return colored / (d.length / 4) > 0.15;
                           } catch(e) {
-                            // CORS hoặc lỗi khác → fallback: chằp nhận readyState >= 2
-                            return true;
+                            // CORS: không đọc được pixel → cần readyState >= 3 (HAVE_FUTURE_DATA)
+                            return v.readyState >= 3;
                           }
                         });
 
