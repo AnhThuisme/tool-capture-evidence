@@ -1274,6 +1274,7 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
     Cải tiến:
     - Nhận diện khung xám skeleton loader (màu xám nhạt #e0e0e0 – #f0f0f0, low variance)
     - Nhận diện near-white / near-gray single-color placeholder phổ biến trong TikTok hydration
+    - Kiểm tra vùng trung tâm ảnh (video player area): nếu 90%+ trắng → skeleton TikTok chưa load
     - Ngưỡng dominant_ratio và std được chỉnh cho chính xác hơn, tránh false-positive
     """
     if not image_bytes:
@@ -1299,7 +1300,7 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
         bright = sum(1 for r, g, b in pixels if r >= 240 and g >= 240 and b >= 240)
         # Đen gần như tuyệt đối
         dark = sum(1 for r, g, b in pixels if r <= 35 and g <= 35 and b <= 35)
-        # Xám nhạt skeleton: cả 3 kênh trong khoảng [190, 240], gần nhau (≤15 chênh lệch)
+        # Xám nhạt skeleton: cả 3 kênh trong khoảng [185, 242], gần nhau
         gray_skeleton = sum(
             1 for r, g, b in pixels
             if 185 <= r <= 242 and 185 <= g <= 242 and 185 <= b <= 242
@@ -1332,6 +1333,36 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
         # Near-white với variance thấp (TikTok trắng chờ hydration)
         if avg_mean >= 215 and mean_std <= 8.0 and bright_ratio >= 0.75:
             return True
+
+        # Kiểm tra vùng TRUNG TÂM ảnh (video player area của TikTok khi chưa load):
+        # Nếu phần giữa ảnh (30%–70% ngang, 20%–85% dọc) gần toàn trắng → skeleton
+        try:
+            sw, sh = sample.size
+            cx0, cy0 = int(sw * 0.30), int(sh * 0.20)
+            cx1, cy1 = int(sw * 0.70), int(sh * 0.85)
+            if cx1 > cx0 and cy1 > cy0:
+                center_crop = sample.crop((cx0, cy0, cx1, cy1))
+                center_px = list(center_crop.getdata())
+                c_total = max(1, len(center_px))
+                # Near-white: r,g,b đều ≥ 228 (trắng / màu rất sáng)
+                c_bright = sum(1 for r, g, b in center_px if r >= 228 and g >= 228 and b >= 228)
+                c_bright_ratio = c_bright / c_total
+                # Xám skeleton trong vùng trung tâm
+                c_gray = sum(
+                    1 for r, g, b in center_px
+                    if 175 <= r <= 242 and 175 <= g <= 242 and 175 <= b <= 242
+                    and abs(int(r) - int(g)) <= 20 and abs(int(g) - int(b)) <= 20
+                )
+                c_gray_ratio = c_gray / c_total
+                # Nếu tâm ảnh 90%+ là trắng/sáng → video player chưa load
+                if c_bright_ratio >= 0.90:
+                    return True
+                # Nếu tâm ảnh 88%+ là xám đồng nhất → skeleton gray
+                if c_gray_ratio >= 0.88:
+                    return True
+        except Exception:
+            pass
+
         return False
     except Exception:
         return False
@@ -2463,11 +2494,31 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                         });
                         if (hasSkeleton) return false;
 
-                        // 2. Kiểm tra video element đã có frame thật sự
-                        const videos = Array.from(document.querySelectorAll('video'));
-                        const videoReady = videos.some(v =>
-                          isVisible(v) && (v.readyState >= 2 || v.videoWidth > 0)
-                        );
+                        // 2. Kiểm tra video element đã có frame thật sự và đã được vẽ ra màn hình
+                        // Dùng canvas trick để xác minh frame pixel thật sự (không chỉ readyState)
+                        const videoReady = videos.some(v => {
+                          if (!isVisible(v)) return false;
+                          // readyState >= 2 = HAVE_CURRENT_DATA: browser có frame hiện tại
+                          // Loại bỏ videoWidth > 0 vì nó true ngạy từ đầu khi biết kích thước, chưa có frame
+                          if (v.readyState < 2) return false;
+                          // Cố gắng vẽ frame lên canvas để kiểm tra pixel thật sự
+                          try {
+                            const cvs = document.createElement('canvas');
+                            cvs.width = 16; cvs.height = 9;
+                            const ctx = cvs.getContext('2d');
+                            ctx.drawImage(v, 0, 0, 16, 9);
+                            const d = ctx.getImageData(0, 0, 16, 9).data;
+                            // Nếu hơn 15% pixel có màu thật (không phải đen/transparent)
+                            let colored = 0;
+                            for (let i = 0; i < d.length; i += 4) {
+                              if (d[i] > 10 || d[i+1] > 10 || d[i+2] > 10) colored++;
+                            }
+                            return colored / (d.length / 4) > 0.15;
+                          } catch(e) {
+                            // CORS hoặc lỗi khác → fallback: chằp nhận readyState >= 2
+                            return true;
+                          }
+                        });
 
                         // 3. Kiểm tra tên tác giả đã hiển thị text thật sự (không rỗng)
                         const authorSel = [
