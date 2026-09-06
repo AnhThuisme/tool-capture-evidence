@@ -73,7 +73,7 @@ TIKTOK_SCROLL_WAIT_2 = 0.4
 ZOOM_SETTLE_SLEEP = 0.15
 SCREENSHOT_CAPTURE_DELAY = 3.0
 # Extra buffer for TikTok before first screenshot to let video/player UI settle and hydration finish.
-TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 5.0
+TIKTOK_FIRST_CAPTURE_EXTRA_SEC = 7.0  # 3.0 base + 7.0 = 10s max TikTok wait
 TIKTOK_CAPTCHA_MAX_WAIT_SEC = 15.0
 TIKTOK_CAPTCHA_POLL_SEC = 1.0
 TIKTOK_CAPTCHA_POST_CLEAR_WAIT_SEC = 0.5
@@ -1270,6 +1270,11 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
     """
     Heuristic for blank/placeholder screenshots (white/black/near-solid canvas or skeleton loaders).
     Returns True when frame has very low visual variance, solid color, or skeleton loading screen.
+
+    Cải tiến:
+    - Nhận diện khung xám skeleton loader (màu xám nhạt #e0e0e0 – #f0f0f0, low variance)
+    - Nhận diện near-white / near-gray single-color placeholder phổ biến trong TikTok hydration
+    - Ngưỡng dominant_ratio và std được chỉnh cho chính xác hơn, tránh false-positive
     """
     if not image_bytes:
         return True
@@ -1287,25 +1292,45 @@ def is_blank_like_screenshot_png(image_bytes: bytes) -> bool:
         mean_vals = list(stat.mean or [0.0, 0.0, 0.0])
         avg_mean = sum(float(v) for v in mean_vals) / max(1, len(mean_vals))
 
-        pixels = sample.getdata()
+        pixels = list(sample.getdata())
         total = max(1, len(pixels))
+
+        # Trắng gần như tuyệt đối (≥240 cả 3 kênh)
         bright = sum(1 for r, g, b in pixels if r >= 240 and g >= 240 and b >= 240)
+        # Đen gần như tuyệt đối
         dark = sum(1 for r, g, b in pixels if r <= 35 and g <= 35 and b <= 35)
+        # Xám nhạt skeleton: cả 3 kênh trong khoảng [190, 240], gần nhau (≤15 chênh lệch)
+        gray_skeleton = sum(
+            1 for r, g, b in pixels
+            if 185 <= r <= 242 and 185 <= g <= 242 and 185 <= b <= 242
+            and abs(int(r) - int(g)) <= 18 and abs(int(g) - int(b)) <= 18 and abs(int(r) - int(b)) <= 18
+        )
         bright_ratio = bright / total
         dark_ratio = dark / total
+        gray_skeleton_ratio = gray_skeleton / total
 
         counts = sample.quantize(colors=8, method=2).getcolors() or []
         dominant_ratio = 0.0
         if counts:
             dominant_ratio = max(c for c, _ in counts) / total
 
+        # Trắng tuyệt đối
         if bright_ratio >= 0.97 and avg_mean >= 235:
             return True
+        # Đen tuyệt đối
         if dark_ratio >= 0.97 and avg_mean <= 25:
             return True
+        # Màu đơn sắc chiếm ưu thế với độ biến động rất thấp → solid color placeholder
         if dominant_ratio >= 0.96 and mean_std <= 4.0:
             return True
+        # Variance cực thấp → không có nội dung thật
         if mean_std <= 2.5:
+            return True
+        # Skeleton loader xám nhạt: >85% pixel là xám đồng nhất, variance thấp
+        if gray_skeleton_ratio >= 0.85 and mean_std <= 12.0:
+            return True
+        # Near-white với variance thấp (TikTok trắng chờ hydration)
+        if avg_mean >= 215 and mean_std <= 8.0 and bright_ratio >= 0.75:
             return True
         return False
     except Exception:
@@ -2380,6 +2405,13 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
     """
     Tự động đợi thông minh cho đến khi trang mạng xã hội (TikTok, Facebook, Youtube...)
     tải xong hoàn toàn (video/ảnh/text đã render, tắt loading spinner) rồi mới chụp.
+
+    TikTok: kiên nhẫn đợi tối đa max_wait_sec (8–10s); nếu trang nhanh thì thoát sớm.
+    DOM check TikTok kiểm tra kỹ:
+      - Tất cả skeleton/spinner/placeholder đã biến mất
+      - Video <video> đã có frame (readyState>=2 hoặc videoWidth>0)
+      - Tên tác giả VÀ caption/desc đã hiển thị text thật sự
+      - Không còn overlay 'Please wait'
     """
     start = time.time()
     scope = str(source_url or "").lower()
@@ -2401,33 +2433,84 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
                           if (!el) return false;
                           const rect = el.getBoundingClientRect();
                           const style = window.getComputedStyle(el);
-                          return rect.width > 50 && rect.height > 50 && style.visibility !== 'hidden' && style.display !== 'none';
+                          return rect.width > 50 && rect.height > 50
+                            && style.visibility !== 'hidden'
+                            && style.display !== 'none'
+                            && style.opacity !== '0';
                         };
 
-                        // 1. Kiểm tra xem có đang ở trạng thái Skeleton Loader (khung xám chờ tải) không
-                        const hasSkeleton = Boolean(
-                          document.querySelector('[class*="Skeleton"], [class*="skeleton"], [data-e2e*="skeleton"], [class*="DivSkeletonContainer"], [class*="placeholder-"]')
+                        // 1. Kiểm tra skeleton / spinner / placeholder CÒN TỒN TẠI không
+                        const skeletonSel = [
+                          '[class*="Skeleton"]', '[class*="skeleton"]',
+                          '[data-e2e*="skeleton"]',
+                          '[class*="DivSkeletonContainer"]',
+                          '[class*="placeholder-"]',
+                          '[class*="loading-spinner"]',
+                          '[class*="LoadingSpinner"]',
+                          '[class*="SpinnerContainer"]',
+                          '[class*="tiktok-loading"]',
+                          '.loading-wrap', '[class*="loadingWrap"]',
+                        ].join(',');
+                        const skeletonEls = Array.from(document.querySelectorAll(skeletonSel));
+                        // Chỉ tính skeleton visible (không tính đã ẩn trong DOM)
+                        const hasSkeleton = skeletonEls.some(el => {
+                          const s = window.getComputedStyle(el);
+                          const r = el.getBoundingClientRect();
+                          return s.display !== 'none' && s.visibility !== 'hidden'
+                            && s.opacity !== '0' && r.width > 0 && r.height > 0;
+                        });
+                        if (hasSkeleton) return false;
+
+                        // 2. Kiểm tra video element đã có frame thật sự
+                        const videos = Array.from(document.querySelectorAll('video'));
+                        const videoReady = videos.some(v =>
+                          isVisible(v) && (v.readyState >= 2 || v.videoWidth > 0)
                         );
 
-                        // 2. Kiểm tra video element đã sẵn sàng (đã load frame/metadata)
-                        const videos = Array.from(document.querySelectorAll("video"));
-                        const videoReady = videos.some(v => isVisible(v) && (v.readyState >= 1 || v.videoWidth > 0));
+                        // 3. Kiểm tra tên tác giả đã hiển thị text thật sự (không rỗng)
+                        const authorSel = [
+                          '[data-e2e="browse-username"]',
+                          '[data-e2e="video-author-uniqueid"]',
+                          '[data-e2e="user-title"]',
+                          '[data-e2e="author-uniqueid"]',
+                          'h1[class*="AuthorTitle"]',
+                          'span[class*="UniqueId"]',
+                        ].join(',');
+                        const author = document.querySelector(authorSel);
+                        const authorReady = Boolean(
+                          author && isVisible(author)
+                          && author.innerText.trim().length > 0
+                          && !author.innerText.trim().match(/^[\\s_]+$/)
+                        );
 
-                        // 3. Kiểm tra tiêu đề / caption / username của TikTok đã hiển thị
-                        const author = document.querySelector('[data-e2e="browse-username"], [data-e2e="video-author-uniqueid"], [data-e2e="user-title"], h1, h2');
-                        const authorReady = Boolean(author && isVisible(author) && author.innerText.trim().length > 0);
+                        // 4. Kiểm tra caption / description đã hiển thị text thật sự
+                        const descSel = [
+                          '[data-e2e="browse-video-desc"]',
+                          '[data-e2e="video-desc"]',
+                          '[data-e2e="user-bio"]',
+                          '[class*="VideoDesc"]',
+                          '[class*="video-desc"]',
+                        ].join(',');
+                        const desc = document.querySelector(descSel);
+                        const descReady = Boolean(
+                          desc && isVisible(desc)
+                          && desc.innerText.trim().length > 0
+                        );
 
-                        const desc = document.querySelector('[data-e2e="browse-video-desc"], [data-e2e="video-desc"], [data-e2e="user-bio"]');
-                        const descReady = Boolean(desc && isVisible(desc) && desc.innerText.trim().length > 0);
+                        // 5. Kiểm tra canvas / image media đã render (src đã load)
+                        const mediaNodes = Array.from(document.querySelectorAll('canvas, img'));
+                        const mediaReady = mediaNodes.some(m =>
+                          isVisible(m) && (
+                            m.tagName === 'CANVAS'
+                            || (m.complete && m.naturalHeight > 60 && m.naturalWidth > 60)
+                          )
+                        );
 
-                        // 4. Kiểm tra canvas / image đã render
-                        const mediaNodes = Array.from(document.querySelectorAll("canvas, img"));
-                        const mediaReady = mediaNodes.some(m => isVisible(m) && (m.tagName === 'CANVAS' || (m.complete && m.naturalHeight > 60)));
-
-                        // Chỉ coi là sẵn sàng khi: Video hoặc (Tác giả + Caption/Media) đã hiện VÀ không còn kẹt ở khung Skeleton
-                        if (videoReady || ((authorReady || descReady) && mediaReady && !hasSkeleton)) {
-                            return true;
-                        }
+                        // Coi là SẴN SÀNG khi KHÔNG còn skeleton VÀ:
+                        //   a) Video có frame sẵn sàng, HOẶC
+                        //   b) Tác giả + (Caption hoặc Media) đều đã hiện
+                        if (videoReady) return true;
+                        if ((authorReady || descReady) && mediaReady) return true;
                         return false;
                         """
                     )
@@ -8067,13 +8150,22 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         "WARN",
                                         "RETRY",
                                         (
-                                            f"{block_name}: Ảnh chụp có vẻ trắng/rỗng, "
-                                            f"đợi {int(BLANK_SCREEN_RETRY_DELAY_SEC)}s rồi chụp lại "
+                                            f"{block_name}: Ảnh chụp có vẻ trắng/xám/skeleton, "
+                                            f"đợi thêm rồi chụp lại "
                                             f"({blank_attempt}/{blank_retry})"
                                         ),
                                         "start",
                                     )
-                                    time.sleep(max(0.2, float(BLANK_SCREEN_RETRY_DELAY_SEC or 2.0)))
+                                    if is_tiktok:
+                                        # Với TikTok dùng smart-wait DOM thay vì sleep cố định
+                                        _remaining = max(0.5, deadline_tiktok - time.time()) if 'deadline_tiktok' in dir() else float(BLANK_SCREEN_RETRY_DELAY_SEC or 3.0)
+                                        wait_for_capture_surface_ready(
+                                            worker_driver,
+                                            source_url=url,
+                                            max_wait_sec=min(_remaining, float(BLANK_SCREEN_RETRY_DELAY_SEC or 3.0) + 2.0),
+                                        )
+                                    else:
+                                        time.sleep(max(0.2, float(BLANK_SCREEN_RETRY_DELAY_SEC or 2.0)))
                                     png_bytes = worker_driver.get_screenshot_as_png()
                                 if (not using_oembed_capture) and (not tiktok_shop_app_only) and is_blank_like_screenshot_png(png_bytes):
                                     if is_tiktok and not tiktok_oembed_png:
