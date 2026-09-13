@@ -8512,8 +8512,10 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     except Exception:
                         pass
 
-        # Run all configured posts in parallel (no fixed upper limit).
-        worker_total = max(1, len(prepared_blocks))
+        # Run all configured posts in parallel (cap at 8 concurrent workers
+        # to avoid overwhelming system resources when many blocks are queued).
+        MAX_PARALLEL_BLOCK_WORKERS = 8
+        worker_total = max(1, min(len(prepared_blocks), MAX_PARALLEL_BLOCK_WORKERS))
         if len(prepared_blocks) > 1:
             with ThreadPoolExecutor(max_workers=worker_total) as ex:
                 futures = [ex.submit(_run_block, b) for b in prepared_blocks]

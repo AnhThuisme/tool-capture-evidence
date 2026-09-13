@@ -3150,7 +3150,8 @@ def _run_job(job_id: str):
                         target_block_name=req.get("target_block_name"),
                     )
 
-                worker_count = max(1, total_multi)
+                MAX_PARALLEL_MULTI_SHEET = 8
+                worker_count = max(1, min(total_multi, MAX_PARALLEL_MULTI_SHEET))
                 with ThreadPoolExecutor(max_workers=worker_count) as ex:
                     futures = [
                         ex.submit(_run_multi_sheet_block, idx, block)
