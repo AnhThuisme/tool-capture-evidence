@@ -8061,8 +8061,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 # the login page.  Simply dismissing the popup is not
                                 # enough – we must clear cookies, re-inject, and reload
                                 # with progressive cooldown delays to let the IP recover.
-                                _fb_login_retry_max = 3
-                                _fb_cooldown_secs = [5, 8, 12]
+                                _fb_login_retry_max = 1
+                                _fb_cooldown_secs = [2]
                                 for _fb_retry_idx in range(_fb_login_retry_max):
                                     # Cooldown before retry to avoid further rate-limiting
                                     _cooldown = _fb_cooldown_secs[_fb_retry_idx] if _fb_retry_idx < len(_fb_cooldown_secs) else 10
