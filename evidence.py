@@ -7870,9 +7870,26 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                             if is_facebook:
                                 try:
-                                    dismiss_facebook_login_gate(worker_driver)
+                                    closed_fb_gate = dismiss_facebook_login_gate(worker_driver)
                                 except Exception:
-                                    pass
+                                    closed_fb_gate = False
+                                # If the page landed on a login/checkpoint route,
+                                # dismissing the popup alone won't help – re-inject
+                                # cookies and reload the original URL.
+                                if closed_fb_gate or is_unavailable_content_page(worker_driver, url):
+                                    _fb_init_cookie = get_configured_fb_cookie()
+                                    if _fb_init_cookie:
+                                        inject_fb_cookies_into_driver(worker_driver, _fb_init_cookie, force=True)
+                                        try:
+                                            worker_driver.get(url)
+                                            wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            dismiss_facebook_login_gate(worker_driver)
+                                        except Exception:
+                                            pass
+                                        time.sleep(1.0)
 
                             is_tiktok = "tiktok.com" in url_lower or "vt.tiktok.com" in url_lower
                             if is_tiktok:
@@ -8018,14 +8035,57 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
 
                             unavailable = unavailable or is_unavailable_content_page(worker_driver, url)
                             if is_facebook and unavailable:
-                                try:
-                                    closed_fb_gate = dismiss_facebook_login_gate(worker_driver)
-                                except Exception:
-                                    closed_fb_gate = False
-                                if closed_fb_gate:
-                                    time.sleep(1.2)
+                                # --- Facebook login-gate retry with cookie re-injection ---
+                                # When Facebook rate-limits mid-session it redirects to
+                                # the login page.  Simply dismissing the popup is not
+                                # enough – we must re-inject cookies and reload.
+                                _fb_login_retry_max = 2
+                                for _fb_retry_idx in range(_fb_login_retry_max):
+                                    try:
+                                        closed_fb_gate = dismiss_facebook_login_gate(worker_driver)
+                                    except Exception:
+                                        closed_fb_gate = False
+
+                                    # Re-inject cookies and reload the original URL
+                                    _fb_retry_cookie = get_configured_fb_cookie()
+                                    if _fb_retry_cookie:
+                                        inject_fb_cookies_into_driver(worker_driver, _fb_retry_cookie, force=True)
+                                        try:
+                                            worker_driver.get(url)
+                                            wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            dismiss_facebook_login_gate(worker_driver)
+                                        except Exception:
+                                            pass
+                                        time.sleep(1.5)
+                                    elif closed_fb_gate:
+                                        time.sleep(1.2)
+
                                     technical_error_message = get_temporary_platform_error(worker_driver, url)
                                     unavailable = is_unavailable_content_page(worker_driver, url)
+                                    if not unavailable:
+                                        ui_call(
+                                            ui_add_log,
+                                            row,
+                                            "OK",
+                                            "RETRY",
+                                            f"{block_name}: Facebook login gate đã được xử lý sau {_fb_retry_idx + 1} lần thử",
+                                            "ok",
+                                        )
+                                        break
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "RETRY",
+                                        (
+                                            f"{block_name}: Facebook vẫn yêu cầu đăng nhập, "
+                                            f"thử lại ({_fb_retry_idx + 1}/{_fb_login_retry_max})..."
+                                        ),
+                                        "start",
+                                    )
                             if technical_error_message:
                                 unavailable = False
                             if is_tiktok and unavailable:
