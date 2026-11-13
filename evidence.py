@@ -72,11 +72,52 @@ PER_LINK_BASE_WAIT = 0.2
 # Facebook pacing: keep parallel workers from hammering FB at the same instant,
 # which looks bot-like and gets the shared cookie session logged out.
 # Global gap between ANY two FB page loads (all blocks combined), randomized.
-FB_GLOBAL_GAP_MIN_SEC = 0.8
-FB_GLOBAL_GAP_MAX_SEC = 1.8
+# Kept small so 15 workers still run truly in parallel (~2 loads/s max); it only
+# prevents many Chrome windows hitting FB in the exact same instant.
+FB_GLOBAL_GAP_MIN_SEC = 0.3
+FB_GLOBAL_GAP_MAX_SEC = 0.7
 # Per-worker random pause before each FB link.
 FB_LINK_JITTER_MIN_SEC = 1.0
 FB_LINK_JITTER_MAX_SEC = 3.0
+# How long a worker waits for its Chrome debug port (opened by auto-launch)
+# before starting its own Chrome.
+WORKER_ATTACH_WAIT_SEC = 12.0
+# Max time a worker waits for an in-progress auto-launch of its Chrome.
+CHROME_LAUNCH_WAIT_MAX_SEC = 90.0
+
+# Ports whose Chrome is currently being opened by launch_chrome_for_login.
+_CHROME_LAUNCH_EVENTS: dict[int, threading.Event] = {}
+_CHROME_LAUNCH_EVENTS_LOCK = threading.Lock()
+
+
+def _mark_chrome_launch_start(port: int) -> threading.Event:
+    ev = threading.Event()
+    with _CHROME_LAUNCH_EVENTS_LOCK:
+        _CHROME_LAUNCH_EVENTS[int(port)] = ev
+    return ev
+
+
+def _mark_chrome_launch_done(port: int, ev: threading.Event) -> None:
+    ev.set()
+    with _CHROME_LAUNCH_EVENTS_LOCK:
+        if _CHROME_LAUNCH_EVENTS.get(int(port)) is ev:
+            _CHROME_LAUNCH_EVENTS.pop(int(port), None)
+
+
+def wait_chrome_launch_done(port: int, timeout_sec: float) -> None:
+    with _CHROME_LAUNCH_EVENTS_LOCK:
+        ev = _CHROME_LAUNCH_EVENTS.get(int(port))
+    if ev is not None:
+        ev.wait(timeout=max(0.0, float(timeout_sec)))
+
+
+def _local_port_open(port: int, timeout_sec: float = 0.5) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=timeout_sec):
+            return True
+    except Exception:
+        return False
+
 TIKTOK_SCROLL_WAIT_1 = 0.3
 TIKTOK_SCROLL_WAIT_2 = 0.4
 ZOOM_SETTLE_SLEEP = 0.15
@@ -7652,6 +7693,14 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 "session deleted",
                 "chrome not reachable",
                 "web view not found",
+                # chromedriver/Chrome process gone: the HTTP link to the driver is refused.
+                # Without these, a dead Chrome made every remaining row fail instantly.
+                "connection refused",
+                "max retries exceeded",
+                "failed to establish a new connection",
+                "newconnectionerror",
+                "connectionreseterror",
+                "remote end closed connection",
             )
             return any(marker in msg for marker in recoverable_markers)
 
@@ -7671,14 +7720,37 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             os.makedirs(worker_profile, exist_ok=True)
             # If the user already opened this block's Chrome and logged in manually,
             # attach to that exact debugger session instead of starting a fresh browser.
-            try:
-                attach_opts = Options()
-                attach_opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{worker_port}")
-                attached = create_chrome_driver(attach_opts, service=service)
-                write_log(f"[INFO] Attached worker block {block_index} to existing Chrome debug session on port {worker_port}")
-                return attached
-            except Exception as e:
-                write_log(f"[INFO] No attachable worker Chrome on port {worker_port}: {e}")
+            # Only attach when the debug port is actually open: attaching to a closed
+            # port makes chromedriver hang until its own timeout (~1 min per try),
+            # which stalled blocks and made them look sequential. Wait briefly first
+            # because auto-launch may be opening this Chrome right now.
+            port_ready = False
+            if not fast_recovery:
+                # If auto-launch is opening this port's Chrome right now, wait for it to
+                # finish. Starting a second Chrome on the same port/profile meanwhile
+                # makes auto-launch kill it, leaving this worker with a dead driver.
+                wait_chrome_launch_done(worker_port, timeout_sec=CHROME_LAUNCH_WAIT_MAX_SEC)
+                attach_deadline = time.monotonic() + WORKER_ATTACH_WAIT_SEC
+                while True:
+                    if _local_port_open(worker_port):
+                        port_ready = True
+                        break
+                    if time.monotonic() >= attach_deadline:
+                        break
+                    time.sleep(0.5)
+            else:
+                port_ready = _local_port_open(worker_port)
+            if port_ready:
+                try:
+                    attach_opts = Options()
+                    attach_opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{worker_port}")
+                    attached = create_chrome_driver(attach_opts, service=service)
+                    write_log(f"[INFO] Attached worker block {block_index} to existing Chrome debug session on port {worker_port}")
+                    return attached
+                except Exception as e:
+                    write_log(f"[INFO] No attachable worker Chrome on port {worker_port}: {e}")
+            else:
+                write_log(f"[INFO] No Chrome listening on port {worker_port}; starting a new one for block {block_index}")
             # Copy login session from main profile so parallel workers don't ask login again.
             # In fast recovery mode we skip this expensive copy step to restart sooner.
             if not fast_recovery:
@@ -8771,7 +8843,16 @@ def launch_chrome_for_login(browser_port: int = 9223, profile_path: str | None =
     """
     Launch Chrome on specified port for user to login to sites.
     Returns (success: bool, profile_info: str)
+    Registers the port as "launching" so job workers wait instead of racing it.
     """
+    launch_event = _mark_chrome_launch_start(browser_port)
+    try:
+        return _launch_chrome_for_login_impl(browser_port=browser_port, profile_path=profile_path)
+    finally:
+        _mark_chrome_launch_done(browser_port, launch_event)
+
+
+def _launch_chrome_for_login_impl(browser_port: int = 9223, profile_path: str | None = None) -> tuple[bool, str]:
     try:
         replaced_headless = False
         has_desktop_session = (

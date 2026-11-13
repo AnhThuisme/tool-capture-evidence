@@ -4736,7 +4736,7 @@ function resolveRequestTimeoutMs(url, opts = {}) {
   if (Number.isFinite(requested) && requested > 0) return requested;
   const raw = String(url || '').toLowerCase();
   if (raw.includes('/api/chrome/')) return 20000;
-  if (raw.includes('/api/jobs/start')) return 35000;
+  if (raw.includes('/api/jobs/start')) return 90000;
   return 45000;
 }
 
@@ -10697,6 +10697,28 @@ def start_job(request: Request, payload: JobStartRequest):
     raw_sheet_name = str(payload.sheet_name or "").strip()
     drive_id = evidence.normalize_drive_folder_input(payload.drive_id)
 
+    # Open each spreadsheet and list its tabs only once per request. Re-opening the
+    # sheet for every block (15 blocks = 15x auth + open + lookup) exceeded the
+    # client's request timeout on /api/jobs/start.
+    spreadsheet_cache: dict[str, Any] = {}
+    worksheet_list_cache: dict[str, list[Any]] = {}
+
+    def _resolve_ws_cached(target_url: str, target_name: str):
+        spreadsheet_obj = spreadsheet_cache.get(target_url)
+        if spreadsheet_obj is None:
+            spreadsheet_obj = _open_spreadsheet(target_url, credentials_path)
+            spreadsheet_cache[target_url] = spreadsheet_obj
+        if target_url not in worksheet_list_cache:
+            try:
+                worksheet_list_cache[target_url] = list(spreadsheet_obj.worksheets() or [])
+            except Exception:
+                worksheet_list_cache[target_url] = []
+        wanted = str(target_name or "").strip()
+        for ws in worksheet_list_cache[target_url]:
+            if str(getattr(ws, "title", "") or "").strip() == wanted:
+                return ws
+        return _resolve_worksheet(spreadsheet_obj, target_url, target_name)
+
     multi_seeding_blocks: list[dict[str, Any]] = []
     if run_mode == "seeding":
         candidate_blocks = [m for m in mapping_payload if str(m.get("sheet_name", "")).strip() or str(m.get("name", "")).strip()]
@@ -10713,8 +10735,7 @@ def start_job(request: Request, payload: JobStartRequest):
                 if not block_sheet_name:
                     raise HTTPException(status_code=400, detail=f"Block {idx}: thiếu Sheet Name")
                 try:
-                    block_spreadsheet = _open_spreadsheet(block_sheet_url, credentials_path)
-                    block_worksheet = _resolve_worksheet(block_spreadsheet, block_sheet_url, block_sheet_name)
+                    block_worksheet = _resolve_ws_cached(block_sheet_url, block_sheet_name)
                     resolved_block_sheet_name = str(getattr(block_worksheet, "title", block_sheet_name) or block_sheet_name).strip() or block_sheet_name
                 except HTTPException:
                     raise
@@ -10742,8 +10763,7 @@ def start_job(request: Request, payload: JobStartRequest):
     # Validate target worksheet before starting runtime to avoid "running but no write"
     # when the Sheet Name is mistyped or no longer exists.
     try:
-        spreadsheet = _open_spreadsheet(sheet_url, credentials_path)
-        worksheet = _resolve_worksheet(spreadsheet, sheet_url, raw_sheet_name)
+        worksheet = _resolve_ws_cached(sheet_url, raw_sheet_name)
         resolved_sheet_name = str(getattr(worksheet, "title", raw_sheet_name) or raw_sheet_name).strip() or raw_sheet_name
     except HTTPException:
         raise
@@ -10798,23 +10818,29 @@ def start_job(request: Request, payload: JobStartRequest):
         mapped_blocks = list(mapping_payload)
         run_mode_hint = run_mode
 
-        def _auto_launch_chrome_background():
-            for idx, mapping in enumerate(mapped_blocks):
-                block_mode = _normalize_run_mode(str((mapping or {}).get("mode", run_mode_hint)))
-                if block_mode == "scan":
-                    continue
-                block_port = evidence.get_post_port(idx, _get_mode_base_port(block_mode))
-                block_profile = _get_mode_profile(block_mode, idx, browser_port=block_port)
-                ok, info = evidence.launch_chrome_for_login(
-                    browser_port=block_port,
-                    profile_path=block_profile,
+        def _launch_one_block_chrome(idx: int, mapping: dict[str, Any]):
+            block_mode = _normalize_run_mode(str((mapping or {}).get("mode", run_mode_hint)))
+            if block_mode == "scan":
+                return
+            block_port = evidence.get_post_port(idx, _get_mode_base_port(block_mode))
+            block_profile = _get_mode_profile(block_mode, idx, browser_port=block_port)
+            ok, info = evidence.launch_chrome_for_login(
+                browser_port=block_port,
+                profile_path=block_profile,
+            )
+            if not ok:
+                evidence.write_log(
+                    f"[WARN] Auto launch Chrome failed ({block_mode} block {idx + 1}, port {block_port}): {info}"
                 )
-                if not ok:
-                    evidence.write_log(
-                        f"[WARN] Auto launch Chrome failed ({block_mode} block {idx + 1}, port {block_port}): {info}"
-                    )
 
-        threading.Thread(target=_auto_launch_chrome_background, daemon=True).start()
+        # Launch every block's Chrome at the same time (was one-by-one, which made
+        # later blocks start tens of seconds after the first ones).
+        for launch_idx, launch_mapping in enumerate(mapped_blocks):
+            threading.Thread(
+                target=_launch_one_block_chrome,
+                args=(launch_idx, launch_mapping),
+                daemon=True,
+            ).start()
 
     request_snapshot = {
         "owner_email": owner_email,
