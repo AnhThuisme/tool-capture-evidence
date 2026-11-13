@@ -716,8 +716,14 @@ def create_chrome_driver(options: Options, service: Service | None = None):
     errors = []
     driver = None
     if service is not None:
+        # Give every driver its OWN chromedriver process. A Service object fixes its
+        # port at creation, and driver.quit() calls service.stop(); sharing one Service
+        # across parallel workers meant one block quitting killed chromedriver for all
+        # other blocks ("connection refused" on every remaining row).
+        driver_path = getattr(service, "_path", None) or getattr(service, "path", None)
+        own_service = Service(driver_path) if driver_path else service
         try:
-            driver = webdriver.Chrome(service=service, options=options)
+            driver = webdriver.Chrome(service=own_service, options=options)
         except Exception as exc:
             errors.append(f"service={exc}")
             write_log(f"[WARN] Chrome via explicit service failed, fallback to Selenium Manager: {exc}")
@@ -3991,6 +3997,25 @@ def is_fb_cookie_enabled(user_email: str = "") -> bool:
     return True
 
 
+def driver_has_fb_session(driver) -> bool:
+    """
+    True when this Chrome already holds a Facebook login session (c_user + xs cookies).
+    Used to avoid overwriting a working session (e.g. a manual login in this block's
+    Chrome) with the cookie from Settings, which may already be logged out by FB.
+    """
+    if not driver or not hasattr(driver, "execute_cdp_cmd"):
+        return False
+    try:
+        res = driver.execute_cdp_cmd(
+            "Network.getCookies",
+            {"urls": ["https://www.facebook.com", "https://m.facebook.com"]},
+        ) or {}
+        names = {str(c.get("name") or "") for c in (res.get("cookies") or []) if c.get("value")}
+        return "c_user" in names and "xs" in names
+    except Exception:
+        return False
+
+
 def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False) -> bool:
     """
     Injects parsed Facebook cookies into a Selenium driver session.
@@ -7047,7 +7072,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             time.sleep(2)
                             attach_opts = Options()
                             attach_opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{port}")
-                            app.driver = webdriver.Chrome(service=service, options=attach_opts)
+                            app.driver = create_chrome_driver(attach_opts, service=service)
                             write_log(f"[INFO] Attached to debug Chrome on port {port}")
                             started = True
                             break
@@ -7926,6 +7951,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 captures_per_link = 5 if (multi_capture_enabled and block_mode == "booking") else 1
 
                 retry_once_by_row: set[int] = set()
+                # Consecutive rows where FB showed its login page. When a block's Chrome
+                # is clearly logged out, stop that block instead of loading hundreds of
+                # FB links logged-out (bot-like) and marking every row FAIL.
+                fb_login_wall_streak = 0
+                FB_LOGIN_WALL_STOP_AFTER = 3
                 pending_indexes = list(range(len(links)))
                 while pending_indexes:
                     idx = pending_indexes.pop(0)
@@ -8016,9 +8046,12 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             url_lower = url.lower()
                             is_facebook = ("facebook.com" in url_lower) or ("fb.watch" in url_lower) or ("m.facebook.com" in url_lower)
                             if is_facebook:
-                                fb_cookie_str = get_configured_fb_cookie()
-                                if fb_cookie_str:
-                                    inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True)
+                                # Only inject the Settings cookie when this Chrome has no FB
+                                # session; never overwrite a session that is already logged in.
+                                if not driver_has_fb_session(worker_driver):
+                                    fb_cookie_str = get_configured_fb_cookie()
+                                    if fb_cookie_str:
+                                        inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True)
                                 wait_facebook_pace()
 
                             worker_driver.get(url)
@@ -8179,6 +8212,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         pass
                                     if is_facebook_login_wall(worker_driver):
                                         raise Exception(FB_LOGIN_REQUIRED_MARKER)
+                                fb_login_wall_streak = 0
                             if is_tiktok:
                                 try:
                                     closed_tiktok_gate = dismiss_tiktok_login_gate(worker_driver)
@@ -8686,6 +8720,24 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 )
                             except Exception:
                                 pass
+                        if FB_LOGIN_REQUIRED_MARKER in str(e):
+                            fb_login_wall_streak += 1
+                            if fb_login_wall_streak >= FB_LOGIN_WALL_STOP_AFTER:
+                                ui_call(
+                                    ui_add_log,
+                                    row,
+                                    "WARN",
+                                    "STOP",
+                                    (
+                                        f"{log_block_name}: Dừng block này vì Chrome chưa đăng nhập Facebook "
+                                        f"({fb_login_wall_streak} link liên tiếp ra trang Log in). "
+                                        f"Bấm nút Chrome của block để đăng nhập FB (hoặc cập nhật Cookie FB), "
+                                        f"rồi bấm Chạy lỗi / Chạy tiếp. Các dòng còn lại chưa bị đụng tới."
+                                    ),
+                                    "fail",
+                                )
+                                write_log(f"[WARN] {log_block_name}: stopped after {fb_login_wall_streak} consecutive FB login walls")
+                                break
             finally:
                 if (not local_is_main_driver) and worker_driver:
                     try:
