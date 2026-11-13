@@ -21,7 +21,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -3150,7 +3150,7 @@ def _run_job(job_id: str):
                         target_block_name=req.get("target_block_name"),
                     )
 
-                MAX_PARALLEL_MULTI_SHEET = 8
+                MAX_PARALLEL_MULTI_SHEET = 15
                 worker_count = max(1, min(total_multi, MAX_PARALLEL_MULTI_SHEET))
                 with ThreadPoolExecutor(max_workers=worker_count) as ex:
                     futures = [
@@ -6632,8 +6632,8 @@ function removeMappingBlock(index) {
 
 function addMappingBlock() {
   const blocks = ensureMappingBlocks(currentRunMode);
-  if (currentRunMode === 'seeding' && blocks.length >= 10) {
-    alert('Seeding hiện hỗ trợ tối đa 10 block.');
+  if (currentRunMode === 'seeding' && blocks.length >= 15) {
+    alert('Seeding hiện hỗ trợ tối đa 15 block.');
     return;
   }
   blocks.push(defaultMappingBlock(currentRunMode, blocks.length + 1));
@@ -10121,7 +10121,11 @@ async function continueJob() {
     if (!['stopped', 'failed', 'completed'].includes(status)) {
       throw new Error('Chỉ có thể chạy tiếp từ job đã dừng, lỗi hoặc hoàn tất');
     }
-    const out = await req('/api/jobs/' + currentJobId + '/continue', { method: 'POST' });
+    const continueFlags = rememberCurrentRunFlags(jobMode || currentRunMode);
+    const out = await req('/api/jobs/' + currentJobId + '/continue', {
+      method: 'POST',
+      body: JSON.stringify({ force_run_all: !!continueFlags.force_run_all }),
+    });
     currentJobId = out.job_id;
     setSelectedJobIdForMode(jobMode, out.job_id);
     await refreshJobs();
@@ -10697,8 +10701,8 @@ def start_job(request: Request, payload: JobStartRequest):
     if run_mode == "seeding":
         candidate_blocks = [m for m in mapping_payload if str(m.get("sheet_name", "")).strip() or str(m.get("name", "")).strip()]
         if candidate_blocks:
-            if len(candidate_blocks) > 10:
-                raise HTTPException(status_code=400, detail="Seeding hiện hỗ trợ tối đa 10 sheet / 1 lần chạy")
+            if len(candidate_blocks) > 15:
+                raise HTTPException(status_code=400, detail="Seeding hiện hỗ trợ tối đa 15 sheet / 1 lần chạy")
             for idx, block in enumerate(candidate_blocks, start=1):
                 block_sheet_url = sheet_url
                 block_sheet_name = str(block.get("sheet_name", "")).strip() or str(block.get("name", "")).strip()
@@ -10957,8 +10961,12 @@ def stop_job(job_id: str, request: Request):
 
 
 @app.post("/api/jobs/{job_id}/continue")
-def continue_job(job_id: str, request: Request):
+def continue_job(job_id: str, request: Request, payload: dict | None = Body(default=None)):
     owner_email = _require_api_auth(request)
+    # Use the "Chạy đè" toggle as it is NOW, not the value saved on the old job.
+    override_force_run_all = None
+    if isinstance(payload, dict) and "force_run_all" in payload:
+        override_force_run_all = bool(payload.get("force_run_all"))
     with JOBS_LOCK:
         source_job = JOBS.get(job_id)
         if not source_job or _job_owner_email(source_job) != owner_email:
@@ -10980,6 +10988,8 @@ def continue_job(job_id: str, request: Request):
 
     source_request["root_job_id"] = root_job_id
     source_request["source_job_id"] = job_id
+    if override_force_run_all is not None:
+        source_request["force_run_all"] = override_force_run_all
 
     line_hints = [f"{name} #{line}" for name, line in list(next_lines.items())[:3]]
     detail = "Chạy tiếp"

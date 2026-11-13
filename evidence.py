@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import random
 import time
 import threading
 import shutil
@@ -68,6 +69,14 @@ CAPTURE_ZOOM_PERCENT = 90
 PAGE_READY_TIMEOUT = 5
 PAGE_READY_FALLBACK_SLEEP = 0.5
 PER_LINK_BASE_WAIT = 0.2
+# Facebook pacing: keep parallel workers from hammering FB at the same instant,
+# which looks bot-like and gets the shared cookie session logged out.
+# Global gap between ANY two FB page loads (all blocks combined), randomized.
+FB_GLOBAL_GAP_MIN_SEC = 0.8
+FB_GLOBAL_GAP_MAX_SEC = 1.8
+# Per-worker random pause before each FB link.
+FB_LINK_JITTER_MIN_SEC = 1.0
+FB_LINK_JITTER_MAX_SEC = 3.0
 TIKTOK_SCROLL_WAIT_1 = 0.3
 TIKTOK_SCROLL_WAIT_2 = 0.4
 ZOOM_SETTLE_SLEEP = 0.15
@@ -468,6 +477,11 @@ def format_user_friendly_error(err: Any) -> str:
         return f"{prefix}Lỗi kết nối mạng: Hết thời gian kết nối (Timeout)."
 
     # 9. App specific errors
+    if "fb_login_required" in low:
+        return (
+            f"{prefix}Chrome chưa đăng nhập Facebook (FB hiện trang Log in thay vì bài viết). "
+            f"Cập nhật lại Cookie FB trong Cài đặt hoặc đăng nhập lại Chrome của block này, rồi bấm Chạy lỗi."
+        )
     if "tiktok_url_mismatch" in low or "url mismatch" in low:
         return f"{prefix}TikTok tự chuyển hướng sang bài viết khác so với link dòng."
     if "nội dung không khả dụng" in low or "khong kha dung" in low or "unavailable" in low:
@@ -3777,6 +3791,65 @@ def dismiss_facebook_login_gate(driver) -> bool:
         return False
 
 
+FB_LOGIN_REQUIRED_MARKER = "FB_LOGIN_REQUIRED"
+
+_FB_PACE_LOCK = threading.Lock()
+_FB_NEXT_SLOT = 0.0
+
+
+def wait_facebook_pace() -> None:
+    """
+    Space out Facebook page loads across all worker threads: a short random
+    per-worker pause, then a shared queue slot so no two loads fire at once.
+    """
+    global _FB_NEXT_SLOT
+    try:
+        time.sleep(random.uniform(FB_LINK_JITTER_MIN_SEC, FB_LINK_JITTER_MAX_SEC))
+    except Exception:
+        pass
+    with _FB_PACE_LOCK:
+        now = time.monotonic()
+        slot = max(now, _FB_NEXT_SLOT)
+        _FB_NEXT_SLOT = slot + random.uniform(FB_GLOBAL_GAP_MIN_SEC, FB_GLOBAL_GAP_MAX_SEC)
+    delay = slot - now
+    if delay > 0:
+        time.sleep(delay)
+
+
+def is_facebook_login_wall(driver) -> bool:
+    """
+    Detect when Facebook serves its full-page login screen instead of the post
+    (session/cookie not logged in). The URL often stays on the post link, so
+    route-based checks miss it. A dismissible "See more on Facebook" dialog over
+    real post content is NOT treated as a login wall.
+    """
+    try:
+        cur = str(driver.current_url or "").lower()
+    except Exception:
+        cur = ""
+    if "facebook.com" in cur and any(r in cur for r in ("/login/", "/login.php", "/checkpoint/")):
+        return True
+    script = """
+    const visible = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const st = window.getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
+    };
+    const inDialog = (el) => !!(el && el.closest("[role='dialog'], div[aria-modal='true']"));
+    const email = Array.from(document.querySelectorAll("input[name='email']")).find(visible);
+    const pass = Array.from(document.querySelectorAll("input[name='pass'], input[type='password']")).find(visible);
+    if (!email || !pass) return false;
+    if (inDialog(email) || inDialog(pass)) return false;
+    const hasPost = Array.from(document.querySelectorAll("[role='article'], [data-pagelet^='FeedUnit'], [data-ad-preview='message']")).some(visible);
+    return !hasPost;
+    """
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
 def parse_cookie_string(raw_cookies: str) -> list[dict]:
     """
     Parses a cookie input string in various formats:
@@ -7063,6 +7136,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         scan_url_cols: set[int] = set()
         url_formula_cols: set[int] = set()
         unformatted_cols: set[int] = set()
+        # Screenshot cells hold =IMAGE("...") formulas whose displayed value is empty,
+        # so they must be read as FORMULA to know whether a screenshot already exists.
+        screenshot_formula_cols: set[int] = set()
         for m in normalized_mappings:
             idx_url = col_letter_to_index(m["col_url"])
             idx_profile = col_letter_to_index(m["col_profile"]) if m["col_profile"] else None
@@ -7081,6 +7157,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 unformatted_cols.add(idx_drive)
             if idx_screenshot:
                 unformatted_cols.add(idx_screenshot)
+                screenshot_formula_cols.add(idx_screenshot)
             if idx_air_date:
                 unformatted_cols.add(idx_air_date)
             if mode_name == "scan" and idx_url:
@@ -7091,6 +7168,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         unformatted_column_cache = _batch_fetch_columns(unformatted_cols, value_render_option="UNFORMATTED_VALUE")
         formula_column_cache = _batch_fetch_columns(scan_url_cols, value_render_option="FORMULA") if scan_url_cols else {}
         formula_url_column_cache = _batch_fetch_columns(url_formula_cols, value_render_option="FORMULA") if url_formula_cols else {}
+        screenshot_formula_cache = (
+            _batch_fetch_columns(screenshot_formula_cols, value_render_option="FORMULA") if screenshot_formula_cols else {}
+        )
 
         def _extract_http_url(raw_value: str) -> str:
             raw = str(raw_value or "").strip()
@@ -7170,7 +7250,14 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             else:
                 results = list(unformatted_column_cache.get(idx_drive, []))[start_offset:] if idx_drive else []
             captions_existing = list(unformatted_column_cache.get(idx_content, []))[start_offset:] if idx_content else []
-            screenshots_existing = list(unformatted_column_cache.get(idx_screenshot, []))[start_offset:] if idx_screenshot else []
+            screenshots_existing = []
+            if idx_screenshot:
+                shot_shown = list(unformatted_column_cache.get(idx_screenshot, []))[start_offset:]
+                shot_formula = list(screenshot_formula_cache.get(idx_screenshot, []))[start_offset:]
+                for i in range(max(len(shot_shown), len(shot_formula))):
+                    shown_val = str(shot_shown[i] if i < len(shot_shown) else "").strip()
+                    formula_val = str(shot_formula[i] if i < len(shot_formula) else "").strip()
+                    screenshots_existing.append(formula_val or shown_val)
             air_dates = list(unformatted_column_cache.get(idx_air_date, []))[start_offset:] if idx_air_date else []
             prepared_blocks.append(
                 {
@@ -7800,21 +7887,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     eta_text = _start_row(log_block_name, row, url)
 
                     if (not is_scan_mode) and (not app.force_run_all.get()):
-                        drive_ready = False
-                        content_ready = False
-                        screenshot_ready = False
-                        if idx_drive and idx < len(results):
-                            drive_val = str(results[idx] or "").strip().lower()
-                            drive_ready = ("drive.google.com" in drive_val) or drive_val.startswith("http")
-                        if idx_content and idx < len(captions_existing):
-                            content_ready = bool(str(captions_existing[idx] or "").strip())
-                        if idx_screenshot and idx < len(screenshots_existing):
-                            shot_val = str(screenshots_existing[idx] or "").strip().lower()
-                            screenshot_ready = bool(shot_val) and (
-                                "drive.google.com" in shot_val
-                                or shot_val.startswith("http")
-                                or "image(" in shot_val
-                            )
+                        # "Chạy đè" OFF: a cell counts as done when it has any data,
+                        # except error markers ("ERR: ...", "ERR_CAPTION: ...") left by a failed run.
+                        def _cell_has_data(values: list, i: int) -> bool:
+                            if i >= len(values):
+                                return False
+                            val = str(values[i] or "").strip()
+                            return bool(val) and not val.upper().startswith("ERR")
+
+                        drive_ready = bool(idx_drive) and _cell_has_data(results, idx)
+                        content_ready = bool(idx_content) and _cell_has_data(captions_existing, idx)
+                        screenshot_ready = bool(idx_screenshot) and _cell_has_data(screenshots_existing, idx)
 
                         required_outputs_ready = True
                         if idx_drive:
@@ -7864,6 +7947,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 fb_cookie_str = get_configured_fb_cookie()
                                 if fb_cookie_str:
                                     inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True)
+                                wait_facebook_pace()
 
                             worker_driver.get(url)
                             wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
@@ -7998,6 +8082,31 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         "start",
                                     )
                                     time.sleep(1.2)
+                                if is_facebook_login_wall(worker_driver):
+                                    # Chrome session is logged out: Facebook shows its full login page
+                                    # instead of the post. Re-inject cookie and reload once before failing,
+                                    # so we never upload a login-page screenshot as a successful capture.
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "LOGIN",
+                                        f"{block_name}: Facebook hiện trang đăng nhập, đang bơm lại cookie và tải lại...",
+                                        "start",
+                                    )
+                                    try:
+                                        fb_cookie_retry = get_configured_fb_cookie()
+                                        if fb_cookie_retry:
+                                            inject_fb_cookies_into_driver(worker_driver, fb_cookie_retry, force=True)
+                                        wait_facebook_pace()
+                                        worker_driver.get(url)
+                                        wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
+                                        time.sleep(PER_LINK_BASE_WAIT)
+                                        dismiss_facebook_login_gate(worker_driver)
+                                    except Exception:
+                                        pass
+                                    if is_facebook_login_wall(worker_driver):
+                                        raise Exception(FB_LOGIN_REQUIRED_MARKER)
                             if is_tiktok:
                                 try:
                                     closed_tiktok_gate = dismiss_tiktok_login_gate(worker_driver)
@@ -8512,9 +8621,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     except Exception:
                         pass
 
-        # Run all configured posts in parallel (cap at 8 concurrent workers
+        # Run all configured posts in parallel (cap at 15 concurrent workers
         # to avoid overwhelming system resources when many blocks are queued).
-        MAX_PARALLEL_BLOCK_WORKERS = 8
+        MAX_PARALLEL_BLOCK_WORKERS = 15
         worker_total = max(1, min(len(prepared_blocks), MAX_PARALLEL_BLOCK_WORKERS))
         if len(prepared_blocks) > 1:
             with ThreadPoolExecutor(max_workers=worker_total) as ex:
