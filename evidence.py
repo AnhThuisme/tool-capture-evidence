@@ -69,6 +69,11 @@ CAPTURE_ZOOM_PERCENT = 90
 PAGE_READY_TIMEOUT = 5
 PAGE_READY_FALLBACK_SLEEP = 0.5
 PER_LINK_BASE_WAIT = 0.2
+# How many blocks (Chrome windows) run at the same time. Up to 15 blocks can be
+# added; extra blocks wait and start as soon as a running block finishes.
+# Roughly 8 per Facebook account is safe; more on one account gets the session
+# logged out by Facebook. Change this single number to tune.
+MAX_PARALLEL_BLOCKS = 8
 # Facebook pacing: keep parallel workers from hammering FB at the same instant,
 # which looks bot-like and gets the shared cookie session logged out.
 # Global gap between ANY two FB page loads (all blocks combined), randomized.
@@ -8745,10 +8750,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     except Exception:
                         pass
 
-        # Run all configured posts in parallel (cap at 15 concurrent workers
-        # to avoid overwhelming system resources when many blocks are queued).
-        MAX_PARALLEL_BLOCK_WORKERS = 15
-        worker_total = max(1, min(len(prepared_blocks), MAX_PARALLEL_BLOCK_WORKERS))
+        # Run configured posts in parallel, at most MAX_PARALLEL_BLOCKS at once;
+        # the rest queue and start when a running block finishes.
+        worker_total = max(1, min(len(prepared_blocks), MAX_PARALLEL_BLOCKS))
         if len(prepared_blocks) > 1:
             with ThreadPoolExecutor(max_workers=worker_total) as ex:
                 futures = [ex.submit(_run_block, b) for b in prepared_blocks]
