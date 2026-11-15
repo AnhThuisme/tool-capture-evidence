@@ -74,13 +74,14 @@ PER_LINK_BASE_WAIT = 0.2
 # Roughly 8 per Facebook account is safe; more on one account gets the session
 # logged out by Facebook. Change this single number to tune.
 MAX_PARALLEL_BLOCKS = 8
-# Facebook pacing: keep parallel workers from hammering FB at the same instant,
-# which looks bot-like and gets the shared cookie session logged out.
-# Global gap between ANY two FB page loads (all blocks combined), randomized.
-# Kept small so 15 workers still run truly in parallel (~2 loads/s max); it only
-# prevents many Chrome windows hitting FB in the exact same instant.
-FB_GLOBAL_GAP_MIN_SEC = 0.3
-FB_GLOBAL_GAP_MAX_SEC = 0.7
+# Facebook pacing: cap how many FB links the WHOLE tool opens per minute (all
+# blocks combined). Facebook logs the account out after too many page views in a
+# short time (seen at ~20 links/min for ~45 min). Lower = slower but safer.
+# Change this single number to tune.
+FB_MAX_LINKS_PER_MINUTE = 10
+# Each gap between two FB loads is randomized +/-20% around 60/FB_MAX_LINKS_PER_MINUTE
+# so the rhythm is not machine-regular; the average stays at the cap.
+FB_GLOBAL_GAP_JITTER = 0.2
 # Per-worker random pause before each FB link.
 FB_LINK_JITTER_MIN_SEC = 1.0
 FB_LINK_JITTER_MAX_SEC = 3.0
@@ -3849,23 +3850,42 @@ _FB_PACE_LOCK = threading.Lock()
 _FB_NEXT_SLOT = 0.0
 
 
-def wait_facebook_pace() -> None:
+def _sleep_unless_stopped(seconds: float, should_stop=None) -> bool:
+    """Sleep in short steps; return False early if should_stop() becomes True."""
+    end = time.monotonic() + max(0.0, float(seconds))
+    while True:
+        if should_stop is not None:
+            try:
+                if should_stop():
+                    return False
+            except Exception:
+                pass
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            return True
+        time.sleep(min(0.5, remaining))
+
+
+def wait_facebook_pace(should_stop=None) -> None:
     """
-    Space out Facebook page loads across all worker threads: a short random
-    per-worker pause, then a shared queue slot so no two loads fire at once.
+    Rate-limit Facebook page loads across ALL worker threads to
+    FB_MAX_LINKS_PER_MINUTE: a short random per-worker pause, then a shared
+    queue slot spaced ~60/rate seconds apart. Returns early if should_stop().
     """
     global _FB_NEXT_SLOT
+    if not _sleep_unless_stopped(random.uniform(FB_LINK_JITTER_MIN_SEC, FB_LINK_JITTER_MAX_SEC), should_stop):
+        return
     try:
-        time.sleep(random.uniform(FB_LINK_JITTER_MIN_SEC, FB_LINK_JITTER_MAX_SEC))
+        rate = max(1.0, float(FB_MAX_LINKS_PER_MINUTE))
     except Exception:
-        pass
+        rate = 10.0
+    base_gap = 60.0 / rate
+    jitter = max(0.0, min(0.9, float(FB_GLOBAL_GAP_JITTER)))
     with _FB_PACE_LOCK:
         now = time.monotonic()
         slot = max(now, _FB_NEXT_SLOT)
-        _FB_NEXT_SLOT = slot + random.uniform(FB_GLOBAL_GAP_MIN_SEC, FB_GLOBAL_GAP_MAX_SEC)
-    delay = slot - now
-    if delay > 0:
-        time.sleep(delay)
+        _FB_NEXT_SLOT = slot + base_gap * random.uniform(1.0 - jitter, 1.0 + jitter)
+    _sleep_unless_stopped(slot - now, should_stop)
 
 
 def is_facebook_login_wall(driver) -> bool:
@@ -8057,7 +8077,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     fb_cookie_str = get_configured_fb_cookie()
                                     if fb_cookie_str:
                                         inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True)
-                                wait_facebook_pace()
+                                wait_facebook_pace(should_stop=lambda: not getattr(app, "is_running", True))
 
                             worker_driver.get(url)
                             wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
@@ -8208,7 +8228,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         fb_cookie_retry = get_configured_fb_cookie()
                                         if fb_cookie_retry:
                                             inject_fb_cookies_into_driver(worker_driver, fb_cookie_retry, force=True)
-                                        wait_facebook_pace()
+                                        wait_facebook_pace(should_stop=lambda: not getattr(app, "is_running", True))
                                         worker_driver.get(url)
                                         wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
                                         time.sleep(PER_LINK_BASE_WAIT)
