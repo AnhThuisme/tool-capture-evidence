@@ -4041,13 +4041,13 @@ def driver_has_fb_session(driver) -> bool:
         return False
 
 
-def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False) -> bool:
+def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False, user_email: str = "") -> bool:
     """
     Injects parsed Facebook cookies into a Selenium driver session.
     """
     if not driver:
         return False
-    if not is_fb_cookie_enabled():
+    if not is_fb_cookie_enabled(user_email):
         return False
     if not force and getattr(driver, "_fb_cookies_injected", False):
         return True
@@ -4140,9 +4140,29 @@ def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False)
 
 
 def get_configured_fb_cookie(user_email: str = "") -> str:
-    """Read configured Facebook Cookie from app instance, SETTINGS_PATH or environment."""
+    """
+    Read the Facebook cookie to inject. Priority:
+    1) the cookie saved in Settings by the user who runs the job (user_email),
+    2) FB_COOKIE env / desktop app field, 3) legacy/global settings,
+    4) any other user's cookie (last resort, kept for backward compatibility).
+    The job owner's own cookie must win: previously a job read the FIRST user in
+    the settings file that had a cookie, so updating your cookie had no effect.
+    """
+    user_email = str(user_email or "").strip().lower()
     if not is_fb_cookie_enabled(user_email):
         return ""
+    data: dict = {}
+    try:
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+    except Exception as e:
+        write_log(f"[WARN] Failed to read FB cookie setting: {e}")
+        data = {}
+    if user_email and isinstance(data.get("users"), dict):
+        user_data = data["users"].get(user_email, {})
+        if isinstance(user_data, dict) and str(user_data.get("fb_cookie") or "").strip():
+            return str(user_data["fb_cookie"]).strip()
     env_cookie = os.environ.get("FB_COOKIE", "").strip()
     if env_cookie:
         return env_cookie
@@ -4154,13 +4174,10 @@ def get_configured_fb_cookie(user_email: str = "") -> str:
     except Exception:
         pass
     try:
-        if os.path.exists(SETTINGS_PATH):
-            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f) or {}
-            if user_email and isinstance(data.get("users"), dict):
-                user_data = data["users"].get(user_email, {})
-                if isinstance(user_data, dict) and user_data.get("fb_cookie"):
-                    return str(user_data["fb_cookie"]).strip()
+        if data:
+            legacy = data.get("_legacy_defaults")
+            if isinstance(legacy, dict) and str(legacy.get("fb_cookie") or "").strip():
+                return str(legacy["fb_cookie"]).strip()
             if data.get("fb_cookie"):
                 return str(data["fb_cookie"]).strip()
             if isinstance(data.get("users"), dict):
@@ -6749,6 +6766,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
         if hasattr(app, "add_live_log"):
             app.add_live_log(row, state_left, state_right, message, tag)
 
+    # Email of the user who runs this job (web runs): used to read THEIR Facebook
+    # cookie from Settings instead of whichever user happens to be first in the file.
+    try:
+        job_owner_email = str(
+            (getattr(app, "_job_store", None) or {}).get("owner_email")
+            or getattr(app, "owner_email", "")
+            or ""
+        ).strip().lower()
+    except Exception:
+        job_owner_email = ""
+
     tracked_error_rows: set[int] = set()
     tracked_error_details: dict[int, str] = {}
     history_ready = False
@@ -7844,9 +7872,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 except Exception as e:
                     last = e
             if new_driver:
-                fb_cookie_str = get_configured_fb_cookie()
+                fb_cookie_str = get_configured_fb_cookie(job_owner_email)
                 if fb_cookie_str:
-                    inject_fb_cookies_into_driver(new_driver, fb_cookie_str)
+                    inject_fb_cookies_into_driver(new_driver, fb_cookie_str, user_email=job_owner_email)
                 return new_driver
             raise Exception(f"WORKER_CHROME_START_FAILED[{block_index}]: {last}")
 
@@ -8074,9 +8102,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 # Only inject the Settings cookie when this Chrome has no FB
                                 # session; never overwrite a session that is already logged in.
                                 if not driver_has_fb_session(worker_driver):
-                                    fb_cookie_str = get_configured_fb_cookie()
+                                    fb_cookie_str = get_configured_fb_cookie(job_owner_email)
                                     if fb_cookie_str:
-                                        inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True)
+                                        inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True, user_email=job_owner_email)
                                 wait_facebook_pace(should_stop=lambda: not getattr(app, "is_running", True))
 
                             worker_driver.get(url)
@@ -8225,9 +8253,9 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         "start",
                                     )
                                     try:
-                                        fb_cookie_retry = get_configured_fb_cookie()
+                                        fb_cookie_retry = get_configured_fb_cookie(job_owner_email)
                                         if fb_cookie_retry:
-                                            inject_fb_cookies_into_driver(worker_driver, fb_cookie_retry, force=True)
+                                            inject_fb_cookies_into_driver(worker_driver, fb_cookie_retry, force=True, user_email=job_owner_email)
                                         wait_facebook_pace(should_stop=lambda: not getattr(app, "is_running", True))
                                         worker_driver.get(url)
                                         wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
