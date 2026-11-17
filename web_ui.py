@@ -10835,7 +10835,11 @@ def start_job(request: Request, payload: JobStartRequest):
 
         # Launch every block's Chrome at the same time (was one-by-one, which made
         # later blocks start tens of seconds after the first ones).
+        # Only the blocks that start right away get a Chrome now; queued blocks open
+        # their own Chrome when their turn comes (no idle windows eating RAM).
         for launch_idx, launch_mapping in enumerate(mapped_blocks):
+            if launch_idx >= int(evidence.MAX_PARALLEL_BLOCKS):
+                break
             threading.Thread(
                 target=_launch_one_block_chrome,
                 args=(launch_idx, launch_mapping),

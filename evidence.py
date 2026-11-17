@@ -73,12 +73,12 @@ PER_LINK_BASE_WAIT = 0.2
 # added; extra blocks wait and start as soon as a running block finishes.
 # Roughly 8 per Facebook account is safe; more on one account gets the session
 # logged out by Facebook. Change this single number to tune.
-MAX_PARALLEL_BLOCKS = 8
+MAX_PARALLEL_BLOCKS = 5
 # Facebook pacing: cap how many FB links the WHOLE tool opens per minute (all
 # blocks combined). Facebook logs the account out after too many page views in a
 # short time (seen at ~20 links/min for ~45 min). Lower = slower but safer.
 # Change this single number to tune.
-FB_MAX_LINKS_PER_MINUTE = 10
+FB_MAX_LINKS_PER_MINUTE = 15
 # Each gap between two FB loads is randomized +/-20% around 60/FB_MAX_LINKS_PER_MINUTE
 # so the rhythm is not machine-regular; the average stays at the cap.
 FB_GLOBAL_GAP_JITTER = 0.2
@@ -123,6 +123,65 @@ def _local_port_open(port: int, timeout_sec: float = 0.5) -> bool:
             return True
     except Exception:
         return False
+
+
+# Close each block's Chrome window once that block finishes (cookies/login stay
+# saved in the block's profile folder, so the next run still starts logged in).
+AUTO_CLOSE_BLOCK_CHROME = True
+# While paused longer than this, close the block's Chrome; it reopens on resume.
+PAUSE_CLOSE_CHROME_AFTER_SEC = 10 * 60
+
+
+def _kill_port_listener(port: int) -> None:
+    """Force-kill the process listening on a local port (last resort)."""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, timeout=6, check=False
+            ).stdout or ""
+            for raw in out.splitlines():
+                parts = raw.split()
+                if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[3].upper() == "LISTENING":
+                    if parts[1].rsplit(":", 1)[-1] == str(port) and parts[4].isdigit():
+                        subprocess.run(
+                            ["taskkill", "/PID", parts[4], "/F", "/T"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False,
+                        )
+                        return
+        else:
+            out = subprocess.run(
+                ["lsof", "-nPi", f"TCP:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True, timeout=6, check=False
+            ).stdout or ""
+            for pid in out.split():
+                if pid.isdigit():
+                    os.kill(int(pid), signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def close_block_chrome(driver, port: int | None) -> None:
+    """Gracefully close the whole Chrome (not just the chromedriver session).
+
+    driver.quit() on a driver attached via debuggerAddress leaves Chrome open,
+    so ask Chrome itself to close via CDP, then fall back to killing the port.
+    """
+    if driver is not None:
+        try:
+            driver.execute_cdp_cmd("Browser.close", {})
+        except Exception:
+            pass
+        try:
+            driver.quit()
+        except Exception:
+            pass
+    if not port:
+        return
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline:
+        if not _local_port_open(port, timeout_sec=0.3):
+            return
+        time.sleep(0.3)
+    _kill_port_listener(port)
 
 TIKTOK_SCROLL_WAIT_1 = 0.3
 TIKTOK_SCROLL_WAIT_2 = 0.4
@@ -7782,6 +7841,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             )
             return any(marker in msg for marker in recoverable_markers)
 
+        _dispatch_state: dict = {}
+
         def _start_worker_driver(block_index: int, block_mode: str, fast_recovery: bool = False):
             if scan_only_request:
                 return None
@@ -7808,7 +7869,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 # finish. Starting a second Chrome on the same port/profile meanwhile
                 # makes auto-launch kill it, leaving this worker with a dead driver.
                 wait_chrome_launch_done(worker_port, timeout_sec=CHROME_LAUNCH_WAIT_MAX_SEC)
-                attach_deadline = time.monotonic() + WORKER_ATTACH_WAIT_SEC
+                # Auto-launch only races with blocks starting right at job start; a
+                # queued block starting later just checks once, then opens its own.
+                started_at = _dispatch_state.get("t") or time.monotonic()
+                just_started = (time.monotonic() - started_at) < 20.0
+                attach_deadline = time.monotonic() + (WORKER_ATTACH_WAIT_SEC if just_started else 0.0)
                 while True:
                     if _local_port_open(worker_port):
                         port_ready = True
@@ -8015,8 +8080,30 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     url = links[idx] if idx < len(links) else ""
                     if not app.is_running:
                         break
-                    while getattr(app, "is_paused", False):
-                        time.sleep(0.5)
+                    if getattr(app, "is_paused", False):
+                        pause_started = time.monotonic()
+                        chrome_closed_for_pause = False
+                        while getattr(app, "is_paused", False) and getattr(app, "is_running", True):
+                            if (
+                                AUTO_CLOSE_BLOCK_CHROME
+                                and worker_driver
+                                and not chrome_closed_for_pause
+                                and time.monotonic() - pause_started >= PAUSE_CLOSE_CHROME_AFTER_SEC
+                            ):
+                                close_block_chrome(worker_driver, get_post_port(block_index, browser_port))
+                                if local_is_main_driver:
+                                    app.driver = None
+                                worker_driver = None
+                                chrome_closed_for_pause = True
+                                write_log(f"[INFO] Block {block_index}: closed Chrome after a long pause")
+                            time.sleep(0.5)
+                        if not getattr(app, "is_running", True):
+                            break
+                        if chrome_closed_for_pause:
+                            worker_driver = _start_worker_driver(block_index, block_mode)
+                            if local_is_main_driver:
+                                app.driver = worker_driver
+                            write_log(f"[INFO] Block {block_index}: reopened Chrome after resume")
 
                     row = row_numbers[idx] if idx < len(row_numbers) else (idx + 4)
                     if row < start_at:
@@ -8793,14 +8880,19 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 break
             finally:
                 if (not local_is_main_driver) and worker_driver:
-                    try:
-                        worker_driver.quit()
-                    except Exception:
-                        pass
+                    if AUTO_CLOSE_BLOCK_CHROME:
+                        close_block_chrome(worker_driver, get_post_port(block_index, browser_port))
+                        write_log(f"[INFO] Block {block_index}: closed Chrome after finishing")
+                    else:
+                        try:
+                            worker_driver.quit()
+                        except Exception:
+                            pass
 
         # Run configured posts in parallel, at most MAX_PARALLEL_BLOCKS at once;
         # the rest queue and start when a running block finishes.
         worker_total = max(1, min(len(prepared_blocks), MAX_PARALLEL_BLOCKS))
+        _dispatch_state["t"] = time.monotonic()
         if len(prepared_blocks) > 1:
             with ThreadPoolExecutor(max_workers=worker_total) as ex:
                 futures = [ex.submit(_run_block, b) for b in prepared_blocks]
@@ -8892,10 +8984,13 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             raise
     finally:
         if app.driver:
-            try:
-                app.driver.quit()
-            except:
-                pass
+            if AUTO_CLOSE_BLOCK_CHROME:
+                close_block_chrome(app.driver, browser_port)
+            else:
+                try:
+                    app.driver.quit()
+                except:
+                    pass
 
 # ================= RUN =================
 def run_headless(drive_id: str, sheet_url: str, sheet_name: str, start_line: int = 4, force_run_all: bool = False, browser_port: int = 9223):
