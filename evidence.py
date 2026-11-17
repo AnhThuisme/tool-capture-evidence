@@ -4226,6 +4226,21 @@ def inject_fb_live_session(driver, owner_email: str = "") -> bool:
         cookies = [dict(c) for c in (saved or {}).get("cookies") or []]
     if not cookies or not driver or not hasattr(driver, "execute_cdp_cmd"):
         return False
+    # Remove this Chrome's old FB cookies first. Stale c_user/xs copies on other
+    # domains (e.g. .www.facebook.com from the Settings cookie) are sent alongside
+    # the good ones and FB keeps showing the login page.
+    try:
+        old = (driver.execute_cdp_cmd("Network.getCookies", {"urls": _FB_COOKIE_URLS}) or {}).get("cookies") or []
+        for oc in old:
+            try:
+                driver.execute_cdp_cmd(
+                    "Network.deleteCookies",
+                    {"name": oc.get("name"), "domain": oc.get("domain"), "path": oc.get("path") or "/"},
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
     count = 0
     for c in cookies:
         params = {"name": c["name"], "value": c["value"], "domain": c.get("domain") or ".facebook.com", "path": c.get("path") or "/"}

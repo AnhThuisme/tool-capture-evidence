@@ -10818,20 +10818,24 @@ def start_job(request: Request, payload: JobStartRequest):
         mapped_blocks = list(mapping_payload)
         run_mode_hint = run_mode
 
-        def _launch_one_block_chrome(idx: int, mapping: dict[str, Any]):
+        def _launch_one_block_chrome(idx: int, mapping: dict[str, Any], launch_event=None):
             block_mode = _normalize_run_mode(str((mapping or {}).get("mode", run_mode_hint)))
-            if block_mode == "scan":
-                return
             block_port = evidence.get_post_port(idx, _get_mode_base_port(block_mode))
-            block_profile = _get_mode_profile(block_mode, idx, browser_port=block_port)
-            ok, info = evidence.launch_chrome_for_login(
-                browser_port=block_port,
-                profile_path=block_profile,
-            )
-            if not ok:
-                evidence.write_log(
-                    f"[WARN] Auto launch Chrome failed ({block_mode} block {idx + 1}, port {block_port}): {info}"
+            try:
+                if block_mode == "scan":
+                    return
+                block_profile = _get_mode_profile(block_mode, idx, browser_port=block_port)
+                ok, info = evidence.launch_chrome_for_login(
+                    browser_port=block_port,
+                    profile_path=block_profile,
                 )
+                if not ok:
+                    evidence.write_log(
+                        f"[WARN] Auto launch Chrome failed ({block_mode} block {idx + 1}, port {block_port}): {info}"
+                    )
+            finally:
+                if launch_event is not None:
+                    evidence._mark_chrome_launch_done(block_port, launch_event)
 
         # Launch every block's Chrome at the same time (was one-by-one, which made
         # later blocks start tens of seconds after the first ones).
@@ -10840,9 +10844,15 @@ def start_job(request: Request, payload: JobStartRequest):
         for launch_idx, launch_mapping in enumerate(mapped_blocks):
             if launch_idx >= int(evidence.MAX_PARALLEL_BLOCKS):
                 break
+            # Mark the port as "launching" BEFORE the job starts, so a block worker
+            # never opens a second Chrome on the same port/profile meanwhile (that
+            # made one of them get killed: "target window already closed").
+            launch_mode = _normalize_run_mode(str((launch_mapping or {}).get("mode", run_mode_hint)))
+            launch_port = evidence.get_post_port(launch_idx, _get_mode_base_port(launch_mode))
+            launch_event = evidence._mark_chrome_launch_start(launch_port)
             threading.Thread(
                 target=_launch_one_block_chrome,
-                args=(launch_idx, launch_mapping),
+                args=(launch_idx, launch_mapping, launch_event),
                 daemon=True,
             ).start()
 
