@@ -164,7 +164,16 @@ def close_block_chrome(driver, port: int | None) -> None:
 
     driver.quit() on a driver attached via debuggerAddress leaves Chrome open,
     so ask Chrome itself to close via CDP, then fall back to killing the port.
+    If another running block/job still uses this Chrome, only detach.
     """
+    if port_used_by_others(driver, port):
+        write_log(f"[INFO] Keep Chrome on port {port} open: still used by another block/job")
+        try:
+            if driver is not None:
+                driver.quit()
+        except Exception:
+            pass
+        return
     if driver is not None:
         try:
             driver.execute_cdp_cmd("Browser.close", {})
@@ -819,7 +828,64 @@ def create_chrome_driver(options: Options, service: Service | None = None):
         )
     except Exception:
         pass
+    _track_driver_port(driver, options)
     return driver
+
+
+# Count how many live drivers use each Chrome debug port, so finishing one
+# block/job never closes a Chrome that another running block/job still uses.
+_PORT_USERS_LOCK = threading.Lock()
+_PORT_USERS: dict[int, int] = {}
+
+
+def _options_debug_port(options) -> int | None:
+    try:
+        addr = (getattr(options, "experimental_options", {}) or {}).get("debuggerAddress")
+        if addr:
+            return int(str(addr).rsplit(":", 1)[-1])
+        for arg in list(getattr(options, "arguments", []) or []):
+            if str(arg).startswith("--remote-debugging-port="):
+                return int(str(arg).split("=", 1)[1])
+    except Exception:
+        pass
+    return None
+
+
+def _track_driver_port(driver, options) -> None:
+    port = _options_debug_port(options)
+    if not port or driver is None:
+        return
+    with _PORT_USERS_LOCK:
+        _PORT_USERS[port] = _PORT_USERS.get(port, 0) + 1
+    released = {"done": False}
+    original_quit = driver.quit
+
+    def _quit_and_release():
+        if not released["done"]:
+            released["done"] = True
+            with _PORT_USERS_LOCK:
+                left = _PORT_USERS.get(port, 1) - 1
+                if left > 0:
+                    _PORT_USERS[port] = left
+                else:
+                    _PORT_USERS.pop(port, None)
+        return original_quit()
+
+    try:
+        driver.quit = _quit_and_release
+        driver._evidence_port = port
+    except Exception:
+        pass
+
+
+def port_used_by_others(driver, port: int | None) -> bool:
+    """True if some OTHER live driver (another block/job) still uses this port."""
+    if not port:
+        return False
+    with _PORT_USERS_LOCK:
+        count = _PORT_USERS.get(int(port), 0)
+    mine = 1 if (driver is not None and getattr(driver, "_evidence_port", None) == int(port)) else 0
+    return count - mine > 0
 
 # ================= HELPERS =================
 def get_service_account_email(path: str | None = None):
@@ -7183,14 +7249,18 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             own_port_profile = get_block_profile(0, own_mode, browser_port=browser_port)
         except Exception:
             own_port_profile = ""
-        for cand in [
-            own_port_profile,
+        shared_fallbacks = [
             primary_profile_path,
             LOCAL_PROFILE_PATH,
             FB_PROFILE_PATH,
             FB_PROFILE_PATH_ALT,
             os.path.join(TEMP_DIR, "chrome_profile_temp"),
-        ]:
+        ]
+        if own_port_profile and os.path.normcase(os.path.abspath(own_port_profile)) != os.path.normcase(os.path.abspath(LOCAL_PROFILE_PATH)):
+            # Parallel run on its own port: never fall back to profiles that other
+            # blocks' Chromes may hold open (that hijacks/kills block 1's Chrome).
+            shared_fallbacks = [own_port_profile + "_alt"]
+        for cand in [own_port_profile, *shared_fallbacks]:
             cand = str(cand or "").strip()
             if cand and cand not in profile_candidates:
                 profile_candidates.append(cand)
@@ -7263,7 +7333,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             if not started:
                 chrome_path = find_chrome_binary()
                 if chrome_path:
-                    debug_profile = primary_profile_path or LOCAL_PROFILE_PATH
+                    # Own port profile: block 1's profile may be open in block 1's Chrome.
+                    debug_profile = own_port_profile or primary_profile_path or LOCAL_PROFILE_PATH
                     seed_profile_if_needed(debug_profile)
                     for port in [browser_port]:
                         try:
@@ -8028,19 +8099,30 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             # Local UX: prefer visible Chrome first so user can re-login when needed.
             headless_plan = (False,) if fast_recovery else (False, True)
             new_driver = None
-            for headless in headless_plan:
+            if fast_recovery:
+                # The old Chrome may still be exiting and holding the profile/port.
+                free_deadline = time.monotonic() + 5.0
+                while _local_port_open(worker_port) and time.monotonic() < free_deadline:
+                    time.sleep(0.5)
+            # Last resort: a sibling profile, in case the block's profile is still
+            # locked by a stuck Chrome (login comes back via the shared FB session).
+            launch_plan = [(worker_profile, h) for h in headless_plan] + [(worker_profile + "_alt", False)]
+            for launch_profile, headless in launch_plan:
                 try:
+                    os.makedirs(launch_profile, exist_ok=True)
                     new_driver = create_chrome_driver(
-                        build_chrome_options(user_data_dir=worker_profile, headless=headless, debug_port=worker_port),
+                        build_chrome_options(user_data_dir=launch_profile, headless=headless, debug_port=worker_port),
                         service=service,
                     )
                     break
                 except Exception as e:
                     last = e
+                    write_log(f"[WARN] Block {block_index}: Chrome start failed (profile='{launch_profile}', headless={headless}): {e}")
             if new_driver:
                 fb_cookie_str = get_configured_fb_cookie(job_owner_email)
                 if fb_cookie_str:
                     inject_fb_cookies_into_driver(new_driver, fb_cookie_str, user_email=job_owner_email)
+                inject_fb_live_session(new_driver, job_owner_email)
                 return new_driver
             raise Exception(f"WORKER_CHROME_START_FAILED[{block_index}]: {last}")
 
@@ -8935,6 +9017,14 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                 local_is_main_driver = bool(worker_driver) and (worker_driver is app.driver)
                             except Exception as restart_exc:
                                 write_log(f"[WARN] Browser recovery failed at row {row}: {restart_exc}")
+                                ui_call(
+                                    ui_add_log,
+                                    row,
+                                    "WARN",
+                                    "RETRY",
+                                    f"{log_block_name}: Không mở lại được Chrome: {str(restart_exc)[:160]}",
+                                    "fail",
+                                )
                             else:
                                 if row not in retry_once_by_row:
                                     retry_once_by_row.add(row)
