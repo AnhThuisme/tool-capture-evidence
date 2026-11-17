@@ -4100,6 +4100,90 @@ def driver_has_fb_session(driver) -> bool:
         return False
 
 
+_FB_LIVE_SESSION_LOCK = threading.Lock()
+# owner email -> {"cookies": [...], "at": monotonic time}
+_FB_LIVE_SESSIONS: dict[str, dict] = {}
+FB_LIVE_SESSION_REFRESH_SEC = 60.0
+_FB_COOKIE_URLS = ["https://www.facebook.com", "https://web.facebook.com", "https://m.facebook.com"]
+
+
+def remember_fb_live_session(driver, owner_email: str = "") -> None:
+    """
+    Save the FB cookies of a Chrome that just loaded a post while logged in, so
+    other blocks of the same user whose Chrome got logged out can reuse them
+    (the cookie in Settings is often already expired by then).
+    """
+    key = str(owner_email or "").strip().lower()
+    if not driver or not hasattr(driver, "execute_cdp_cmd"):
+        return
+    with _FB_LIVE_SESSION_LOCK:
+        prev = _FB_LIVE_SESSIONS.get(key)
+        if prev and time.monotonic() - float(prev.get("at") or 0) < FB_LIVE_SESSION_REFRESH_SEC:
+            return
+    try:
+        res = driver.execute_cdp_cmd("Network.getCookies", {"urls": _FB_COOKIE_URLS}) or {}
+        cookies = [dict(c) for c in (res.get("cookies") or []) if c.get("name") and c.get("value")]
+    except Exception:
+        return
+    names = {c["name"] for c in cookies}
+    if "c_user" not in names or "xs" not in names:
+        return
+    with _FB_LIVE_SESSION_LOCK:
+        _FB_LIVE_SESSIONS[key] = {"cookies": cookies, "at": time.monotonic()}
+
+
+def wait_fb_live_session(owner_email: str = "", timeout_sec: float = 30.0, should_stop=None) -> bool:
+    """Wait (briefly) until some block of this user has a working FB session to share."""
+    key = str(owner_email or "").strip().lower()
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    while True:
+        with _FB_LIVE_SESSION_LOCK:
+            if _FB_LIVE_SESSIONS.get(key):
+                return True
+        if time.monotonic() >= deadline or (should_stop and should_stop()):
+            return False
+        time.sleep(1.0)
+
+
+def forget_fb_live_session(owner_email: str = "") -> None:
+    """Drop a shared session that no longer works, so it can't overwrite a fresh Settings cookie."""
+    key = str(owner_email or "").strip().lower()
+    with _FB_LIVE_SESSION_LOCK:
+        _FB_LIVE_SESSIONS.pop(key, None)
+
+
+def inject_fb_live_session(driver, owner_email: str = "") -> bool:
+    """Copy a known-working FB session (from another block of the same user) into driver."""
+    key = str(owner_email or "").strip().lower()
+    with _FB_LIVE_SESSION_LOCK:
+        saved = _FB_LIVE_SESSIONS.get(key)
+        cookies = [dict(c) for c in (saved or {}).get("cookies") or []]
+    if not cookies or not driver or not hasattr(driver, "execute_cdp_cmd"):
+        return False
+    count = 0
+    for c in cookies:
+        params = {"name": c["name"], "value": c["value"], "domain": c.get("domain") or ".facebook.com", "path": c.get("path") or "/"}
+        for k in ("secure", "httpOnly"):
+            if k in c:
+                params[k] = bool(c[k])
+        if c.get("sameSite"):
+            params["sameSite"] = c["sameSite"]
+        try:
+            exp = float(c.get("expires") or -1)
+            if exp > 0:
+                params["expires"] = exp
+        except Exception:
+            pass
+        try:
+            driver.execute_cdp_cmd("Network.setCookie", params)
+            count += 1
+        except Exception:
+            pass
+    if count:
+        write_log(f"[INFO] Reused live FB session from another block ({count} cookies)")
+    return count > 0
+
+
 def inject_fb_cookies_into_driver(driver, raw_cookies: str, force: bool = False, user_email: str = "") -> bool:
     """
     Injects parsed Facebook cookies into a Selenium driver session.
@@ -7091,7 +7175,16 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 write_log(f"[WARN] Profile seed failed ({target_profile}): {e}")
 
         profile_candidates = []
+        # This run's own port profile first (matches what "Chrome 93xx"/auto-launch
+        # use). Falling back to block 1's profile while block 1's Chrome is open
+        # fails/hangs, which stalled queued multi-sheet blocks.
+        try:
+            own_mode = str(((mappings or [{}])[0] or {}).get("mode") or "seeding").strip().lower() or "seeding"
+            own_port_profile = get_block_profile(0, own_mode, browser_port=browser_port)
+        except Exception:
+            own_port_profile = ""
         for cand in [
+            own_port_profile,
             primary_profile_path,
             LOCAL_PROFILE_PATH,
             FB_PROFILE_PATH,
@@ -7121,7 +7214,15 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
             last_err = None
 
             # 1) Prefer attaching to an already launched Chrome (from "Launch Chrome").
+            # Only when the port is actually open: attaching to a closed port makes
+            # chromedriver hang ~1 min before failing.
+            wait_chrome_launch_done(browser_port, timeout_sec=CHROME_LAUNCH_WAIT_MAX_SEC)
+            port_wait_deadline = time.monotonic() + WORKER_ATTACH_WAIT_SEC
+            while not _local_port_open(browser_port) and time.monotonic() < port_wait_deadline:
+                time.sleep(0.5)
             try:
+                if not _local_port_open(browser_port):
+                    raise Exception(f"no Chrome listening on port {browser_port}")
                 attach_opts = Options()
                 attach_opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{browser_port}")
                 app.driver = create_chrome_driver(attach_opts, service=service)
@@ -8192,6 +8293,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     fb_cookie_str = get_configured_fb_cookie(job_owner_email)
                                     if fb_cookie_str:
                                         inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True, user_email=job_owner_email)
+                                    # A session that is working in another block beats Settings.
+                                    inject_fb_live_session(worker_driver, job_owner_email)
                                 wait_facebook_pace(should_stop=lambda: not getattr(app, "is_running", True))
 
                             worker_driver.get(url)
@@ -8339,10 +8442,19 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         f"{block_name}: Facebook hiện trang đăng nhập, đang bơm lại cookie và tải lại...",
                                         "start",
                                     )
+                                    used_live_session = False
                                     try:
                                         fb_cookie_retry = get_configured_fb_cookie(job_owner_email)
                                         if fb_cookie_retry:
                                             inject_fb_cookies_into_driver(worker_driver, fb_cookie_retry, force=True, user_email=job_owner_email)
+                                        # Then overwrite with a session that is working right now in
+                                        # another block (Settings cookie is often already expired).
+                                        wait_fb_live_session(
+                                            job_owner_email,
+                                            timeout_sec=30.0,
+                                            should_stop=lambda: not getattr(app, "is_running", True),
+                                        )
+                                        used_live_session = inject_fb_live_session(worker_driver, job_owner_email)
                                         wait_facebook_pace(should_stop=lambda: not getattr(app, "is_running", True))
                                         worker_driver.get(url)
                                         wait_page_ready(worker_driver, timeout=PAGE_READY_TIMEOUT)
@@ -8351,8 +8463,13 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     except Exception:
                                         pass
                                     if is_facebook_login_wall(worker_driver):
+                                        if used_live_session:
+                                            # The shared session is dead too; drop it so a fresh
+                                            # Settings cookie is not overwritten next time.
+                                            forget_fb_live_session(job_owner_email)
                                         raise Exception(FB_LOGIN_REQUIRED_MARKER)
                                 fb_login_wall_streak = 0
+                                remember_fb_live_session(worker_driver, job_owner_email)
                             if is_tiktok:
                                 try:
                                     closed_tiktok_gate = dismiss_tiktok_login_gate(worker_driver)
