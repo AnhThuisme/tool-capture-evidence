@@ -224,6 +224,18 @@ class WebAppAdapter:
         self._job_store["inputs_enabled"] = bool(enabled)
         self._persist()
 
+    def auto_pause(self, reason: str = ""):
+        """Pause the job from inside the run (e.g. FB logged the account out)."""
+        if not self.is_running:
+            return
+        self.is_paused = True
+        with JOBS_LOCK:
+            self._job_store["status"] = "paused"
+            self._job_store["detail"] = str(reason or "Đã tự tạm dừng")
+            self._job_store["ui_status"] = "TẠM DỪNG"
+            self._job_store["ui_color"] = "#f59e0b"
+        self._persist()
+
     def update_progress_summary(
         self,
         done: int,
