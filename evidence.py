@@ -4223,32 +4223,6 @@ def wait_fb_live_session(owner_email: str = "", timeout_sec: float = 30.0, shoul
         time.sleep(1.0)
 
 
-_FB_WALL_EVENTS_LOCK = threading.Lock()
-# owner email -> list of (monotonic time, block id) of recent unrecoverable login walls
-_FB_WALL_EVENTS: dict[str, list] = {}
-FB_ACCOUNT_LOGOUT_WINDOW_SEC = 180.0
-
-
-def record_fb_login_wall(owner_email: str, block_id) -> bool:
-    """
-    Record an unrecoverable login wall. Returns True when it looks like Facebook
-    logged the whole ACCOUNT out (2+ different blocks hit it within a few minutes),
-    as opposed to one odd link.
-    """
-    key = str(owner_email or "").strip().lower()
-    now = time.monotonic()
-    with _FB_WALL_EVENTS_LOCK:
-        events = [ev for ev in _FB_WALL_EVENTS.get(key, []) if now - ev[0] <= FB_ACCOUNT_LOGOUT_WINDOW_SEC]
-        events.append((now, block_id))
-        _FB_WALL_EVENTS[key] = events
-        return len({ev[1] for ev in events}) >= 2
-
-
-def clear_fb_login_walls(owner_email: str) -> None:
-    with _FB_WALL_EVENTS_LOCK:
-        _FB_WALL_EVENTS.pop(str(owner_email or "").strip().lower(), None)
-
-
 def forget_fb_live_session(owner_email: str = "") -> None:
     """Drop a shared session that no longer works, so it can't overwrite a fresh Settings cookie."""
     key = str(owner_email or "").strip().lower()
@@ -9092,29 +9066,6 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     pending_indexes.insert(0, idx)
                                     continue
                                 write_log(f"[WARN] Row {row} already retried once after browser recovery; mark failed.")
-                        if FB_LOGIN_REQUIRED_MARKER in str(e):
-                            account_logged_out = record_fb_login_wall(job_owner_email, (log_block_name, block_index))
-                            if account_logged_out or getattr(app, "is_paused", False):
-                                # Facebook logged the account out: every block will fail from
-                                # now on. Pause the whole job instead of burning rows as ERR;
-                                # this row is retried after the user refreshes the cookie.
-                                if not getattr(app, "is_paused", False):
-                                    clear_fb_login_walls(job_owner_email)
-                                    forget_fb_live_session(job_owner_email)
-                                    pause_msg = (
-                                        "Facebook đã đăng xuất tài khoản (nhiều block cùng ra trang Log in). "
-                                        "Đã TỰ TẠM DỪNG cả job, các dòng chưa bị đánh lỗi. "
-                                        "Lấy Cookie FB mới dán vào Cài đặt, bấm Lưu, rồi bấm Tiếp tục."
-                                    )
-                                    if hasattr(app, "auto_pause"):
-                                        ui_call(app.auto_pause, pause_msg)
-                                    else:
-                                        app.is_paused = True
-                                    ui_call(ui_add_log, row, "WARN", "PAUSE", pause_msg, "fail")
-                                    write_log(f"[WARN] {log_block_name}: FB account logged out -> auto-paused job")
-                                fb_login_wall_streak = 0
-                                pending_indexes.insert(0, idx)
-                                continue
                         clean_err = format_user_friendly_error(e)
                         write_log(f"{log_block_name} row {row} ERROR: {clean_err} (raw: {e})")
                         _mark_row_failed(row)
