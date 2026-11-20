@@ -74,6 +74,19 @@ PER_LINK_BASE_WAIT = 0.2
 # Roughly 8 per Facebook account is safe; more on one account gets the session
 # logged out by Facebook. Change this single number to tune.
 MAX_PARALLEL_BLOCKS = 5
+# Do NOT push Facebook cookies (from Settings or from another block) into the
+# block Chromes: each block uses the login saved in its own Chrome profile.
+# Injecting one session into many Chromes at once made FB log that session out
+# everywhere at the same moment. Set True to bring cookie injection back.
+FB_AUTO_INJECT_COOKIE = False
+
+
+def is_facebook_reel_url(url: str) -> bool:
+    """Facebook Reel links need a logged-in cookie, so they still get one injected."""
+    u = str(url or "").lower()
+    return ("facebook.com" in u or "fb.watch" in u) and any(
+        part in u for part in ("/reel/", "/reels/", "/share/r/")
+    )
 # Facebook pacing: cap how many FB links the WHOLE tool opens per minute (all
 # blocks combined). Facebook logs the account out after too many page views in a
 # short time (seen at ~20 links/min for ~45 min). Lower = slower but safer.
@@ -8146,10 +8159,11 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                     last = e
                     write_log(f"[WARN] Block {block_index}: Chrome start failed (profile='{launch_profile}', headless={headless}): {e}")
             if new_driver:
-                fb_cookie_str = get_configured_fb_cookie(job_owner_email)
-                if fb_cookie_str:
-                    inject_fb_cookies_into_driver(new_driver, fb_cookie_str, user_email=job_owner_email)
-                inject_fb_live_session(new_driver, job_owner_email)
+                if FB_AUTO_INJECT_COOKIE:
+                    fb_cookie_str = get_configured_fb_cookie(job_owner_email)
+                    if fb_cookie_str:
+                        inject_fb_cookies_into_driver(new_driver, fb_cookie_str, user_email=job_owner_email)
+                    inject_fb_live_session(new_driver, job_owner_email)
                 return new_driver
             raise Exception(f"WORKER_CHROME_START_FAILED[{block_index}]: {last}")
 
@@ -8398,7 +8412,8 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             if is_facebook:
                                 # Only inject the Settings cookie when this Chrome has no FB
                                 # session; never overwrite a session that is already logged in.
-                                if not driver_has_fb_session(worker_driver):
+                                fb_use_cookie = FB_AUTO_INJECT_COOKIE or is_facebook_reel_url(url)
+                                if fb_use_cookie and not driver_has_fb_session(worker_driver):
                                     fb_cookie_str = get_configured_fb_cookie(job_owner_email)
                                     if fb_cookie_str:
                                         inject_fb_cookies_into_driver(worker_driver, fb_cookie_str, force=True, user_email=job_owner_email)
@@ -8539,6 +8554,18 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                         "start",
                                     )
                                     time.sleep(1.2)
+                                if is_facebook_login_wall(worker_driver) and not (FB_AUTO_INJECT_COOKIE or is_facebook_reel_url(url)):
+                                    # This block's Chrome is not logged in to Facebook. Cookie
+                                    # injection is only for Reels, so fail the row (never upload a login page).
+                                    ui_call(
+                                        ui_add_log,
+                                        row,
+                                        "WARN",
+                                        "LOGIN",
+                                        f"{block_name}: Chrome của block này đang bị đăng xuất Facebook (hiện trang Log in).",
+                                        "start",
+                                    )
+                                    raise Exception(FB_LOGIN_REQUIRED_MARKER)
                                 if is_facebook_login_wall(worker_driver):
                                     # Chrome session is logged out: Facebook shows its full login page
                                     # instead of the post. Re-inject cookie and reload once before failing,
@@ -8578,6 +8605,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                             forget_fb_live_session(job_owner_email)
                                         raise Exception(FB_LOGIN_REQUIRED_MARKER)
                                 fb_login_wall_streak = 0
+                                # Only reads cookies; kept so Reel links can reuse a working login.
                                 remember_fb_live_session(worker_driver, job_owner_email)
                             if is_tiktok:
                                 try:
