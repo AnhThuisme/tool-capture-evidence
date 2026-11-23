@@ -73,7 +73,7 @@ PER_LINK_BASE_WAIT = 0.2
 # added; extra blocks wait and start as soon as a running block finishes.
 # Roughly 8 per Facebook account is safe; more on one account gets the session
 # logged out by Facebook. Change this single number to tune.
-MAX_PARALLEL_BLOCKS = 5
+MAX_PARALLEL_BLOCKS = 4
 # Do NOT push Facebook cookies (from Settings or from another block) into the
 # block Chromes: each block uses the login saved in its own Chrome profile.
 # Injecting one session into many Chromes at once made FB log that session out
