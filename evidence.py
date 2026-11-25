@@ -2450,6 +2450,11 @@ def extract_comment_id(url):
     if not url:
         return None
     url_str = str(url)
+    # Reply links carry both ids (comment_id=PARENT&reply_comment_id=REPLY): the reply is
+    # the one to capture, so look for it first or the parent gets captured instead.
+    reply = re.search(r'reply_comment_id(?:=|%3D)(?:%22)?([0-9a-zA-Z_]+)', url_str, re.IGNORECASE)
+    if reply:
+        return reply.group(1)
     m = re.search(r'(?:comment_id|reply_comment_id)=(?:%22)?([0-9a-zA-Z_]+)', url_str, re.IGNORECASE)
     if m:
         return m.group(1)
@@ -2556,6 +2561,30 @@ def ensure_facebook_comment_in_view(driver, url: str) -> bool:
         return scrolled
     except Exception:
         return False
+
+
+def is_facebook_target_comment_on_page(driver, url: str) -> bool:
+    """
+    True when the comment/reply named in the link is really on the page.
+    ensure_facebook_comment_in_view() falls back to some other comment when it is not.
+    Errors count as True so a probe failure never raises a false warning.
+    """
+    cid = extract_comment_id(url)
+    if not cid:
+        return True
+    try:
+        return bool(
+            driver.execute_script(
+                """
+                const cid = arguments[0];
+                const sel = `[id*="${cid}"], [data-commentid*="${cid}"], [data-ft*="${cid}"], a[href*="comment_id=${cid}"]`;
+                return !!document.querySelector(sel);
+                """,
+                cid,
+            )
+        )
+    except Exception:
+        return True
 
 
 def reset_capture_scroll_to_top(driver, url: str, settle_sec: float = 0.18) -> bool:
@@ -4038,6 +4067,9 @@ def wait_facebook_pace(should_stop=None) -> None:
     _sleep_unless_stopped(slot - now, should_stop)
 
 
+FB_LOGIN_WALL_CONFIRM_SEC = 6.0
+
+
 def is_facebook_login_wall(driver) -> bool:
     """
     Detect when Facebook serves its full-page login screen instead of the post
@@ -4066,10 +4098,19 @@ def is_facebook_login_wall(driver) -> bool:
     const hasPost = Array.from(document.querySelectorAll("[role='article'], [data-pagelet^='FeedUnit'], [data-ad-preview='message']")).some(visible);
     return !hasPost;
     """
-    try:
-        return bool(driver.execute_script(script))
-    except Exception:
-        return False
+    # Public posts viewed logged out always show a login form in the page header, and
+    # the post itself renders a bit later. Only call it a login wall if the post is
+    # still missing after FB_LOGIN_WALL_CONFIRM_SEC.
+    deadline = time.monotonic() + FB_LOGIN_WALL_CONFIRM_SEC
+    while True:
+        try:
+            if not driver.execute_script(script):
+                return False
+        except Exception:
+            return False
+        if time.monotonic() >= deadline:
+            return True
+        time.sleep(0.5)
 
 
 def parse_cookie_string(raw_cookies: str) -> list[dict]:
@@ -8293,6 +8334,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 captures_per_link = 5 if (multi_capture_enabled and block_mode == "booking") else 1
 
                 retry_once_by_row: set[int] = set()
+                comment_missing_warned: set[int] = set()
                 # Consecutive rows where FB showed its login page. When a block's Chrome
                 # is clearly logged out, stop that block instead of loading hundreds of
                 # FB links logged-out (bot-like) and marking every row FAIL.
@@ -8813,6 +8855,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     if is_facebook_comment_url(url):
                                         ensure_facebook_comment_in_view(worker_driver, url)
                                         time.sleep(1.0)
+                                        if row not in comment_missing_warned and not is_facebook_target_comment_on_page(worker_driver, url):
+                                            # Warn only: the row is still captured and counted as OK.
+                                            comment_missing_warned.add(row)
+                                            ui_call(
+                                                ui_add_log,
+                                                row,
+                                                "WARN",
+                                                "COMMENT",
+                                                f"{block_name}: Không thấy đúng bình luận trong link, ảnh có thể là bình luận khác (vẫn tính OK)",
+                                                "start",
+                                            )
                                     png_bytes = worker_driver.get_screenshot_as_png()
                                 blank_retry = max(0, int(BLANK_SCREEN_MAX_RETRIES or 0))
                                 blank_attempt = 0
