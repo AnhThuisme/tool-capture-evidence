@@ -91,7 +91,7 @@ def is_facebook_reel_url(url: str) -> bool:
 # blocks combined). Facebook logs the account out after too many page views in a
 # short time (seen at ~20 links/min for ~45 min). Lower = slower but safer.
 # Change this single number to tune.
-FB_MAX_LINKS_PER_MINUTE = 15
+FB_MAX_LINKS_PER_MINUTE = 10
 # Each gap between two FB loads is randomized +/-20% around 60/FB_MAX_LINKS_PER_MINUTE
 # so the rhythm is not machine-regular; the average stays at the cap.
 FB_GLOBAL_GAP_JITTER = 0.2
