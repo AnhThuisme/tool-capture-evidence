@@ -73,7 +73,7 @@ PER_LINK_BASE_WAIT = 0.2
 # added; extra blocks wait and start as soon as a running block finishes.
 # Roughly 8 per Facebook account is safe; more on one account gets the session
 # logged out by Facebook. Change this single number to tune.
-MAX_PARALLEL_BLOCKS = 4
+MAX_PARALLEL_BLOCKS = 3
 # Do NOT push Facebook cookies (from Settings or from another block) into the
 # block Chromes: each block uses the login saved in its own Chrome profile.
 # Injecting one session into many Chromes at once made FB log that session out
@@ -91,13 +91,13 @@ def is_facebook_reel_url(url: str) -> bool:
 # blocks combined). Facebook logs the account out after too many page views in a
 # short time (seen at ~20 links/min for ~45 min). Lower = slower but safer.
 # Change this single number to tune.
-FB_MAX_LINKS_PER_MINUTE = 10
+FB_MAX_LINKS_PER_MINUTE = 30
 # Each gap between two FB loads is randomized +/-20% around 60/FB_MAX_LINKS_PER_MINUTE
 # so the rhythm is not machine-regular; the average stays at the cap.
 FB_GLOBAL_GAP_JITTER = 0.2
 # Per-worker random pause before each FB link.
-FB_LINK_JITTER_MIN_SEC = 1.0
-FB_LINK_JITTER_MAX_SEC = 3.0
+FB_LINK_JITTER_MIN_SEC = 0.5
+FB_LINK_JITTER_MAX_SEC = 1.5
 # How long a worker waits for its Chrome debug port (opened by auto-launch)
 # before starting its own Chrome.
 WORKER_ATTACH_WAIT_SEC = 12.0
