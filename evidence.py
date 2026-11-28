@@ -69,16 +69,30 @@ CAPTURE_ZOOM_PERCENT = 90
 PAGE_READY_TIMEOUT = 5
 PAGE_READY_FALLBACK_SLEEP = 0.5
 PER_LINK_BASE_WAIT = 0.2
-# How many blocks (Chrome windows) run at the same time. Up to 15 blocks can be
+# A row that fails with a page Timeout waits this long, then is tried once more.
+TIMEOUT_RETRY_EXTRA_WAIT_SEC = 10.0
+# Skip the rest of a block after this many "Nội dung không khả dụng" rows in a row.
+UNAVAILABLE_STOP_BLOCK_AFTER = 3
+# How many blocks (Chrome windows) run at the same time. Up to 20 blocks can be
 # added; extra blocks wait and start as soon as a running block finishes.
 # Roughly 8 per Facebook account is safe; more on one account gets the session
 # logged out by Facebook. Change this single number to tune.
-MAX_PARALLEL_BLOCKS = 3
+MAX_PARALLEL_BLOCKS = 5
 # Do NOT push Facebook cookies (from Settings or from another block) into the
 # block Chromes: each block uses the login saved in its own Chrome profile.
 # Injecting one session into many Chromes at once made FB log that session out
 # everywhere at the same moment. Set True to bring cookie injection back.
 FB_AUTO_INJECT_COOKIE = False
+
+
+# A sheet cell whose text starts with one of these is an error note, not a result:
+# with "Chạy đè" OFF that row is run again instead of being skipped.
+# Prefix only (not "contains"): a real caption may say "xin lỗi" in the middle.
+ERROR_NOTE_PREFIXES = ("err", "lỗi", "loi:", "loi ", "error", "fail", "timeout", "#error", "#n/a", "#ref", "#value")
+
+
+def is_error_note_value(value) -> bool:
+    return str(value or "").strip().lower().startswith(ERROR_NOTE_PREFIXES)
 
 
 def is_facebook_reel_url(url: str) -> bool:
@@ -96,8 +110,8 @@ FB_MAX_LINKS_PER_MINUTE = 30
 # so the rhythm is not machine-regular; the average stays at the cap.
 FB_GLOBAL_GAP_JITTER = 0.2
 # Per-worker random pause before each FB link.
-FB_LINK_JITTER_MIN_SEC = 0.5
-FB_LINK_JITTER_MAX_SEC = 1.5
+FB_LINK_JITTER_MIN_SEC = 0.2
+FB_LINK_JITTER_MAX_SEC = 0.6
 # How long a worker waits for its Chrome debug port (opened by auto-launch)
 # before starting its own Chrome.
 WORKER_ATTACH_WAIT_SEC = 12.0
@@ -236,7 +250,9 @@ PLEASE_WAIT_MAX_WAIT_SEC = 8.0
 PLEASE_WAIT_POLL_SEC = 0.5
 BLANK_SCREEN_RETRY_DELAY_SEC = 4.0
 BLANK_SCREEN_MAX_RETRIES = 1
-MULTI_CAPTURE_INTERVAL_SEC = 2.5
+MULTI_CAPTURE_INTERVAL_SEC = 1.5
+# Extra pause after a TikTok page looks ready, so the video frame is drawn (was 2.0).
+TIKTOK_SETTLE_AFTER_READY_SEC = 1.2
 FB_COMMENT_READY_WAIT = 2.5
 UI_CLICK_SETTLE_SLEEP = 0.2
 UI_SCROLL_SETTLE_SLEEP = 0.15
@@ -2702,7 +2718,7 @@ def wait_for_capture_surface_ready(driver, source_url: str = "", max_wait_sec: f
     deadline = start + timeout
     # TikTok video cần thêm thời gian decode frame sau khi DOM ready
     is_tiktok_scope = "tiktok.com" in scope or "vt.tiktok.com" in scope
-    settle_buffer = 2.0 if is_tiktok_scope else 0.35
+    settle_buffer = TIKTOK_SETTLE_AFTER_READY_SEC if is_tiktok_scope else 0.35
 
     while time.time() < deadline:
         try:
@@ -8208,8 +8224,105 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 return new_driver
             raise Exception(f"WORKER_CHROME_START_FAILED[{block_index}]: {last}")
 
+        def _block_row_eligible(block: dict, i: int) -> bool:
+            """Same row filters as the main loop (start line, chosen rows, error-only, valid link)."""
+            links_b = block.get("links") or []
+            row_nums = block.get("row_numbers") or []
+            r = row_nums[i] if i < len(row_nums) else (i + 4)
+            if r < int(block.get("start_line", 4) or 4):
+                return False
+            if requested_rows and r not in requested_rows:
+                return False
+            if only_error_mode and r not in tracked_error_rows:
+                return False
+            return str(links_b[i] if i < len(links_b) else "").strip().startswith("http")
+
+        def _block_row_outputs_ready(block: dict, i: int) -> bool:
+            """"Chạy đè" OFF: every mapped output cell already has data (not an ERR marker)."""
+
+            def _has(values: list, j: int) -> bool:
+                if j >= len(values):
+                    return False
+                val = str(values[j] or "").strip()
+                return bool(val) and not is_error_note_value(val)
+
+            checks = []
+            if block.get("idx_drive"):
+                checks.append(_has(block.get("results") or [], i))
+            if block.get("idx_content"):
+                checks.append(_has(block.get("captions_existing") or [], i))
+            if block.get("idx_screenshot"):
+                checks.append(_has(block.get("screenshots_existing") or [], i))
+            return bool(checks) and all(checks)
+
+        def _finish_rows_skipped(block_name: str, rows: list[int]):
+            """Count already-filled rows as OK in one go (one log line, no Chrome needed)."""
+            nonlocal processed_count, success_count, started_count
+            if not rows:
+                return
+            cleared_rows = []
+            with error_lock:
+                for row in rows:
+                    row_blocks = set(row_issue_blocks.get(row) or set())
+                    row_blocks.discard(block_name)
+                    if row_blocks:
+                        row_issue_blocks[row] = row_blocks
+                        continue
+                    row_issue_blocks.pop(row, None)
+                    if row in tracked_error_rows:
+                        cleared_rows.append(row)
+                    tracked_error_rows.discard(row)
+                    tracked_error_details.pop(row, None)
+            with counter_lock:
+                started_count += len(rows)
+                processed_count += len(rows)
+                success_count += len(rows)
+                done = processed_count
+                okv = success_count
+                failv = fail_count
+                unavailv = unavailable_count
+                percent = int((done / max(1, target_total)) * 100)
+                eta = _calc_eta(done)
+            ui_call(
+                ui_add_log,
+                rows[0],
+                "INFO",
+                "SKIP",
+                f"{block_name}: Bỏ qua {len(rows)} dòng đã có đủ output (hàng {rows[0]}–{rows[-1]})",
+                "start",
+            )
+            if hasattr(app, "update_error_row_live"):
+                for row in cleared_rows:
+                    ui_call(app.update_error_row_live, row, "", False)
+            ui_call(ui_set_progress, percent)
+            ui_call(ui_update_summary, done, target_total, okv, failv, eta, unavailv)
+
         def _run_block(block: dict):
             block_index = int(block.get("block_index", 0))
+            # "Chạy đè" OFF: skip already-filled rows up front. A block with nothing
+            # left to do finishes at once without opening Chrome or the Sheet again.
+            pre_skipped_idx: set[int] = set()
+            block_is_scan = str(block.get("mode", "seeding")).strip().lower() == "scan"
+            if (not block_is_scan) and (not app.force_run_all.get()):
+                for i in range(len(block.get("links") or [])):
+                    if _block_row_eligible(block, i) and _block_row_outputs_ready(block, i):
+                        pre_skipped_idx.add(i)
+                if pre_skipped_idx:
+                    row_nums = block.get("row_numbers") or []
+                    skipped_rows = [
+                        (row_nums[i] if i < len(row_nums) else (i + 4)) for i in sorted(pre_skipped_idx)
+                    ]
+                    _finish_rows_skipped(str(block.get("name", "")), skipped_rows)
+                    has_work = any(
+                        _block_row_eligible(block, i) and i not in pre_skipped_idx
+                        for i in range(len(block.get("links") or []))
+                    )
+                    if not has_work:
+                        write_log(
+                            f"[INFO] {block.get('name', '')}: all {len(skipped_rows)} row(s) already filled, "
+                            f"finished without opening Chrome"
+                        )
+                        return
             worker_driver = _start_worker_driver(block_index, str(block.get("mode", "seeding")))
             local_is_main_driver = bool(worker_driver) and (worker_driver is app.driver)
             try:
@@ -8334,13 +8447,17 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                 captures_per_link = 5 if (multi_capture_enabled and block_mode == "booking") else 1
 
                 retry_once_by_row: set[int] = set()
+                timeout_retried_rows: set[int] = set()
                 comment_missing_warned: set[int] = set()
                 # Consecutive rows where FB showed its login page. When a block's Chrome
                 # is clearly logged out, stop that block instead of loading hundreds of
                 # FB links logged-out (bot-like) and marking every row FAIL.
                 fb_login_wall_streak = 0
                 FB_LOGIN_WALL_STOP_AFTER = 3
-                pending_indexes = list(range(len(links)))
+                # Consecutive "Nội dung không khả dụng" rows; the block is skipped after
+                # UNAVAILABLE_STOP_BLOCK_AFTER of them (private/deleted post or group).
+                unavailable_streak = 0
+                pending_indexes = [i for i in range(len(links)) if i not in pre_skipped_idx]
                 while pending_indexes:
                     idx = pending_indexes.pop(0)
                     url = links[idx] if idx < len(links) else ""
@@ -8401,7 +8518,7 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                             if i >= len(values):
                                 return False
                             val = str(values[i] or "").strip()
-                            return bool(val) and not val.upper().startswith("ERR")
+                            return bool(val) and not is_error_note_value(val)
 
                         drive_ready = bool(idx_drive) and _cell_has_data(results, idx)
                         content_ready = bool(idx_content) and _cell_has_data(captions_existing, idx)
@@ -9100,7 +9217,28 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                         else:
                             _mark_row_success(row)
                             _finish_row_ok(log_block_name, row, url, eta_text, issue_columns=issue_columns)
+                        if (not is_scan_mode) and unavailable and (not technical_error_message):
+                            unavailable_streak += 1
+                        else:
+                            unavailable_streak = 0
+                        if unavailable_streak >= UNAVAILABLE_STOP_BLOCK_AFTER:
+                            ui_call(
+                                ui_add_log,
+                                row,
+                                "WARN",
+                                "STOP",
+                                (
+                                    f"{log_block_name}: Bỏ qua block này vì {unavailable_streak} link liên tiếp "
+                                    f"không khả dụng (bài/nhóm riêng tư hoặc đã xóa). Các dòng còn lại chưa bị đụng tới."
+                                ),
+                                "fail",
+                            )
+                            write_log(
+                                f"[WARN] {log_block_name}: stopped after {unavailable_streak} consecutive unavailable rows"
+                            )
+                            break
                     except Exception as e:
+                        unavailable_streak = 0
                         if (not is_scan_mode) and _is_recoverable_driver_error(e):
                             ui_call(
                                 ui_add_log,
@@ -9147,6 +9285,29 @@ def main_logic(app: ProgressApp, drive_id: str, sheet_url: str, sheet_name: str,
                                     pending_indexes.insert(0, idx)
                                     continue
                                 write_log(f"[WARN] Row {row} already retried once after browser recovery; mark failed.")
+                        err_low = str(e or "").lower()
+                        if (
+                            (not is_scan_mode)
+                            and ("timeoutexception" in err_low or "timed out" in err_low)
+                            and row not in timeout_retried_rows
+                        ):
+                            # Slow page: wait a bit longer and try this row once more
+                            # before marking it as a Timeout error.
+                            timeout_retried_rows.add(row)
+                            ui_call(
+                                ui_add_log,
+                                row,
+                                "WARN",
+                                "RETRY",
+                                f"{log_block_name}: Trang tải chậm (Timeout), chờ thêm {int(TIMEOUT_RETRY_EXTRA_WAIT_SEC)}s rồi thử lại...",
+                                "start",
+                            )
+                            write_log(f"[WARN] Row {row} timeout, retrying after {TIMEOUT_RETRY_EXTRA_WAIT_SEC}s: {e}")
+                            wait_until = time.monotonic() + TIMEOUT_RETRY_EXTRA_WAIT_SEC
+                            while time.monotonic() < wait_until and getattr(app, "is_running", True):
+                                time.sleep(0.5)
+                            pending_indexes.insert(0, idx)
+                            continue
                         clean_err = format_user_friendly_error(e)
                         write_log(f"{log_block_name} row {row} ERROR: {clean_err} (raw: {e})")
                         _mark_row_failed(row)
